@@ -4,6 +4,12 @@
   "private": true,
   "description": "fsio native host: session server over a shared directory",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "wireit"
   },

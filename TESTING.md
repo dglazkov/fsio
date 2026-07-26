@@ -13,6 +13,7 @@ and in CI (wireit graph; see README). One command, no surprises.
 |---|---|---|---|
 | unit | pure logic: frame codec, RPC correlation, name encodings | `packages/common/src/*.test.ts` (node:test) | per push, seconds |
 | protocol integration | spec MUSTs against a real host over a real FS in a tmpdir: torn writes, ordering, spawn errors, restart adoption | `packages/bench/src/test-protocol.ts` | per push |
+| host lifecycle | time-based host behaviors at short injected timescales: idle GC, stale-session GC, `close()` resource release | `packages/bench/src/test-lifecycle.ts` (in-process `HostServer`) | per push |
 | smoke | one full happy path per uplink lane + flow control, with a *generous* latency ceiling (100 ms p50 — catches the F1/F2 wakeup-regression class, never runner jitter) | `packages/bench/src/test-smoke.ts` | per push |
 | labs | platform measurement, not pass/fail: benches, observer lab, write microbench. Results feed [spec/FINDINGS.md](spec/FINDINGS.md), never CI verdicts | `packages/bench`, workbench | when investigating |
 
@@ -24,8 +25,11 @@ Conventions:
 - Hermetic or it doesn't merge: every integration scenario gets its own
   tmpdir and host process. No shared state, no ordering dependencies.
 - Time-based host behaviors (60 s stale-session GC, 5 min idle reap) are
-  **not** integration-tested at real timescales; they become testable when
-  #17 makes the intervals injectable.
+  **not** tested at real timescales: #17's `HostServer` inversion made the
+  intervals injectable, so `test-lifecycle.ts` runs them at milliseconds.
+  The protocol-integration tier still spawns the real CLI as a child
+  process; the lifecycle tier deliberately runs in-process — the library
+  surface is part of what it tests.
 
 ## Not tested (deliberately)
 

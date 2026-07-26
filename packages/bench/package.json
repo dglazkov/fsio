@@ -14,16 +14,17 @@
       "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
       "output": ["dist/**"],
       "clean": "if-file-deleted",
-      "dependencies": ["../common:build"]
+      "dependencies": ["../common:build", "../host:build"]
     },
     "test": {
-      "command": "node --test --test-concurrency=1 dist/test-protocol.js && node dist/test-smoke.js",
+      "command": "node --test --test-concurrency=1 dist/test-protocol.js dist/test-lifecycle.js && node dist/test-smoke.js",
       "files": ["../host/src/**", "../common/src/**"],
       "output": [],
       "dependencies": ["build", "../host:build"]
     }
   },
   "dependencies": {
-    "@fsio/common": "*"
+    "@fsio/common": "*",
+    "@fsio/host": "*"
   }
 }
