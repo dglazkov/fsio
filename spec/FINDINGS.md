@@ -29,6 +29,8 @@ RTT legs reported by the bench: `up` = client commit → host read;
 | web client | poll 5ms | 200 | 0 | 63.60 | 74.60 | 108.90 | 160.50 |
 | web client | poll 5ms + dirname-up | 200 | 0 | 1.50 | 5.30 | 10.90 | 13.50 |
 | web client | observer-only, isolated pings | 15 | 0 | 295 | 300 | 709 | 3062 |
+| web client | adaptive 5ms, file up | 200 | 0 | 64.30 | 90.50 | 196.30 | 225.70 |
+| web client | adaptive 5ms, file up, Safe Browsing OFF | 200 | 0 | 2.90 | 5.10 | 10.60 | 19.50 |
 
 Web leg breakdowns (Chrome 150): file uplink — up p50 69–71 ms · host
 0.07 ms · down 2.6–3.1 ms. Dirname uplink — up p50 2.8 ms · down 3.3 ms.
@@ -91,11 +93,27 @@ anyway by the safety poll), hot poll only while traffic flowed in the last
 
 Confirmed by the write microbench (Chrome 150, 50 files × 64 B):
 open 0.4 ms · createWritable 0.3 ms · write 0.3 ms · **close 67.7 ms**
-(p95 73.8). Matches the live `up` leg (p50 70.8 ms). This is consistent
-with Chrome's Safe Browsing after-write checks on every commit into a
-user-visible directory (final attribution: rerun with Safe Browsing set to
-"No protection"). Unlike F1/F2/F6 this cannot be polled away — it is the
-browser uplink floor for *file-based* chunks; see F10.
+(p95 73.8). Matches the live `up` leg (p50 70.8 ms).
+
+**Attributed: it is Safe Browsing.** A/B against
+`chrome://settings/security` (2026-07-26, Chrome 150, same machine,
+[#11](https://github.com/dglazkov/fsio/issues/11)):
+
+| Safe Browsing | close p50 | p95 | min | max (ms) |
+|---|---|---|---|---|
+| Standard protection | 75.0 | 101.3 | 66.2 | 204.9 |
+| No protection | **1.3** | 2.1 | 0.9 | 13.1 |
+
+Open/start/write stayed sub-millisecond in both runs; only `close()`
+moved, by ~58×. The live echo bench over the file uplink moved with it:
+RTT p50 90.5 → 5.1 ms, up leg p50 87.1 → 2.4 ms — with protection off,
+the file lane lands within ~2× of the dirname lane (F10). So the file
+uplink floor is Chrome's Safe Browsing after-write check, entirely.
+Unlike F1/F2/F6 it cannot be polled away, and "turn off Safe Browsing"
+is not a deployable answer — the floor stands for *file-based* chunks at
+default browser settings; see F10. Also the clean-repro basis for the
+Chromium conversation in
+[#9](https://github.com/dglazkov/fsio/issues/9).
 → [D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches)
 
 ### F8 — peers must not contend for the same files
@@ -152,7 +170,9 @@ for terminal scrollback. Reproduce: `node packages/bench/firehose.mjs <dir>
 
 ## Open measurements
 
-- Safe Browsing on vs. off (final F7 attribution).
+- ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
+  2026-07-26: `close()` p50 75.0 → 1.3 ms with protection off; F7
+  attributed — table under F7.
   → [#11](https://github.com/dglazkov/fsio/issues/11)
 - Dirname-lane throughput under sustained typing/paste load.
   → [#4](https://github.com/dglazkov/fsio/issues/4)
