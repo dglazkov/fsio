@@ -9,9 +9,9 @@ export const HEADER_SIZE = 5;
 
 export const FrameType = {
   DATA: 1, // raw stdio/pty bytes
-  PING: 2, // latency probe, JSON payload {seq, t0}
-  PONG: 3, // echo of PING, JSON payload {seq, t0, t1, t2}
-  CTL: 4, // control message, JSON payload {op, ...}
+  // 2–4 reserved: early-v0 PING/PONG/CTL, retired when the control plane
+  // moved to JSON-RPC (spec/DECISIONS.md D10). Never reuse.
+  RPC: 5, // one JSON-RPC 2.0 message (common/rpc.js)
 };
 
 const frameTypeNames = Object.fromEntries(

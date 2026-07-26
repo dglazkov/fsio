@@ -25,6 +25,7 @@ import {
   DIR_CHUNK_RE,
   b64urlDecode,
 } from "../common/frames.js";
+import { RpcErrors, rpcResult, rpcError } from "../common/rpc.js";
 
 const PROTOCOL_VERSION = 0;
 const HEARTBEAT_MS = 2000;
@@ -120,7 +121,9 @@ class Session {
     this.id = id;
     this.dir = path.join(sessionsDir, id);
     this.inDir = path.join(this.dir, "in");
-    this.spawn = null; // parsed spawn.json
+    this.spawn = null; // spawn params (from the JSON-RPC request in spawn.json)
+    this.spawnId = null; // request id to answer (null = legacy bare spec)
+    this.spawnAnswered = false;
     this.started = false;
     this.done = false;
     this.nextInSeq = null; // discovered from the smallest chunk present
@@ -213,6 +216,24 @@ class Session {
     writeJsonAtomic(path.join(this.dir, "status.json"), { t: now(), ...obj });
   }
 
+  // Answer the spawn request (once) on the out stream. Errors get real
+  // JSON-RPC error objects instead of a status.json state the client must
+  // poll for and interpret. Duplicated answers (host restart re-adopting a
+  // session) are fine: clients ignore responses with unknown ids.
+  answerSpawn(msg) {
+    if (this.spawnId === null || this.spawnAnswered) return;
+    this.spawnAnswered = true;
+    this.appendJson(FrameType.RPC, msg);
+  }
+
+  spawnOk(result) {
+    this.answerSpawn(rpcResult(this.spawnId, result));
+  }
+
+  spawnFail(code, message) {
+    this.answerSpawn(rpcError(this.spawnId, code, message));
+  }
+
   scheduleRetry() {
     if (this.retryTimer) return;
     this.retryTimer = setTimeout(() => {
@@ -296,23 +317,37 @@ function adoptSession(id) {
 }
 
 function tryStart(s) {
-  s.spawn = readJson(path.join(s.dir, "spawn.json"));
-  if (!s.spawn) return; // not written yet; a watch event will re-trigger
+  const raw = readJson(path.join(s.dir, "spawn.json"));
+  if (!raw) return; // not written yet; a watch event will re-trigger
+  // spawn.json carries a JSON-RPC "spawn" request (the file is the bootstrap
+  // transport; the response rides the out stream). Legacy bare specs are
+  // tolerated: no id, no response, status.json only.
+  if (raw.jsonrpc === "2.0" && raw.method === "spawn") {
+    s.spawn = raw.params ?? {};
+    s.spawnId = raw.id ?? null;
+  } else {
+    s.spawn = raw;
+  }
   s.started = true;
   s.watchers.push(watchDir(s.inDir, scheduleScan));
   const kind = s.spawn.kind ?? "echo";
   log(`session ${s.id}: start kind=${kind}`);
   if (kind === "echo") {
     s.setStatus({ state: "running", kind, pid: process.pid });
+    s.spawnOk({ kind, pid: process.pid });
   } else if (kind === "shell") {
     if (!flags.allowShell) {
-      s.setStatus({ state: "error", error: "shell sessions not allowed; start host with --allow-shell" });
+      const error = "shell sessions not allowed; start host with --allow-shell";
+      s.setStatus({ state: "error", error });
+      s.spawnFail(RpcErrors.SHELL_NOT_ALLOWED, error);
       s.done = true;
       return;
     }
     startShell(s);
   } else {
-    s.setStatus({ state: "error", error: `unknown kind: ${kind}` });
+    const error = `unknown kind: ${kind}`;
+    s.setStatus({ state: "error", error });
+    s.spawnFail(RpcErrors.UNKNOWN_KIND, error);
     s.done = true;
   }
 }
@@ -345,6 +380,7 @@ function startShell(s) {
         s.proc = null;
       });
       s.setStatus({ state: "running", kind: "shell", pty: true, pid: p.pid, cmd });
+      s.spawnOk({ kind: "shell", pty: true, pid: p.pid, cmd });
       return;
     } catch (e) {
       log(`session ${s.id}: pty spawn failed (${e.message}); falling back to pipes`);
@@ -352,9 +388,13 @@ function startShell(s) {
   }
   try {
     const p = cpSpawn(cmd, cmdArgs, { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+    // ENOENT etc. arrive async; answer the spawn request only once the
+    // outcome is known ('spawn' fires on success, 'error' instead of it).
+    p.on("spawn", () => s.spawnOk({ kind: "shell", pty: false, pid: p.pid, cmd }));
     p.on("error", (e) => {
       log(`session ${s.id}: spawn error: ${e.message}`);
       s.setStatus({ state: "error", error: `could not start ${cmd}: ${e.message}` });
+      s.spawnFail(RpcErrors.SPAWN_FAILED, `could not start ${cmd}: ${e.message}`);
       s.proc = null;
     });
     s.proc = p;
@@ -369,6 +409,7 @@ function startShell(s) {
   } catch (e) {
     log(`session ${s.id}: spawn failed: ${e.message}`);
     s.setStatus({ state: "error", error: `could not start ${cmd}: ${e.message}` });
+    s.spawnFail(RpcErrors.SPAWN_FAILED, `could not start ${cmd}: ${e.message}`);
     s.done = true;
   }
 }
@@ -428,20 +469,21 @@ function processIncoming(s) {
 
 function handleFrame(s, frame, t1) {
   switch (frame.type) {
-    case FrameType.PING: {
-      const p = decodeJson(frame.payload);
-      s.appendJson(FrameType.PONG, { ...p, t1, t2: now() });
-      break;
-    }
     case FrameType.DATA: {
       if (!s.proc) break;
       if (s.usesPty) s.proc.write(Buffer.from(frame.payload).toString("utf8"));
       else s.proc.stdin.write(Buffer.from(frame.payload));
       break;
     }
-    case FrameType.CTL: {
-      const c = decodeJson(frame.payload);
-      handleCtl(s, c);
+    case FrameType.RPC: {
+      let msg;
+      try {
+        msg = decodeJson(frame.payload);
+      } catch (e) {
+        s.appendJson(FrameType.RPC, rpcError(null, RpcErrors.PARSE_ERROR, `unparseable RPC frame: ${e.message}`));
+        break;
+      }
+      handleRpc(s, msg, t1);
       break;
     }
     default:
@@ -449,18 +491,30 @@ function handleFrame(s, frame, t1) {
   }
 }
 
-function handleCtl(s, c) {
-  switch (c.op) {
+// Control plane: JSON-RPC 2.0, one message per RPC frame (spec D10).
+// Requests get responses on the out stream; notifications are
+// fire-and-forget; responses from the client are not expected (the host
+// never sends requests in v0) and are ignored.
+function handleRpc(s, msg, t1) {
+  const { id, method, params = {} } = msg;
+  if (method === undefined) return; // a response; host has no pending requests
+  const isRequest = id !== undefined;
+  switch (method) {
+    case "ping":
+      // Result echoes params (filler exercises the downlink under payload
+      // tests) plus host receive/append timestamps for leg attribution.
+      if (isRequest) s.appendJson(FrameType.RPC, rpcResult(id, { ...params, t1, t2: now() }));
+      break;
     case "resize":
-      if (s.proc && s.usesPty) s.proc.resize(c.cols, c.rows);
+      if (s.proc && s.usesPty) s.proc.resize(params.cols, params.rows);
       break;
     case "ack":
-      s.ack(c.total);
+      s.ack(params.total);
       break;
     case "signal":
       if (s.proc) {
         try {
-          s.usesPty ? s.proc.kill(c.sig) : s.proc.kill(c.sig ?? "SIGTERM");
+          s.usesPty ? s.proc.kill(params.sig) : s.proc.kill(params.sig ?? "SIGTERM");
         } catch {}
       }
       break;
@@ -476,7 +530,8 @@ function handleCtl(s, c) {
       setTimeout(() => removeSessionDir(s, "closed"), 500);
       break;
     default:
-      log(`session ${s.id}: unknown ctl op ${c.op}`);
+      if (isRequest) s.appendJson(FrameType.RPC, rpcError(id, RpcErrors.METHOD_NOT_FOUND, `unknown method: ${method}`));
+      else log(`session ${s.id}: unknown notification ${method}`);
   }
 }
 

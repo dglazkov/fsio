@@ -19,8 +19,9 @@ import {
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
 } from "../common/frames.js";
+import { RpcEndpoint, RpcError, rpcRequest, SPAWN_REQUEST_ID } from "../common/rpc.js";
 
-export { FrameType, jsonFrame, decodeJson, now };
+export { FrameType, jsonFrame, decodeJson, now, RpcError };
 
 export const hasObserver = "FileSystemObserver" in self;
 
@@ -111,12 +112,21 @@ export class FsioSession {
     this.pumpError = null; // first async send failure; surfaced via onError + next send()
     this.onError = onError;
     this.stats = { chunksWritten: 0, bytesIn: 0, bytesOut: 0, wakeups: 0 };
+    // Control plane: JSON-RPC over RPC frames (spec D10). One endpoint per
+    // session owns id correlation; responses are consumed in _drainSegment.
+    this.rpc = new RpcEndpoint((msg) => this.sendJson(FrameType.RPC, msg));
   }
 
   async _init(spec) {
     this.inDir = await op(`creating session ${this.id}/in/`, () => this.dir.getDirectoryHandle("in", { create: true }));
     // spawn.json is written last: its appearance signals a complete session.
-    await this._writeFile("spawn.json", new TextEncoder().encode(JSON.stringify(spec)));
+    // It carries a JSON-RPC spawn *request*; the host answers on the out
+    // stream, so spawn failures arrive as real error objects (code,
+    // message) instead of a status.json state to poll for. Register the
+    // pending id before the file exists so the answer can't race us.
+    this.ready = this.rpc.expect(SPAWN_REQUEST_ID).then(({ result }) => result);
+    this.ready.catch(() => {}); // surfacing is the awaiter's job, not the console's
+    await this._writeFile("spawn.json", new TextEncoder().encode(JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spec))));
     await this._startNotifier();
   }
 
@@ -146,6 +156,16 @@ export class FsioSession {
 
   sendData(text) {
     return this.send(FrameType.DATA, new TextEncoder().encode(text));
+  }
+
+  /** JSON-RPC request to the host; resolves {result, rx}. */
+  request(method, params, opts) {
+    return this.rpc.request(method, params, opts);
+  }
+
+  /** JSON-RPC notification (fire-and-forget: resize, ack, close…). */
+  notify(method, params) {
+    this.rpc.notify(method, params);
   }
 
   async _pump() {
@@ -288,7 +308,18 @@ export class FsioSession {
     this.stats.bytesIn += consumed;
     if (consumed > 0) this._markActive(); // stream flowing → stay hot
     const t3 = now();
-    for (const f of frames) this.onFrame?.(f, t3);
+    for (const f of frames) {
+      if (f.type === FrameType.RPC) {
+        let msg = null;
+        try {
+          msg = decodeJson(f.payload);
+        } catch {}
+        // Responses settle pending requests and stop here; anything else
+        // (future host-initiated traffic) falls through to onFrame.
+        if (msg && this.rpc.handleMessage(msg, t3)) continue;
+      }
+      this.onFrame?.(f, t3);
+    }
   }
 
   // Ack at most every 250 ms (or every 256 KB under load). Acks ride the
@@ -300,7 +331,7 @@ export class FsioSession {
     this.lastAckTotal = this.cumConsumed;
     this.lastAckAt = Date.now();
     try {
-      this.sendJson(FrameType.CTL, { op: "ack", total: this.cumConsumed });
+      this.notify("ack", { total: this.cumConsumed });
     } catch {}
   }
 
@@ -346,10 +377,11 @@ export class FsioSession {
   async close() {
     if (this.closed) return;
     try {
-      this.sendJson(FrameType.CTL, { op: "close" });
+      this.notify("close");
     } catch {}
     while (this.pumping) await new Promise((r) => setTimeout(r, 10));
     this.closed = true;
+    this.rpc.failAll(new Error("session closed"));
     this.observer?.disconnect();
     clearInterval(this.pollTimer);
     clearInterval(this.hotTimer);

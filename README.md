@@ -28,6 +28,7 @@ resize). Without it, shells fall back to plain pipes.
 - `spec/FINDINGS.md` — measured platform behaviors (F1–F12), the lab notebook
 - `spec/DECISIONS.md` — why the protocol is shaped this way (ADR-lite)
 - `common/frames.js` — frame encoding shared by host and clients
+- `common/rpc.js` — JSON-RPC 2.0 control plane (correlation, error codes)
 - `host/fsio-host.js` — native host: adopts sessions, echoes pings, spawns shells
 - `web/` — browser client library + workbench page
 - `bench/node-client.js` — node-only client for FS-transport baselines

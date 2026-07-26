@@ -1,4 +1,4 @@
-import { FsioClient, FrameType, decodeJson, now, hasObserver, op } from "./fsio.js";
+import { FsioClient, FrameType, now, hasObserver, op } from "./fsio.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -247,7 +247,6 @@ $("run-bench").onclick = guard(async () => {
     const count = Number($("b-count").value) || 200;
     const payload = Number($("b-payload").value) || 0;
     const warmup = Math.min(20, count);
-    const pending = new Map();
     step("creating a test session");
     session = await client.createSession(
       { kind: "echo", client: "web-bench" },
@@ -257,19 +256,13 @@ $("run-bench").onclick = guard(async () => {
         uplink: $("b-uplink").value,
         onError: (e) => log("send failed:", e.message),
         onNote: (m) => log("note:", m),
-        onFrame: (f) => {
-          if (f.type !== FrameType.PONG) return;
-          const p = decodeJson(f.payload);
-          pending.get(p.seq)?.({ ...p, t3: now() });
-          pending.delete(p.seq);
-        },
       }
     );
 
-    // --- wait for the helper to pick up the session
+    // --- wait for the helper to answer the spawn request
     step("waiting for the helper to pick up the session");
     progress(0, "waiting for the helper to notice us…");
-    await session.waitForStatus((st) => st.state === "running", 4000).catch(() => {
+    await Promise.race([session.ready, sleep(4000).then(() => Promise.reject(new Error("spawn timeout")))]).catch(() => {
       fail(
         "The helper is running, but it never picked up our test session (waited 4 s).",
         "This usually means the helper is watching a different folder than the one you picked. Double-check the path in its terminal, or restart it pointed at the right folder."
@@ -282,9 +275,9 @@ $("run-bench").onclick = guard(async () => {
     const rtts = [];
     for (let i = 0; i < total; i++) {
       step(`sending message ${i + 1} of ${total}`, { quiet: i % 50 !== 0 });
-      const reply = new Promise((resolve) => pending.set(i, resolve));
-      session.sendJson(FrameType.PING, { seq: i, t0: now(), filler: "x".repeat(payload) });
-      const r = await Promise.race([reply, sleep(5000).then(() => null)]);
+      const r = await session
+        .request("ping", { t0: now(), filler: "x".repeat(payload) }, { timeoutMs: 5000 })
+        .then(({ result, rx }) => ({ ...result, t3: rx }), () => null);
       if (r === null) {
         fail(
           `Message ${i + 1} never came back (waited 5 s).`,
@@ -565,33 +558,22 @@ $("run-observer-lab").onclick = guard(async () => {
       say("D. skipped (helper not running) — matrix + local tests above still stand");
     } else {
       step("observer lab: observer-only echo round trips");
-      const pending = new Map();
       const session = await client.createSession(
         { kind: "echo", client: "observer-lab" },
         {
           mode: "observer",
           safetyMs: 0, // no safety poll: observer sinks or swims alone
           onNote: (m) => say("   note: " + m),
-          onFrame: (f) => {
-            if (f.type !== FrameType.PONG) return;
-            const p = decodeJson(f.payload);
-            pending.get(p.seq)?.({ ...p, t3: now() });
-            pending.delete(p.seq);
-          },
         }
       );
       say(`D. echo RTT via ${session.mode === "observer" ? "observer only" : "POLLING (observer refused again — see note)"} — 15 pings, 400ms apart:`);
       const rtts = [];
       try {
         for (let i = 0; i < 15; i++) {
-          const r = await Promise.race([
-            new Promise((res) => {
-              pending.set(i, res);
-              session.sendJson(FrameType.PING, { seq: i, t0: now() });
-            }),
-            sleep(4000).then(() => null),
-          ]);
-          rtts.push(r === null ? null : Math.round((r.t3 - r.t0) * 10) / 10);
+          const rtt = await session
+            .request("ping", { t0: now() }, { timeoutMs: 4000 })
+            .then(({ result, rx }) => rx - result.t0, () => null);
+          rtts.push(rtt === null ? null : Math.round(rtt * 10) / 10);
           await sleep(400);
         }
       } finally {
@@ -641,7 +623,7 @@ $("open-term").onclick = guard(async () => {
     term.open($("term"));
     new ResizeObserver(() => {
       fit.fit();
-      termSession?.sendJson(FrameType.CTL, { op: "resize", cols: term.cols, rows: term.rows });
+      termSession?.notify("resize", { cols: term.cols, rows: term.rows });
     }).observe($("term"));
   }
   fit.fit();
@@ -661,19 +643,30 @@ $("open-term").onclick = guard(async () => {
   );
   termSession.onStatus = (st) => {
     reporter.event("terminal-status", st);
-    if (st.state === "running") {
-      $("term-status").textContent = st.pty === false
-        ? "connected (basic mode — install node-pty and restart the helper for the full experience)"
-        : "connected — type away";
-    } else if (st.state === "exited") {
+    if (st.state === "exited") {
       $("term-status").textContent = `the shell exited${st.exitCode != null ? ` (code ${st.exitCode})` : ""}`;
       $("open-term").disabled = false;
       $("close-term").disabled = true;
-    } else if (st.state === "error") {
-      showError("The helper refused to start a shell.", st.error);
-      $("open-term").disabled = false;
     }
   };
+  // Spawn errors arrive as JSON-RPC error objects on the spawn request —
+  // no more polling status.json and interpreting states.
+  step("waiting for the shell to start");
+  try {
+    const info = await Promise.race([
+      termSession.ready,
+      sleep(8000).then(() => Promise.reject(new Error("the helper never answered the spawn request (waited 8 s)"))),
+    ]);
+    $("term-status").textContent = info.pty === false
+      ? "connected (basic mode — install node-pty and restart the helper for the full experience)"
+      : "connected — type away";
+  } catch (e) {
+    showError("The helper refused to start a shell.", e.message);
+    $("open-term").disabled = false;
+    await termSession.close().catch(() => {});
+    termSession = null;
+    return;
+  }
   term.onData((d) => termSession.sendData(d));
   term.focus();
   $("close-term").disabled = false;

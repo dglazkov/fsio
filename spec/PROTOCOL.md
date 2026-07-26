@@ -7,7 +7,7 @@ Companions (non-normative):
 
 - [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F12) behind
   the rules here. Rules that exist because of a finding cite it.
-- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D9): why the protocol
+- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D10): why the protocol
   is shaped this way, with alternatives rejected.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in
@@ -68,7 +68,8 @@ runtimes (atomicity, append semantics, event coalescing).
     report.json             # results here so the native side can read them
   sessions/
     <session-id>/           # created by client; id = s-<ts36>-<rand>
-      spawn.json            # written LAST by client; presence = session is ready
+      spawn.json            # JSON-RPC spawn request; written LAST by
+                            #   client — presence = session is ready
       status.json           # host-owned: {state: running|exited|error, ...}
       out.00000000.log      # host → client framed stream, segmented: rotated
       out.00000001.log      #   at ~8 MB on frame boundaries; consumed
@@ -92,13 +93,59 @@ Both the downlink log and each uplink chunk are concatenations of frames:
 | type | name | payload |
 |---|---|---|
 | 1 | DATA | raw stdio/pty bytes |
-| 2 | PING | JSON `{seq, t0, filler?}` |
-| 3 | PONG | JSON `{seq, t0, t1, t2}` — t1 host-read, t2 host-append |
-| 4 | CTL  | JSON `{op, ...}`: `resize{cols,rows}`, `signal{sig}`, `eof`,
-  `close`, `ack{total}` |
+| 5 | RPC  | one JSON-RPC 2.0 message — see [Control plane](#control-plane-json-rpc-20) |
+
+Types 2–4 are reserved: they carried early-v0 ad-hoc control messages
+(PING/PONG/CTL), replaced by RPC
+([D10](DECISIONS.md#d10--json-rpc-20-control-plane-over-rpc-frames)).
+They MUST NOT be reused.
 
 Timestamps are `performance.timeOrigin + performance.now()` — epoch-based
 ms, comparable across processes on one machine.
+
+## Control plane (JSON-RPC 2.0)
+
+All control messaging is JSON-RPC 2.0
+([D10](DECISIONS.md#d10--json-rpc-20-control-plane-over-rpc-frames)).
+DATA stays raw bytes in DATA frames — only control rides JSON.
+
+- One JSON-RPC message per RPC frame. Batch arrays MUST NOT be used (the
+  chunk layer already batches frames; two batching layers help no one).
+- Requests (with `id`) get exactly one response on the opposite stream.
+  Notifications (no `id`) are fire-and-forget.
+- Responses MAY be duplicated (e.g. a restarted host re-answering spawn on
+  re-adoption). A peer MUST ignore responses whose `id` it is not awaiting.
+- An unknown method in a request gets error `-32601`; in a notification it
+  is ignored (and SHOULD be logged).
+
+Methods (v0, all client → host):
+
+| method | kind | params | result |
+|---|---|---|---|
+| `spawn` | request (rides `spawn.json`) | session spec, see [Session kinds](#session-kinds-v0) | `{kind, pid, pty?, cmd?}` |
+| `ping` | request | `{t0, filler?}` | params echoed + `{t1, t2}` (host read/append times) |
+| `resize` | notification | `{cols, rows}` | — |
+| `signal` | notification | `{sig}` | — |
+| `eof` | notification | `{}` | — |
+| `close` | notification | `{}` | — |
+| `ack` | notification | `{total}` | — |
+
+Application error codes (beyond the JSON-RPC predefined range): `1001`
+shell-not-allowed, `1002` spawn-failed, `1003` unknown-kind.
+
+**Spawn bootstrap.** The `spawn` request cannot ride the uplink (the host
+only consumes `in/` after adopting the session), so its envelope is the
+content of `spawn.json` (conventionally `id: 0`) — the file is the
+transport, the semantics are unchanged. The host answers on the out
+stream: a result when the session is live, or an error object with a code
+(a failed spawn is no longer a `status.json` state the client must poll
+for and interpret).
+
+**Fast-lane budget.** Envelope overhead is ~30–40 B per message; every v0
+control message fits the 180 B dirname-lane budget with ≥ 70 B to spare
+(measured, framed: `ping` 81 B, `ack` 65 B, `resize` 72 B, `close` 39 B).
+Only filler-padded pings and DATA batches spill to the file lane.
+(F10, [D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches))
 
 ## Uplink (client → host)
 
@@ -134,18 +181,23 @@ ms, comparable across processes on one machine.
   fully drained, `total` is cumulative bytes for ack accounting.
 - **Flow control**
   ([D9](DECISIONS.md#d9--segmented-log-with-cumulative-ack-flow-control);
-  F12): the client acks cumulative consumed bytes (CTL `{op:"ack", total}`,
-  riding the dirname fast lane, throttled to 250 ms / 256 KB). The host
+  F12): the client acks cumulative consumed bytes (`ack` notification
+  `{total}`, riding the dirname fast lane, throttled to 250 ms / 256 KB).
+  The host
   pauses the pty when unacked > 4 MB and resumes below 2 MB;
   fully-acked segments are deleted by the host.
 
 ## Session lifecycle
 
 - The client creates `sessions/<id>/` with `in/`, then writes `spawn.json`
-  **last**; its presence means the session is ready, so the host adopts
-  only complete sessions.
-- The host owns `status.json`: `{state: running|exited|error, ...}`.
-- Client `close()` sends CTL `close` and stops watching — it MUST NOT
+  (the JSON-RPC spawn request) **last**; its presence means the session is
+  ready, so the host adopts only complete sessions. The host answers the
+  request on the out stream (see [Control plane](#control-plane-json-rpc-20)).
+- The host owns `status.json`: `{state: running|exited|error, ...}` — the
+  durable state record (it outlives the spawn response: a late-attaching
+  reader or a restarted client can always learn the session's fate).
+- Client `close()` sends the `close` notification and stops watching — it
+  MUST NOT
   delete anything ([D6](DECISIONS.md#d6--one-writer-per-file-one-cleanup-owner);
   F8). The host deletes the session dir ~500 ms after close, and GCs stale
   exited sessions (>60 s) on adoption.
@@ -153,12 +205,14 @@ ms, comparable across processes on one machine.
 
 ## Session kinds (v0)
 
-- `{"kind": "echo"}` — host echoes PING→PONG with timestamps. The latency
-  workbench.
+Spawn params (the `spawn` request's `params`):
+
+- `{"kind": "echo"}` — host answers `ping` requests with host-side
+  timestamps. The latency workbench.
 - `{"kind": "shell", cols, rows, cmd?, args?, cwd?}` — host spawns a shell
   under a pty (node-pty if installed; pipe fallback otherwise). DATA frames
-  flow both ways; CTL `resize`/`signal`/`close` control it. Gated behind
-  `--allow-shell`.
+  flow both ways; `resize`/`signal`/`close` control it. Gated behind
+  `--allow-shell` (violations get error `1001`).
 
 ## Security posture (v0 stance)
 
@@ -182,8 +236,9 @@ renumbered.
    deletes = credit returned). Currently unbounded — but in practice the
    client's serialized commits self-throttle; low priority.
    → [#10](https://github.com/dglazkov/fsio/issues/10)
-3. **Out-of-band control?** CTL currently shares the `in/` stream; a huge
-   paste delays a resize. Separate `ctl/` lane, or priority chunks?
+3. **Out-of-band control?** Control messages currently share the `in/`
+   sequence; a huge paste delays a resize. Separate `ctl/` lane, or
+   priority chunks?
    → [#10](https://github.com/dglazkov/fsio/issues/10)
 4. **Observer latency.** Is FileSystemObserver's wakeup latency acceptable,
    or does the browser client need the hot-poll mode too? (F2 suggests the

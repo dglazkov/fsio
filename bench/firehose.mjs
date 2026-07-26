@@ -14,13 +14,12 @@ import path from "node:path";
 import {
   FrameType,
   jsonFrame,
-  encodeFrame,
-  decodeJson,
   parseFrames,
   chunkName,
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
 } from "../common/frames.js";
+import { rpcRequest, rpcNotification, SPAWN_REQUEST_ID } from "../common/rpc.js";
 
 const args = process.argv.slice(2);
 const opts = { lines: 400_000, slow: false };
@@ -50,7 +49,10 @@ function commitFrame(bytes) {
 // spawn: emit `lines` numbered lines as fast as possible, then a sentinel
 const marker = "FIREHOSE-DONE";
 const cmd = `seq 1 ${opts.lines}; echo ${marker}`;
-fs.writeFileSync(path.join(sessionDir, ".t"), JSON.stringify({ kind: "shell", cmd: "/bin/sh", args: ["-c", cmd], pty: true, cols: 200, rows: 24 }));
+fs.writeFileSync(
+  path.join(sessionDir, ".t"),
+  JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", { kind: "shell", cmd: "/bin/sh", args: ["-c", cmd], pty: true, cols: 200, rows: 24 }))
+);
 fs.renameSync(path.join(sessionDir, ".t"), path.join(sessionDir, "spawn.json"));
 
 // segment-aware acking reader (mirrors the web client)
@@ -88,7 +90,7 @@ function drain() {
     if (!opts.slow || Date.now() - lastAckAt > ackInterval) {
       lastAck = cum;
       lastAckAt = Date.now();
-      commitFrame(jsonFrame(FrameType.CTL, { op: "ack", total: cum }));
+      commitFrame(jsonFrame(FrameType.RPC, rpcNotification("ack", { total: cum })));
     }
   }
   // track worst-case footprint
@@ -114,5 +116,5 @@ console.log(`  received ${(cum / 1048576).toFixed(1)} MB in ${((Date.now() - t0)
   `(${(cum / 1048576 / ((Date.now() - t0) / 1000)).toFixed(1)} MB/s)`);
 console.log(`  peak on disk: ${(maxDirBytes / 1048576).toFixed(1)} MB across \u2264${maxSegs} segments (cap \u2248 12 MB)`);
 
-commitFrame(jsonFrame(FrameType.CTL, { op: "close" }));
+commitFrame(jsonFrame(FrameType.RPC, rpcNotification("close")));
 setTimeout(() => process.exit(ok ? 0 : 1), 600);

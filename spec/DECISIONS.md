@@ -179,3 +179,41 @@ and race snapshot reads, F11).
 
 **Findings.** F12; interacts with F1, F11. Settles
 [PROTOCOL.md open question 1](PROTOCOL.md#open-questions).
+
+## D10 — JSON-RPC 2.0 control plane over RPC frames
+
+**Decision.** All control messaging is JSON-RPC 2.0, one message per RPC
+frame (type 5): `ping` as a request with `id` correlation; `resize`,
+`signal`, `eof`, `close`, `ack` as notifications; `spawn` as a request
+whose envelope rides `spawn.json` (the file is the bootstrap transport)
+and whose response — result or error object with a code — rides the out
+stream. DATA stays raw bytes in DATA frames. Frame types 2–4 (PING/PONG/
+CTL) are retired and reserved.
+
+**Context.** The ad-hoc control plane had grown implicit conventions about
+direction, correlation, and errors: the seq/pending-map idiom was
+hand-rolled three separate times (web bench, node bench, observer lab),
+and a failed spawn was a `status.json` state the client had to poll for
+and interpret. Upcoming work wants standard request/response semantics:
+the reattach handshake (#3), capability negotiation (#8), and the
+TypeScript schema freeze (#2) — this decision *is* the shape of the
+versioned contract. Envelope cost measured: ~30–40 B per message; every
+v0 control message fits the 180 B dirname-lane budget with ≥ 70 B to
+spare (`ping` 81 B framed, `ack` 65 B, `resize` 72 B, `close` 39 B), so
+the fast lane is unaffected. Bench confirmation: node-client p50 5.46 ms
+RTT post-migration vs. 5.53 ms before — envelope cost is invisible at
+stdio scale (consistent with F4).
+
+**Alternatives rejected.** Status quo ad-hoc `{op}` messages (correlation
+and error handling reinvented per message and per client). A custom
+minimal envelope (saves ~20 B over JSON-RPC but loses the standard error
+model and every existing tool/library that speaks JSON-RPC). JSON-RPC
+batch arrays (the frame/chunk layer already batches; a second batching
+layer complicates parsing for zero benefit — banned in the spec). Routing
+DATA through JSON-RPC (terminal throughput through base64'd JSON would be
+silly; layering keeps bytes raw and the control plane out of the hot
+path).
+
+**Findings.** None directly; the envelope budget leans on F10 (dirname
+lane) and the latency neutrality on F4. Settles issue
+[#14](https://github.com/dglazkov/fsio/issues/14); feeds #2 and #8.

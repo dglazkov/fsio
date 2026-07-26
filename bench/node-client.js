@@ -20,6 +20,7 @@ import {
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
 } from "../common/frames.js";
+import { RpcEndpoint, rpcRequest, SPAWN_REQUEST_ID } from "../common/rpc.js";
 
 const args = process.argv.slice(2);
 const opts = { count: 200, poll: 0, payload: 0, warmup: 20, uplink: "file" };
@@ -58,7 +59,7 @@ try {
 // ---- create session
 fs.mkdirSync(inDir, { recursive: true });
 const tmp = path.join(sessionDir, ".tmp-spawn");
-fs.writeFileSync(tmp, JSON.stringify({ kind: "echo", client: "node-bench" }));
+fs.writeFileSync(tmp, JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", { kind: "echo", client: "node-bench" })));
 fs.renameSync(tmp, path.join(sessionDir, "spawn.json"));
 
 // ---- chunk writer (atomic: temp + rename)
@@ -74,10 +75,10 @@ function commitFrame(bytes) {
   fs.renameSync(t, path.join(inDir, name));
 }
 
-// ---- out.log reader
+// ---- out.log reader + rpc endpoint (id correlation lives in common/rpc.js)
 let offset = 0;
 let outFd = null;
-const pending = new Map(); // seq -> {t0, resolve}
+const rpc = new RpcEndpoint((msg) => commitFrame(jsonFrame(FrameType.RPC, msg)));
 
 function drainOutLog() {
   let size;
@@ -94,13 +95,7 @@ function drainOutLog() {
   offset += consumed;
   const t3 = now();
   for (const f of frames) {
-    if (f.type !== FrameType.PONG) continue;
-    const p = decodeJson(f.payload);
-    const entry = pending.get(p.seq);
-    if (entry) {
-      pending.delete(p.seq);
-      entry.resolve({ ...p, t3 });
-    }
+    if (f.type === FrameType.RPC) rpc.handleMessage(decodeJson(f.payload), t3);
   }
 }
 
@@ -115,12 +110,9 @@ const safety = setInterval(drainOutLog, 250);
 // ---- ping-pong loop
 const filler = "x".repeat(opts.payload);
 
-function ping(seq) {
-  return new Promise((resolve) => {
-    const t0 = now();
-    pending.set(seq, { t0, resolve });
-    commitFrame(jsonFrame(FrameType.PING, { seq, t0, filler }));
-  });
+async function ping() {
+  const { result, rx } = await rpc.request("ping", { t0: now(), filler });
+  return { ...result, t3: rx };
 }
 
 function stats(xs) {
@@ -138,7 +130,7 @@ console.log(`  mode=${mode} count=${opts.count} warmup=${opts.warmup} payload=${
 
 const results = [];
 for (let i = 0; i < opts.warmup + opts.count; i++) {
-  const r = await ping(i);
+  const r = await ping();
   if (i >= opts.warmup) {
     results.push({
       rtt: r.t3 - r.t0, // full round trip
@@ -162,7 +154,7 @@ console.log(
 );
 
 // ---- cleanup
-commitFrame(jsonFrame(FrameType.CTL, { op: "close" }));
+rpc.notify("close");
 setTimeout(() => {
   watcher?.close();
   clearInterval(safety);
