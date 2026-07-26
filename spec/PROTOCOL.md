@@ -238,8 +238,9 @@ renumbered.
    [D9](DECISIONS.md#d9--segmented-log-with-cumulative-ack-flow-control)
    (F12); normative rules under [Downlink](#downlink-host--client).
 2. **Chunk-count backpressure** client→host: cap outstanding chunks (host
-   deletes = credit returned). Currently unbounded — but in practice the
-   client's serialized commits self-throttle; low priority.
+   deletes = credit returned). Currently unbounded — but the client's
+   serialized commits self-throttle (measured, F13: a 400-ping flood
+   peaked at 3 outstanding chunks); low priority.
    → [#10](https://github.com/dglazkov/fsio/issues/10)
 3. **Out-of-band control?** Control messages currently share the `in/`
    sequence; a huge paste delays a resize. Separate `ctl/` lane, or

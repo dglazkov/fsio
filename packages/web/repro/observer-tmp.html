@@ -1,0 +1,94 @@
+<!doctype html>
+<!--
+  Minimal standalone repro: FileSystemObserver.observe() throws
+  InvalidModificationError for directories under /tmp on macOS
+  (fsio finding F9; https://github.com/dglazkov/fsio/issues/9).
+
+  Self-contained on purpose — no framework, no build step — so it can be
+  attached to a Chromium bug as-is. Serve from any secure context
+  (localhost is fine) in Chrome with the File System Access API.
+
+  To reproduce (macOS):
+    1. mkdir -p /tmp/obs-repro ~/obs-repro
+    2. Open this page, click "Pick a directory & observe".
+    3. Pick ~/obs-repro  -> every observe() variant succeeds.
+    4. Re-run, pick /tmp/obs-repro -> observe() throws
+       InvalidModificationError (NotFoundError has also been seen).
+  Same code, same gesture, same permissions - the only difference is the
+  path. /tmp is a symlink to /private/tmp on macOS, which is the leading
+  suspect.
+-->
+<html lang="en">
+<meta charset="utf-8" />
+<title>FileSystemObserver /tmp repro</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 44rem; margin: 3rem auto; padding: 0 1rem; }
+  pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+  .ok { color: #0a7d38; } .bad { color: #b3261e; }
+  button { font: inherit; padding: .4rem 1rem; }
+</style>
+<h1>FileSystemObserver <code>/tmp</code> repro</h1>
+<p>
+  Click, pick a directory, and this page calls
+  <code>new FileSystemObserver(cb).observe(handle, …)</code> on it —
+  recursive and non-recursive, plus a subdirectory and a file inside it.
+  On macOS, picking a directory under <code>$HOME</code> succeeds in all
+  variants; picking one under <code>/tmp</code> throws
+  <code>InvalidModificationError</code> at <code>observe()</code> time.
+  Setup: <code>mkdir -p /tmp/obs-repro ~/obs-repro</code>
+</p>
+<button id="go">Pick a directory &amp; observe</button>
+<pre id="out">results appear here…</pre>
+<script type="module">
+  const out = document.getElementById("out");
+  const say = (line, cls) => {
+    const span = document.createElement("span");
+    span.textContent = line + "\n";
+    if (cls) span.className = cls;
+    out.append(span);
+  };
+
+  document.getElementById("go").onclick = async () => {
+    out.textContent = "";
+    if (!("FileSystemObserver" in self)) {
+      say("FileSystemObserver is not available in this browser.", "bad");
+      return;
+    }
+    let dir;
+    try {
+      dir = await showDirectoryPicker({ mode: "read" });
+    } catch (e) {
+      say(`picker: ${e.name}: ${e.message}`, "bad");
+      return;
+    }
+    say(`picked: ${dir.name}`);
+    say(`userAgent: ${navigator.userAgent}\n`);
+
+    // Targets: the picked dir itself, a fresh subdirectory, a fresh file.
+    // (Needs readwrite only to create the two scratch entries.)
+    const targets = [["picked dir", dir]];
+    try {
+      await dir.requestPermission?.({ mode: "readwrite" });
+      targets.push(["subdirectory", await dir.getDirectoryHandle("obs-repro-sub", { create: true })]);
+      targets.push(["file", await dir.getFileHandle("obs-repro-file.txt", { create: true })]);
+    } catch (e) {
+      say(`(scratch entries skipped: ${e.name}: ${e.message})`);
+    }
+
+    for (const [label, handle] of targets) {
+      for (const recursive of handle.kind === "directory" ? [false, true] : [false]) {
+        const what = `observe(${label}${recursive ? ", {recursive:true}" : ""})`;
+        const observer = new FileSystemObserver(() => {});
+        try {
+          await observer.observe(handle, recursive ? { recursive: true } : undefined);
+          say(`OK    ${what}`, "ok");
+        } catch (e) {
+          say(`THREW ${what} -> ${e.name}: ${e.message}`, "bad");
+        } finally {
+          observer.disconnect();
+        }
+      }
+    }
+    say("\ndone. Run again with the other directory to compare.");
+  };
+</script>

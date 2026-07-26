@@ -200,6 +200,7 @@ $("pick").onclick = guard(async () => {
   $in("run-bench").disabled = false;
   $in("run-commit").disabled = false;
   $in("run-observer-lab").disabled = false;
+  $in("run-throughput-lab").disabled = false;
   $in("open-term").disabled = false;
   log(`connected to ${root.name}/.fsio`);
 });
@@ -442,6 +443,150 @@ $("run-commit").onclick = guard(async () => {
   } finally {
     $("progress").hidden = true;
     btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- throughput lab
+// #4's open measurement: the dirname fast lane under *sustained* load, not
+// one-ping-at-a-time. Three phases:
+//   A. paced "typing" — 1 ping / 15 ms for ~3 s. Does the auto lane stay on
+//      dirname chunks, and does RTT hold near the F10 number?
+//   B. flood — N pings fired back-to-back. Sends coalesce while a commit is
+//      in flight, batches outgrow DIR_CHUNK_MAX_BYTES (180 B), and the auto
+//      lane must fall back to file chunks (F7 cost each): measures achieved
+//      msgs/s, the lane split, and the in/ backlog the host must drain.
+//   C. paste — 5 pings with 4 KB filler: always file-lane; the per-commit
+//      floor for bulk uplink.
+// Results go to the page, the nerd log, and .fsio/client/report.json.
+
+$("run-throughput-lab").onclick = guard(async () => {
+  const btn = $in("run-throughput-lab");
+  btn.disabled = true;
+  $("verdict").hidden = true;
+  const out = $("bench-out");
+  $("bench-details").hidden = false;
+  out.textContent = "throughput lab running…";
+  const lines: string[] = [];
+  const say = (s: string) => {
+    lines.push(s);
+    out.textContent = lines.join("\n");
+    log("tput: " + s);
+  };
+
+  let session: FsioSession | null = null;
+  try {
+    step("throughput lab: preflight");
+    const host = await refreshHostCheck();
+    if (!host.alive) {
+      fail("The helper doesn't seem to be running in this folder.", "Start it with the command from step 1 and try again.");
+    }
+    session = await client!.createSession(
+      { kind: "echo", client: "web-throughput-lab" },
+      { mode: "adaptive", pollMs: 5, uplink: "auto", onError: (e) => log("send failed:", e.message), onNote: (m) => log("note:", m) }
+    );
+    await Promise.race([session.ready, sleep(4000).then(() => Promise.reject(new Error("spawn timeout")))]);
+    const markStats = () => ({ ...session!.stats });
+    const backlog = async () => {
+      let n = 0;
+      for await (const _ of session!.inDir.keys()) n++;
+      return n;
+    };
+
+    // ---- A. paced typing
+    step("throughput lab A: paced sends (typing cadence)");
+    say("A. paced — 1 ping / 15 ms for 3 s (typing-ish)");
+    {
+      const before = markStats();
+      const rtts: number[] = [];
+      const pending: Promise<unknown>[] = [];
+      const t0 = performance.now();
+      let i = 0;
+      while (performance.now() - t0 < 3000) {
+        const sent = now();
+        pending.push(
+          session.request<PingResult>("ping", { t0: sent }, { timeoutMs: 15000 }).then(({ rx }) => rtts.push(rx - sent))
+        );
+        i++;
+        await sleep(15);
+      }
+      await Promise.all(pending);
+      const after = markStats();
+      const s = stats(rtts);
+      const dir = after.dirChunks - before.dirChunks;
+      const file = after.fileChunks - before.fileChunks;
+      say(`   ${i} pings · rtt p50 ${ms(s.p50)} p95 ${ms(s.p95)} max ${ms(s.max)} ms`);
+      say(`   lanes: ${dir} dirname · ${file} file`);
+      reporter.event("throughput-paced", { pings: i, rtt: s, dirChunks: dir, fileChunks: file });
+    }
+
+    // ---- B. flood
+    step("throughput lab B: flood");
+    const FLOOD = 400;
+    say(`B. flood — ${FLOOD} pings fired back-to-back`);
+    {
+      const before = markStats();
+      const rtts: number[] = [];
+      const backlogSamples: number[] = [];
+      const t0 = performance.now();
+      const pending: Promise<unknown>[] = [];
+      for (let i = 0; i < FLOOD; i++) {
+        const sent = now();
+        pending.push(
+          session.request<PingResult>("ping", { t0: sent }, { timeoutMs: 30000 }).then(({ rx }) => rtts.push(rx - sent))
+        );
+      }
+      const sendDone = performance.now() - t0; // queueing is sync; commits are async
+      const sampler = (async () => {
+        while (rtts.length < FLOOD) {
+          backlogSamples.push(await backlog());
+          await sleep(25);
+        }
+      })();
+      await Promise.all(pending);
+      const wall = performance.now() - t0;
+      await sampler;
+      const after = markStats();
+      const s = stats(rtts);
+      const dir = after.dirChunks - before.dirChunks;
+      const file = after.fileChunks - before.fileChunks;
+      const chunks = dir + file;
+      say(`   all answered in ${ms(wall)} ms → ${(FLOOD / (wall / 1000)).toFixed(0)} msg/s round-trip`);
+      say(`   ${chunks} chunks (${dir} dirname · ${file} file) → mean batch ${(FLOOD / chunks).toFixed(1)} msgs/chunk`);
+      say(`   rtt p50 ${ms(s.p50)} p95 ${ms(s.p95)} max ${ms(s.max)} ms · max in/ backlog ${Math.max(0, ...backlogSamples)} chunks`);
+      reporter.event("throughput-flood", {
+        pings: FLOOD,
+        wallMs: wall,
+        sendLoopMs: sendDone,
+        msgsPerSec: FLOOD / (wall / 1000),
+        rtt: s,
+        dirChunks: dir,
+        fileChunks: file,
+        maxBacklog: Math.max(0, ...backlogSamples),
+        backlogSamples,
+      });
+    }
+
+    // ---- C. paste
+    step("throughput lab C: 4 KB payloads");
+    say("C. paste — 5 pings × 4 KB filler (file lane by size)");
+    {
+      const before = markStats();
+      const rtts: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const sent = now();
+        const { rx } = await session.request<PingResult>("ping", { t0: sent, filler: "x".repeat(4096) }, { timeoutMs: 15000 });
+        rtts.push(rx - sent);
+      }
+      const after = markStats();
+      const s = stats(rtts);
+      say(`   rtt p50 ${ms(s.p50)} p95 ${ms(s.p95)} max ${ms(s.max)} ms · lanes: ${after.dirChunks - before.dirChunks} dirname · ${after.fileChunks - before.fileChunks} file`);
+      reporter.event("throughput-paste", { pings: 5, payload: 4096, rtt: s });
+    }
+
+    say("\ndone — full data in .fsio/client/report.json");
+  } finally {
+    btn.disabled = false;
+    await session?.close().catch(() => {});
   }
 });
 

@@ -133,8 +133,20 @@ export class FsioSession {
   readAgain = false;
   closed = false;
   pumpError: Error | null = null; // first async send failure; surfaced via onError + next send()
-  stats: { chunksWritten: number; bytesIn: number; bytesOut: number; wakeups: number; staleReads?: number } = {
+  stats: {
+    chunksWritten: number;
+    /** chunks that rode the dirname fast lane vs. file chunks (#4: the
+     *  auto lane's fallback dynamics are a measured quantity) */
+    dirChunks: number;
+    fileChunks: number;
+    bytesIn: number;
+    bytesOut: number;
+    wakeups: number;
+    staleReads?: number;
+  } = {
     chunksWritten: 0,
+    dirChunks: 0,
+    fileChunks: 0,
     bytesIn: 0,
     bytesOut: 0,
     wakeups: 0,
@@ -236,8 +248,10 @@ export class FsioSession {
           // payload rides the directory *name*; no content write, no close()
           const name = dirChunkName(this.outSeq++, batch);
           await op(`committing ${name.slice(0, 12)}…/`, () => this.inDir.getDirectoryHandle(name, { create: true }));
+          this.stats.dirChunks++;
         } else {
           await this._writeFile(chunkName(this.outSeq++), batch, this.inDir);
+          this.stats.fileChunks++;
         }
         this.stats.chunksWritten++;
         this.stats.bytesOut += batch.length;

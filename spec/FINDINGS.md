@@ -131,10 +131,16 @@ sends CTL `close` and stops watching; the host deletes the session dir
 Solved by the observer lab differential: the full observe() matrix
 (3 handles × recursive on/off) succeeds for a folder under `$HOME` and
 fails with `InvalidModificationError` for the same code against `/tmp/...`
-— almost certainly the `/tmp → /private/tmp` symlink. Clean Chromium repro
-candidate. Spec rule stands regardless: observer startup failure MUST
-downgrade to polling, never be fatal. (Practical corollary: don't demo out
-of /tmp.) → [D7](DECISIONS.md#d7--observer-failure-downgrades-to-polling)
+— almost certainly the `/tmp → /private/tmp` symlink. Confirmed
+(2026-07-26) by a dependency-free standalone page
+([packages/web/repro/observer-tmp.html](../packages/web/repro/observer-tmp.html)):
+all five observe() variants (dir/subdir/file × recursive) succeed under
+`$HOME` and all five throw `InvalidModificationError` under `/tmp` — same
+code, same gesture, only the path differs. That page is the Chromium bug
+attachment ([#9](https://github.com/dglazkov/fsio/issues/9)). Spec rule
+stands regardless: observer startup failure MUST downgrade to polling,
+never be fatal. (Practical corollary: don't demo out of /tmp.)
+→ [D7](DECISIONS.md#d7--observer-failure-downgrades-to-polling)
 
 ### F10 — the dirname fast lane works: 5.3 ms RTT from the browser
 
@@ -168,13 +174,40 @@ for terminal scrollback. Reproduce: `node packages/bench/firehose.mjs <dir>
 --lines 3000000 --slow`.
 → [D9](DECISIONS.md#d9--segmented-log-with-cumulative-ack-flow-control)
 
+### F13 — dirname lane under sustained load: typing never leaves it; floods self-batch onto the file lane and win anyway
+
+Workbench throughput lab (2026-07-26, Chrome 150, adaptive 5 ms,
+uplink auto):
+
+- **Paced** (1 ping / 15 ms × 3 s, 195 pings): RTT p50 6.0 ms · p95
+  10.8 · max 13.4; **207/207 chunks dirname**. Typing-rate traffic stays
+  on the fast lane indefinitely — F10's number holds under sustained use.
+- **Flood** (400 pings queued back-to-back; queueing itself took 2 ms):
+  commit serialization coalesced the queue into **4 chunks** — 3 dirname +
+  1 file chunk carrying ~399 messages (≈34 KB, far over the 180 B name
+  cap). All 400 answered in 272 ms ≈ **1470 msg/s round-trip**; per-message
+  p50 250 ms; max `in/` backlog **3 chunks**. The F7 cost amortizes over
+  the batch: bulk throughput is good *because* the flood falls off the
+  fast lane into one big file commit.
+- **Paste-sized** (5 × 4 KB filler, serial): RTT p50 80.7 ms — the F7
+  `close()` floor, as expected; max 239 ms (scan variance).
+
+Design consequence: the auto lane's size threshold plus serialized commits
+are **self-regulating** — no chunk-credit backpressure was needed even
+under flood (spec open question 2's "self-throttles" is now measured, not
+assumed: backlog never exceeded 3). Paste UX wants local-echo masking
+([#10](https://github.com/dglazkov/fsio/issues/10)), not lane changes.
+→ [D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches)
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
   2026-07-26: `close()` p50 75.0 → 1.3 ms with protection off; F7
   attributed — table under F7.
   → [#11](https://github.com/dglazkov/fsio/issues/11)
-- Dirname-lane throughput under sustained typing/paste load.
+- ~~Dirname-lane throughput under sustained typing/paste load.~~ Measured
+  2026-07-26 → F13 (typing: p50 6 ms all-dirname; flood: 1470 msg/s
+  self-batched; backlog ≤3).
   → [#4](https://github.com/dglazkov/fsio/issues/4)
 
 ## Reproduce
