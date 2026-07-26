@@ -1,0 +1,10 @@
+node_modules/
+
+# fsio protocol state — never commit scrollback/session data
+.fsio/
+
+# local scratch
+*.log
+nohup.out
+.DS_Store
+tmp/
