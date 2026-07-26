@@ -33,6 +33,7 @@
     },
     "test": {
       "dependencies": [
+        "./packages/common:test",
         "./packages/bench:test"
       ]
     }

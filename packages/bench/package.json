@@ -17,7 +17,7 @@
       "dependencies": ["../common:build"]
     },
     "test": {
-      "command": "node dist/test-smoke.js",
+      "command": "node --test --test-concurrency=1 dist/test-protocol.js && node dist/test-smoke.js",
       "files": ["../host/src/**", "../common/src/**"],
       "output": [],
       "dependencies": ["build", "../host:build"]

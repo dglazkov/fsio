@@ -11,9 +11,16 @@
     }
   },
   "scripts": {
-    "build": "wireit"
+    "build": "wireit",
+    "test": "wireit"
   },
   "wireit": {
+    "test": {
+      "command": "node --test dist/*.test.js",
+      "files": [],
+      "output": [],
+      "dependencies": ["build"]
+    },
     "build": {
       "command": "tsc --pretty",
       "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],

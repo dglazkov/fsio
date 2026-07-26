@@ -157,7 +157,12 @@ Only filler-padded pings and DATA batches spill to the file lane.
   the host reads a partial or empty chunk it MUST retry shortly (the
   browser's swap-file commit can appear as create-empty → content-appears).
 - A client MUST serialize commits (chunk N fully committed before N+1
-  starts) so order of appearance matches order of naming.
+  starts) so order of appearance matches order of naming. This is a
+  client obligation because it is not host-detectable: the host discovers
+  its base sequence from the smallest chunk present (required for restart
+  adoption, where earlier chunks were already consumed and deleted), so a
+  violating first commit is indistinguishable from a resumed stream. After
+  the base is discovered, a sequence gap stalls consumption until filled.
 - **Two lanes, one sequence space**
   ([D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches); F7, F10):
   frame batches ≤180 raw bytes SHOULD be committed as a created directory
