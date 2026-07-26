@@ -34,7 +34,11 @@ style.
    scope creep.
 2. Session-end triage: every new issue gets a `p1`/`p2`/`p3` label; when
    closing an issue, re-check whether it unblocks a `p3` (promote it). A
-   priority is a claim about the dependency graph — cite what it waits on.
+   priority is a claim about the dependency graph *and the current goal*
+   (a working demo; agent-verifiable browser loops) — cite what it waits
+   on, and beware "just became possible" masquerading as "now urgent"
+   (that bias once put npm packaging at p1 the day the host became
+   embeddable).
 3. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
    prefer a short-lived branch + PR so CI gates the merge.
 4. Commit messages explain *why*, cite F/D/issue numbers, and record
