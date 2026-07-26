@@ -9,5 +9,8 @@ nohup.out
 .DS_Store
 tmp/
 
+# build output (npm run build regenerates; wireit owns freshness)
+dist/
+
 # wireit cache
 .wireit/
