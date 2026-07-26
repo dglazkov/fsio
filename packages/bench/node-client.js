@@ -19,8 +19,10 @@ import {
   chunkName,
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
-} from "../common/frames.js";
-import { RpcEndpoint, rpcRequest, SPAWN_REQUEST_ID } from "../common/rpc.js";
+  RpcEndpoint,
+  rpcRequest,
+  SPAWN_REQUEST_ID,
+} from "@fsio/common";
 
 const args = process.argv.slice(2);
 const opts = { count: 200, poll: 0, payload: 0, warmup: 20, uplink: "file" };

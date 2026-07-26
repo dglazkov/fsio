@@ -18,8 +18,10 @@ import {
   chunkName,
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
-} from "../common/frames.js";
-import { rpcRequest, rpcNotification, SPAWN_REQUEST_ID } from "../common/rpc.js";
+  rpcRequest,
+  rpcNotification,
+  SPAWN_REQUEST_ID,
+} from "@fsio/common";
 
 const args = process.argv.slice(2);
 const opts = { lines: 400_000, slow: false };

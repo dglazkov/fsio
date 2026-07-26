@@ -5,14 +5,19 @@
   "description": "fsio browser client and workbench page",
   "type": "module",
   "scripts": {
-    "check": "wireit"
+    "build": "wireit"
   },
   "wireit": {
-    "check": {
+    "build": {
       "command": "node ../../scripts/check-syntax.mjs .",
       "files": ["*.js", "../../scripts/check-syntax.mjs"],
       "output": [],
-      "dependencies": ["../common:check"]
+      "dependencies": ["../common:build"]
     }
+  },
+  "dependencies": {
+    "@fsio/common": "*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
   }
 }

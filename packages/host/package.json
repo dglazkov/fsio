@@ -5,15 +5,18 @@
   "description": "fsio native host: session server over a shared directory",
   "type": "module",
   "scripts": {
-    "check": "wireit"
+    "build": "wireit"
   },
   "wireit": {
-    "check": {
+    "build": {
       "command": "node ../../scripts/check-syntax.mjs .",
       "files": ["*.js", "../../scripts/check-syntax.mjs"],
       "output": [],
-      "dependencies": ["../common:check"]
+      "dependencies": ["../common:build"]
     }
+  },
+  "dependencies": {
+    "@fsio/common": "*"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"

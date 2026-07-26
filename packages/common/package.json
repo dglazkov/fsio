@@ -2,16 +2,23 @@
   "name": "@fsio/common",
   "version": "0.0.1",
   "private": true,
-  "description": "fsio protocol core: frame codec and JSON-RPC control plane",
+  "description": "fsio protocol core: frame codec, JSON-RPC control plane, protocol schemas",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "check": "wireit"
+    "build": "wireit"
   },
   "wireit": {
-    "check": {
-      "command": "node ../../scripts/check-syntax.mjs .",
-      "files": ["*.js", "../../scripts/check-syntax.mjs"],
-      "output": []
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted"
     }
   }
 }

@@ -11,18 +11,26 @@ export const FrameType = {
   DATA: 1, // raw stdio/pty bytes
   // 2–4 reserved: early-v0 PING/PONG/CTL, retired when the control plane
   // moved to JSON-RPC (spec/DECISIONS.md D10). Never reuse.
-  RPC: 5, // one JSON-RPC 2.0 message (common/rpc.js)
-};
+  RPC: 5, // one JSON-RPC 2.0 message (rpc.ts)
+} as const;
 
-const frameTypeNames = Object.fromEntries(
+export type FrameTypeValue = (typeof FrameType)[keyof typeof FrameType];
+
+export interface Frame {
+  /** Frame type byte; unknown values are possible from newer peers. */
+  type: number;
+  payload: Uint8Array;
+}
+
+const frameTypeNames = new Map<number, string>(
   Object.entries(FrameType).map(([k, v]) => [v, k])
 );
 
-export function frameTypeName(type) {
-  return frameTypeNames[type] ?? `0x${type.toString(16)}`;
+export function frameTypeName(type: number): string {
+  return frameTypeNames.get(type) ?? `0x${type.toString(16)}`;
 }
 
-export function encodeFrame(type, payload) {
+export function encodeFrame(type: number, payload: Uint8Array): Uint8Array {
   const buf = new Uint8Array(HEADER_SIZE + payload.length);
   const dv = new DataView(buf.buffer);
   dv.setUint32(0, payload.length, true);
@@ -31,26 +39,25 @@ export function encodeFrame(type, payload) {
   return buf;
 }
 
-export function jsonFrame(type, obj) {
+export function jsonFrame(type: number, obj: unknown): Uint8Array {
   return encodeFrame(type, new TextEncoder().encode(JSON.stringify(obj)));
 }
 
-export function decodeJson(payload) {
-  return JSON.parse(new TextDecoder().decode(payload));
+export function decodeJson<T = unknown>(payload: Uint8Array): T {
+  return JSON.parse(new TextDecoder().decode(payload)) as T;
 }
 
-// Parse as many complete frames as possible from `bytes`.
-// Returns { frames: [{type, payload}], consumed: byteCount }.
-// `consumed` stops before any trailing partial frame.
-export function parseFrames(bytes) {
-  const frames = [];
+/** Parse as many complete frames as possible from `bytes`.
+ *  `consumed` stops before any trailing partial frame. */
+export function parseFrames(bytes: Uint8Array): { frames: Frame[]; consumed: number } {
+  const frames: Frame[] = [];
   let off = 0;
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dv = new DataView(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength);
   while (off + HEADER_SIZE <= bytes.length) {
     const len = dv.getUint32(off, true);
     if (off + HEADER_SIZE + len > bytes.length) break; // partial tail
     frames.push({
-      type: bytes[off + 4],
+      type: bytes[off + 4]!,
       payload: bytes.subarray(off + HEADER_SIZE, off + HEADER_SIZE + len),
     });
     off += HEADER_SIZE + len;
@@ -58,7 +65,7 @@ export function parseFrames(bytes) {
   return { frames, consumed: off };
 }
 
-export function concatBytes(arrays) {
+export function concatBytes(arrays: Uint8Array[]): Uint8Array {
   const total = arrays.reduce((n, a) => n + a.length, 0);
   const out = new Uint8Array(total);
   let off = 0;
@@ -69,34 +76,33 @@ export function concatBytes(arrays) {
   return out;
 }
 
-// Cross-process comparable timestamp in ms (epoch-based, sub-ms precision).
-export function now() {
+/** Cross-process comparable timestamp in ms (epoch-based, sub-ms precision). */
+export function now(): number {
   return performance.timeOrigin + performance.now();
 }
 
-export function chunkName(seq) {
+export function chunkName(seq: number): string {
   return String(seq).padStart(8, "0") + ".f";
 }
 
 export const CHUNK_RE = /^(\d{8})\.f$/;
 
-// Dirname uplink (experimental, see spec open question 8): small frame
-// batches encoded into a created directory's *name* — no file content, so
-// (hypothesis) no browser after-write checks. Same sequence space as file
-// chunks; consumers process both in seq order.
+// Dirname uplink (F10): small frame batches encoded into a created
+// directory's *name* — no file content, so no browser after-write checks.
+// Same sequence space as file chunks; consumers process both in seq order.
 export const DIR_CHUNK_RE = /^(\d{8})-([A-Za-z0-9_-]+)$/;
 
-export function dirChunkName(seq, bytes) {
+export function dirChunkName(seq: number, bytes: Uint8Array): string {
   return String(seq).padStart(8, "0") + "-" + b64urlEncode(bytes);
 }
 
-export function b64urlEncode(bytes) {
+export function b64urlEncode(bytes: Uint8Array): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-export function b64urlDecode(str) {
+export function b64urlDecode(str: string): Uint8Array {
   const bin = atob(str.replaceAll("-", "+").replaceAll("_", "/"));
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

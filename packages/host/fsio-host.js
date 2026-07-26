@@ -24,10 +24,12 @@ import {
   CHUNK_RE,
   DIR_CHUNK_RE,
   b64urlDecode,
-} from "../common/frames.js";
-import { RpcErrors, rpcResult, rpcError } from "../common/rpc.js";
+  RpcErrors,
+  rpcResult,
+  rpcError,
+  PROTOCOL_VERSION,
+} from "@fsio/common";
 
-const PROTOCOL_VERSION = 0;
 const HEARTBEAT_MS = 2000;
 const SAFETY_POLL_MS = 250;
 const IDLE_GC_MS = 5 * 60_000; // echo sessions with no traffic get removed

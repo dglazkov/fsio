@@ -11,7 +11,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "wireit",
+    "build": "wireit",
     "test": "wireit",
     "host": "node packages/host/fsio-host.js",
     "serve": "node packages/host/serve.js",
@@ -20,12 +20,12 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "wireit": {
-    "check": {
+    "build": {
       "dependencies": [
-        "./packages/common:check",
-        "./packages/host:check",
-        "./packages/web:check",
-        "./packages/bench:check"
+        "./packages/common:build",
+        "./packages/host:build",
+        "./packages/web:build",
+        "./packages/bench:build"
       ]
     },
     "test": {
@@ -35,6 +35,9 @@
     }
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
     "wireit": "^0.14.0"
   }
 }

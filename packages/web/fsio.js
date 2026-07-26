@@ -18,8 +18,8 @@ import {
   chunkName,
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
-} from "../common/frames.js";
-import { RpcEndpoint, RpcError, rpcRequest, SPAWN_REQUEST_ID } from "../common/rpc.js";
+} from "../common/dist/frames.js"; // temporary path until the vite stage
+import { RpcEndpoint, RpcError, rpcRequest, SPAWN_REQUEST_ID } from "../common/dist/rpc.js";
 
 export { FrameType, jsonFrame, decodeJson, now, RpcError };
 
