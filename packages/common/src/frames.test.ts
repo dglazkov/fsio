@@ -88,6 +88,33 @@ test("chunk names: fixed-width seq, one shared sequence space across lanes", () 
   assert.deepEqual([...b64urlDecode(m[2]!)], [1, 2, 3]);
 });
 
+test("fuzz: parseFrames never throws or over-consumes on corrupt/truncated input", () => {
+  // Issue #1: a torn log must never crash or desync a reader. Deterministic
+  // PRNG so failures reproduce.
+  let seed = 0xf510;
+  const rnd = (n: number) => (seed = (seed * 48271) % 0x7fffffff) % n;
+  for (let iter = 0; iter < 2000; iter++) {
+    // half pure noise, half a valid stream truncated at a random point
+    let buf: Uint8Array;
+    if (iter % 2 === 0) {
+      buf = new Uint8Array(rnd(64)).map(() => rnd(256));
+    } else {
+      const frames: Uint8Array[] = [];
+      for (let i = 0, n = rnd(4) + 1; i < n; i++) {
+        frames.push(encodeFrame(rnd(256), new Uint8Array(rnd(32)).map(() => rnd(256))));
+      }
+      const whole = concatBytes(frames);
+      buf = whole.subarray(0, rnd(whole.length + 1));
+    }
+    const { frames, consumed } = parseFrames(buf); // must not throw
+    assert.ok(consumed <= buf.length, "consumed past the buffer");
+    // prefix property: re-parsing the consumed prefix yields the same frames
+    const again = parseFrames(buf.subarray(0, consumed));
+    assert.equal(again.consumed, consumed, "consumed prefix is not stable");
+    assert.equal(again.frames.length, frames.length);
+  }
+});
+
 test("DIR_CHUNK_MAX_BYTES stays within the 255-byte filename budget", () => {
   // spec "Uplink": 8 (seq) + 1 (dash) + ceil(4n/3) ≤ 255 (F10 lane contract)
   const name = dirChunkName(99999999, new Uint8Array(DIR_CHUNK_MAX_BYTES).fill(0xff));

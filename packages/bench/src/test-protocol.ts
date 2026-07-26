@@ -247,6 +247,59 @@ test("a sequence gap stalls consumption; both lanes share one ordered space", as
   }
 });
 
+// ------------------------------------------------------------------ shell (pipe fallback)
+
+test("pipe shell: DATA roundtrip, eof ends stdin, status reaches exited 0", async () => {
+  // spec "Session kinds" + "Control plane": eof notification closes the
+  // child's stdin (pipe mode); status.json is the durable state record.
+  const h = await HostFixture.start();
+  try {
+    const s = new RawSession(h.dir);
+    s.spawn({ kind: "shell", cmd: "/bin/cat", pty: false }); // cat: echoes stdin, exits on EOF
+    const res = await waitFor(() => s.response(SPAWN_REQUEST_ID), "spawn response");
+    assert.equal((res.result as { pty: boolean }).pty, false);
+
+    s.commit(encodeFrame(FrameType.DATA, new TextEncoder().encode("echo-me\n")));
+    await waitFor(() => {
+      const buf = fs.readFileSync(path.join(s.sessionDir, "out.00000000.log"));
+      const data = parseFrames(buf).frames.filter((f) => f.type === FrameType.DATA);
+      return data.some((f) => new TextDecoder().decode(f.payload).includes("echo-me"));
+    }, "DATA echoed back through the pipe");
+
+    s.commit(jsonFrame(FrameType.RPC, rpcNotification("eof")));
+    const status = await waitFor(() => {
+      try {
+        const st = JSON.parse(fs.readFileSync(path.join(s.sessionDir, "status.json"), "utf8")) as { state: string; exitCode?: number };
+        return st.state === "exited" ? st : null;
+      } catch {
+        return null;
+      }
+    }, "exited status after eof");
+    assert.equal(status.exitCode, 0);
+  } finally {
+    await h.stop();
+  }
+});
+
+test("signal notification terminates the child", async () => {
+  const h = await HostFixture.start();
+  try {
+    const s = new RawSession(h.dir);
+    s.spawn({ kind: "shell", cmd: "/bin/sleep", args: ["60"], pty: false });
+    await waitFor(() => s.response(SPAWN_REQUEST_ID), "spawn response");
+    s.commit(jsonFrame(FrameType.RPC, rpcNotification("signal", { sig: "SIGTERM" })));
+    await waitFor(() => {
+      try {
+        return (JSON.parse(fs.readFileSync(path.join(s.sessionDir, "status.json"), "utf8")) as { state: string }).state === "exited";
+      } catch {
+        return false;
+      }
+    }, "exited status after signal");
+  } finally {
+    await h.stop();
+  }
+});
+
 // ------------------------------------------------------------------ lifecycle
 
 test("close notification: host owns cleanup and deletes the session dir (D6/F8)", async () => {
