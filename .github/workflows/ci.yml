@@ -21,6 +21,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # .nvmrc pins node; this pins npm. An unpinned npm burned us once:
+      # a different lockfile validator on CI rejected a lock that local npm
+      # produced and accepted (optional-dep entry semantics changed).
+      - run: npm i -g npm@11.6.1
       - uses: google/wireit@setup-github-actions-caching/v2
       - run: npm ci
       - run: npm run build
