@@ -27,14 +27,21 @@ style.
 
 ## Operating loop
 
-1. Issue-driven: `gh issue list` → pick → implement → commit with
+1. Issue-driven: `gh issue list` → pick by priority label (`p1` first;
+   `p3` = blocked or deferred, don't start it) → implement → commit with
    `Closes #N` → push → **watch the CI run to conclusion** → verify the
    issue closed. Backlog items discovered mid-work become new issues, not
    scope creep.
-2. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
+2. Session-end triage: every new issue gets a `p1`/`p2`/`p3` label; when
+   closing an issue, re-check whether it unblocks a `p3` (promote it). A
+   priority is a claim about the dependency graph — cite what it waits on.
+3. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
    prefer a short-lived branch + PR so CI gates the merge.
-3. Commit messages explain *why*, cite F/D/issue numbers, and record
+4. Commit messages explain *why*, cite F/D/issue numbers, and record
    measured results when behavior was verified (numbers, not adjectives).
+   Write multi-line commit/PR/comment bodies to a temp file and pass
+   `-F`/`--body-file` — heredocs inside `"$(cat <<'EOF' …)"` get mangled
+   by the tool shell (bad substitution; cost a retry more than once).
 
 ## Cooperative verification (browser work)
 
