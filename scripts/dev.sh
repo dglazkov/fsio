@@ -14,6 +14,7 @@ PORT="${FSIO_PORT:-8765}"
 # ---- stop stale instances (previous dev runs), clear old sessions
 pkill -f "host/fsio-host.js" 2>/dev/null && echo "stopped stale host" || true
 pkill -f "host/serve.js" 2>/dev/null && echo "stopped stale server" || true
+# (patterns match both old and packages/ layouts)
 sleep 0.2
 mkdir -p "$DIR"
 
@@ -25,9 +26,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --fresh wipes .fsio (old sessions, stale host.json) on startup
-node host/fsio-host.js "$DIR" --fresh --allow-shell 2>&1 | sed 's/^/[host]  /' &
+node packages/host/fsio-host.js "$DIR" --fresh --allow-shell 2>&1 | sed 's/^/[host]  /' &
 HOST_PID=$!
-node host/serve.js "$PORT" 2>&1 | sed 's/^/[serve] /' &
+node packages/host/serve.js "$PORT" 2>&1 | sed 's/^/[serve] /' &
 SERVE_PID=$!
 
 sleep 0.5

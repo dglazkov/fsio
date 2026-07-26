@@ -146,8 +146,8 @@ cumulative acks: a 32 MB flood (3 M lines) against a deliberately lazy
 consumer delivered every line, peaked at 8 MB on disk (≤2 segments), and
 the host cleanly oscillated pause(4 MB unacked)/resume(ack) throughout.
 Sustained throughput ≈ 2.6–3.7 MB/s through the file transport — plenty
-for terminal scrollback. Reproduce: `node bench/firehose.mjs <dir> --lines
-3000000 --slow`.
+for terminal scrollback. Reproduce: `node packages/bench/firehose.mjs <dir>
+--lines 3000000 --slow`.
 → [D9](DECISIONS.md#d9--segmented-log-with-cumulative-ack-flow-control)
 
 ## Open measurements
@@ -160,11 +160,11 @@ for terminal scrollback. Reproduce: `node bench/firehose.mjs <dir> --lines
 ## Reproduce
 
 ```sh
-node host/fsio-host.js /tmp/fsio-bench --fresh          # terminal 1
-node bench/node-client.js /tmp/fsio-bench --count 500   # terminal 2
-node bench/node-client.js /tmp/fsio-bench --poll 5      # polling variant
-node bench/node-client.js /tmp/fsio-bench --poll 5 --uplink dirname
+npm run host -- /tmp/fsio-bench --fresh                 # terminal 1
+npm run bench -- /tmp/fsio-bench --count 500            # terminal 2
+npm run bench -- /tmp/fsio-bench --poll 5               # polling variant
+npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
 # browser: npm run serve → http://localhost:8765/web/ → pick /tmp/fsio-bench
 # (not /tmp for observer tests — see F9)
-node bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
+node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 ```

@@ -2,7 +2,7 @@
 // fsio host: attaches to <dir>/.fsio, serves sessions created by clients.
 //
 // Usage:
-//   node host/fsio-host.js <dir> [--allow-shell] [--poll <ms>] [--no-watch] [--fresh]
+//   node packages/host/fsio-host.js <dir> [--allow-shell] [--poll <ms>] [--no-watch] [--fresh]
 //
 //   --allow-shell   permit `kind: "shell"` sessions (spawns processes!)
 //   --hot <ms>      hot-poll interval while sessions are active (default 5, 0=off)

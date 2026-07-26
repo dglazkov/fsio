@@ -4,7 +4,7 @@
 // numbers can be compared against it.
 //
 // Usage (host must be running against the same <dir>):
-//   node bench/node-client.js <dir> [--count 200] [--poll <ms>] [--payload 0] [--warmup 20]
+//   node packages/bench/node-client.js <dir> [--count 200] [--poll <ms>] [--payload 0] [--warmup 20]
 //
 //   --poll <ms>   use polling instead of fs.watch for pong detection
 
@@ -52,7 +52,7 @@ try {
   const age = Date.now() - fs.statSync(hostJson).mtimeMs;
   if (age > 6000) console.warn(`warning: host.json is ${(age / 1000).toFixed(1)}s old; host may be dead`);
 } catch {
-  console.error(`no host.json in ${fsioDir} — start the host first:\n  node host/fsio-host.js ${rootArg}`);
+  console.error(`no host.json in ${fsioDir} — start the host first:\n  npm run host -- ${rootArg}`);
   process.exit(1);
 }
 

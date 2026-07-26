@@ -20,7 +20,7 @@ Two peers share a directory:
 - **client** — typically a web page holding a `FileSystemDirectoryHandle`
   (user-picked, `mode: "readwrite"`), watching with `FileSystemObserver` or
   polling.
-- **host** — a native process (Node prototype in `host/fsio-host.js`) with
+- **host** — a native process (Node prototype in `packages/host`) with
   ordinary POSIX file access, watching with `fs.watch`.
 
 All protocol state lives under `<shared-dir>/.fsio/`. The transport is "just

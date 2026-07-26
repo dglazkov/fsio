@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const port = Number(process.argv[2] ?? 8765);
 
 const mime = {
@@ -21,6 +21,8 @@ const mime = {
 http
   .createServer((req, res) => {
     let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    // Monorepo layout, stable URLs: /web/ and /common/ live under packages/.
+    p = p.replace(/^\/(web|common)\//, "/packages/$1/");
     if (p.endsWith("/")) p += "index.html";
     const file = path.join(root, p);
     if (!file.startsWith(root)) {

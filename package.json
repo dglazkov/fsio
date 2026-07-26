@@ -4,18 +4,37 @@
   "description": "A file-system bridge between stdio and the Web Platform FS API",
   "author": "Dimitri Glazkov <dimitri@glazkov.com>",
   "repository": "github:dglazkov/fsio",
+  "license": "MIT",
+  "private": true,
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "host": "node host/fsio-host.js",
-    "serve": "node host/serve.js",
-    "bench": "node bench/node-client.js",
+    "check": "wireit",
+    "test": "wireit",
+    "host": "node packages/host/fsio-host.js",
+    "serve": "node packages/host/serve.js",
+    "bench": "node packages/bench/node-client.js",
+    "dev": "scripts/dev.sh",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
-  "license": "MIT",
-  "optionalDependencies": {
-    "node-pty": "^1.1.0"
+  "wireit": {
+    "check": {
+      "dependencies": [
+        "./packages/common:check",
+        "./packages/host:check",
+        "./packages/web:check",
+        "./packages/bench:check"
+      ]
+    },
+    "test": {
+      "dependencies": [
+        "./packages/bench:test"
+      ]
+    }
   },
-  "dependencies": {
-    "node-pty": "^1.1.0"
+  "devDependencies": {
+    "wireit": "^0.14.0"
   }
 }

@@ -6,7 +6,7 @@
 //   - every byte arrives (line count integrity)
 //
 // Usage (host must be running with --allow-shell):
-//   node bench/firehose.mjs <dir> [--lines 400000] [--slow]
+//   node packages/bench/firehose.mjs <dir> [--lines 400000] [--slow]
 //   --slow: consumer acks lazily to force pause/resume cycles
 
 import fs from "node:fs";

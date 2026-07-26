@@ -1,0 +1,17 @@
+{
+  "name": "@fsio/common",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio protocol core: frame codec and JSON-RPC control plane",
+  "type": "module",
+  "scripts": {
+    "check": "wireit"
+  },
+  "wireit": {
+    "check": {
+      "command": "node ../../scripts/check-syntax.mjs .",
+      "files": ["*.js", "../../scripts/check-syntax.mjs"],
+      "output": []
+    }
+  }
+}

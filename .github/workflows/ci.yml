@@ -1,0 +1,27 @@
+# CI = exactly what you run locally: `npm run check` and `npm test` drive
+# the same wireit graph on the same node version (.nvmrc). The matrix runs
+# both platforms deliberately (#15): every finding F1–F12 is macOS-specific,
+# and the ubuntu leg gives us the inotify half of #5 on every push.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: google/wireit@setup-github-actions-caching/v2
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

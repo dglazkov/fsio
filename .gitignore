@@ -8,3 +8,6 @@ node_modules/
 nohup.out
 .DS_Store
 tmp/
+
+# wireit cache
+.wireit/

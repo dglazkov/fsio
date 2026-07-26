@@ -8,15 +8,16 @@ protocol draft and `spec/FINDINGS.md` for the latency findings.
 ## Quickstart
 
 ```sh
-# terminal 1: the host (native side)
-node host/fsio-host.js ~/fsio-demo --allow-shell
+npm install
 
-# terminal 2: latency baseline without a browser
-node bench/node-client.js ~/fsio-demo --count 500 --poll 5
+# one command: fresh host on ~/fsio-demo + workbench server
+scripts/dev.sh           # → http://localhost:8765/web/
 
-# browser workbench (bench + xterm.js terminal)
-npm run serve            # → http://localhost:8765/web/
-# pick ~/fsio-demo, run the bench, or spawn a shell
+# latency baseline without a browser (host must be running)
+npm run bench -- ~/fsio-demo --count 500 --poll 5
+
+# checks and the hermetic integration smoke test (same commands CI runs)
+npm run check && npm test
 ```
 
 Optional: `npm i node-pty` gives shell sessions a real pty (vim, colors,
@@ -24,14 +25,16 @@ resize). Without it, shells fall back to plain pipes.
 
 ## Layout
 
+npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wireit)
+(`npm run check` / `npm test` run the same dependency graph locally and in CI):
+
 - `spec/PROTOCOL.md` — the normative spec; the prototype is its workbench
 - `spec/FINDINGS.md` — measured platform behaviors (F1–F12), the lab notebook
 - `spec/DECISIONS.md` — why the protocol is shaped this way (ADR-lite)
-- `common/frames.js` — frame encoding shared by host and clients
-- `common/rpc.js` — JSON-RPC 2.0 control plane (correlation, error codes)
-- `host/fsio-host.js` — native host: adopts sessions, echoes pings, spawns shells
-- `web/` — browser client library + workbench page
-- `bench/node-client.js` — node-only client for FS-transport baselines
+- `packages/common` — frame codec + JSON-RPC control plane (both sides import)
+- `packages/host` — native host: adopts sessions, answers pings, spawns shells
+- `packages/web` — browser client library + workbench page
+- `packages/bench` — node bench clients + the protocol smoke test
 
 ## Headline numbers so far (macOS, APFS, Chrome 150)
 

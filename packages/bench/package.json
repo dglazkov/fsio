@@ -1,0 +1,25 @@
+{
+  "name": "@fsio/bench",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio benchmarks and protocol integration smoke test",
+  "type": "module",
+  "scripts": {
+    "check": "wireit",
+    "test": "wireit"
+  },
+  "wireit": {
+    "check": {
+      "command": "node ../../scripts/check-syntax.mjs .",
+      "files": ["*.js", "*.mjs", "../../scripts/check-syntax.mjs"],
+      "output": [],
+      "dependencies": ["../common:check"]
+    },
+    "test": {
+      "command": "node test-smoke.mjs",
+      "files": ["*.js", "*.mjs", "../common/*.js", "../host/*.js"],
+      "output": [],
+      "dependencies": ["check", "../host:check"]
+    }
+  }
+}

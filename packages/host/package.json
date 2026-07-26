@@ -1,0 +1,21 @@
+{
+  "name": "@fsio/host",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio native host: session server over a shared directory",
+  "type": "module",
+  "scripts": {
+    "check": "wireit"
+  },
+  "wireit": {
+    "check": {
+      "command": "node ../../scripts/check-syntax.mjs .",
+      "files": ["*.js", "../../scripts/check-syntax.mjs"],
+      "output": [],
+      "dependencies": ["../common:check"]
+    }
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  }
+}
