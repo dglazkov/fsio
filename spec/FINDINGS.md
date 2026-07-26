@@ -164,7 +164,7 @@ npm run host -- /tmp/fsio-bench --fresh                 # terminal 1
 npm run bench -- /tmp/fsio-bench --count 500            # terminal 2
 npm run bench -- /tmp/fsio-bench --poll 5               # polling variant
 npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
-# browser: npm run serve → http://localhost:8765/web/ → pick /tmp/fsio-bench
+# browser: scripts/dev.sh → http://localhost:8765/ → pick ~/fsio-demo
 # (not /tmp for observer tests — see F9)
 node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 ```

@@ -18,28 +18,60 @@ import {
   chunkName,
   dirChunkName,
   DIR_CHUNK_MAX_BYTES,
-} from "../common/dist/frames.js"; // temporary path until the vite stage
-import { RpcEndpoint, RpcError, rpcRequest, SPAWN_REQUEST_ID } from "../common/dist/rpc.js";
+  RpcEndpoint,
+  RpcError,
+  rpcRequest,
+  SPAWN_REQUEST_ID,
+  type Frame,
+  type HostInfo,
+  type OutSig,
+  type SessionStatus,
+  type SpawnResult,
+  type SpawnSpec,
+  type PingResult,
+} from "@fsio/common";
 
 export { FrameType, jsonFrame, decodeJson, now, RpcError };
+export type { Frame, HostInfo, SessionStatus, SpawnResult, SpawnSpec, PingResult };
 
 export const hasObserver = "FileSystemObserver" in self;
 
+const errName = (e: unknown) => (e instanceof DOMException || e instanceof Error ? e.name : "Error");
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 // Wrap an FS operation so failures say WHAT we were doing, not just Chrome's
 // terse DOMException ("The object can not be modified in this way").
-export async function op(label, fn) {
+export async function op<T>(label: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    const err = new Error(`${label}: ${e.name ?? "Error"}: ${e.message}`);
+    const err = new Error(`${label}: ${errName(e)}: ${errMsg(e)}`);
     err.cause = e;
     throw err;
   }
 }
 
+export type NotifierMode = "auto" | "adaptive" | "hybrid" | "poll" | "observer";
+export type UplinkMode = "auto" | "file" | "dirname";
+
+export interface SessionOptions {
+  mode?: NotifierMode;
+  pollMs?: number;
+  uplink?: UplinkMode;
+  /** 0 disables the safety poll (measurement labs) */
+  safetyMs?: number;
+  onFrame?: ((frame: Frame, t3: number) => void) | null;
+  onError?: ((e: Error) => void) | null;
+  /** non-fatal observations, e.g. observer fallback */
+  onNote?: ((note: string) => void) | null;
+}
+
 export class FsioClient {
-  /** @param {FileSystemDirectoryHandle} rootHandle user-picked directory */
-  constructor(rootHandle) {
+  root: FileSystemDirectoryHandle;
+  fsioDir!: FileSystemDirectoryHandle;
+  sessionsDir!: FileSystemDirectoryHandle;
+
+  constructor(rootHandle: FileSystemDirectoryHandle) {
     this.root = rootHandle;
   }
 
@@ -50,11 +82,11 @@ export class FsioClient {
   }
 
   /** Reads host.json; returns {alive, info, ageMs} */
-  async hostInfo() {
+  async hostInfo(): Promise<{ alive: boolean; ageMs: number; info: HostInfo | null }> {
     try {
       const fh = await this.fsioDir.getFileHandle("host.json");
       const f = await fh.getFile();
-      const info = JSON.parse(await f.text());
+      const info = JSON.parse(await f.text()) as HostInfo;
       const ageMs = Date.now() - f.lastModified;
       return { alive: ageMs < 6000, ageMs, info };
     } catch {
@@ -62,28 +94,71 @@ export class FsioClient {
     }
   }
 
-  /** @param {object} spec spawn spec, e.g. {kind:"echo"} or {kind:"shell",cols,rows} */
-  async createSession(spec, opts = {}) {
+  async createSession(spec: SpawnSpec, opts: SessionOptions = {}): Promise<FsioSession> {
     const id = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const dirHandle = await op(`creating session folder ${id}`, () =>
       this.sessionsDir.getDirectoryHandle(id, { create: true })
     );
     const session = new FsioSession(id, dirHandle, opts);
-    session.parentDir = this.sessionsDir;
     await session._init(spec);
     return session;
   }
 }
 
 export class FsioSession {
-  constructor(id, dirHandle, { mode = "auto", pollMs = 5, uplink = "auto", safetyMs = 500, onFrame = null, onError = null, onNote = null } = {}) {
-    this.safetyMs = safetyMs; // 0 disables the safety poll (measurement labs)
-    this.onNote = onNote; // non-fatal observations, e.g. observer fallback
+  id: string;
+  dir: FileSystemDirectoryHandle;
+  inDir!: FileSystemDirectoryHandle;
+  mode: NotifierMode;
+  pollMs: number;
+  uplink: UplinkMode;
+  safetyMs: number;
+  onFrame: ((frame: Frame, t3: number) => void) | null;
+  onError: ((e: Error) => void) | null;
+  onNote: ((note: string) => void) | null;
+  onStatus: ((status: SessionStatus) => void) | null = null;
+  status: SessionStatus | null = null;
+  /** Resolves with the spawn result; rejects with RpcError on spawn failure. */
+  ready!: Promise<SpawnResult>;
+
+  gen = 0; // current out segment being read
+  offset = 0; // consumed bytes within current segment
+  cumConsumed = 0; // cumulative bytes consumed across segments
+  lastAckTotal = 0;
+  lastAckAt = 0;
+  outSeq = 1; // next chunk number to write
+  queue: Uint8Array[] = []; // encoded frames awaiting commit
+  pumping = false;
+  reading = false;
+  readAgain = false;
+  closed = false;
+  pumpError: Error | null = null; // first async send failure; surfaced via onError + next send()
+  stats: { chunksWritten: number; bytesIn: number; bytesOut: number; wakeups: number; staleReads?: number } = {
+    chunksWritten: 0,
+    bytesIn: 0,
+    bytesOut: 0,
+    wakeups: 0,
+  };
+  // Control plane: JSON-RPC over RPC frames (spec D10). One endpoint per
+  // session owns id correlation; responses are consumed in _drainSegment.
+  rpc: RpcEndpoint;
+
+  private observer: FileSystemObserver | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private hotTimer: ReturnType<typeof setInterval> | null = null;
+  private safetyTimer: ReturnType<typeof setInterval> | undefined;
+  private lastActivity = 0;
+  private _wakeFn!: () => void;
+
+  constructor(id: string, dirHandle: FileSystemDirectoryHandle, opts: SessionOptions = {}) {
+    const { mode = "auto", pollMs = 5, uplink = "auto", safetyMs = 500, onFrame = null, onError = null, onNote = null } = opts;
+    this.safetyMs = safetyMs;
+    this.onNote = onNote;
     // uplink "auto": small frame batches ride the dirname fast lane (≤80ms
-    // → ~3ms measured, spec/FINDINGS.md F10 — directory creation skips Chrome's
-    // after-write scan); big batches fall back to file chunks. "file"
-    // forces file chunks.
-    this.uplink = uplink; // "file" | "dirname" (see spec/FINDINGS.md F10)
+    // → ~3ms measured, spec/FINDINGS.md F10 — directory creation skips
+    // Chrome's after-write scan); big batches fall back to file chunks.
+    // "file" forces file chunks.
+    this.uplink = uplink;
     this.id = id;
     this.dir = dirHandle;
     // Notifier modes (spec/FINDINGS.md F6, refined by the observer lab):
@@ -96,45 +171,28 @@ export class FsioSession {
     this.mode = mode === "auto" ? (hasObserver ? "adaptive" : "poll") : mode;
     this.pollMs = pollMs;
     this.onFrame = onFrame;
-    this.onStatus = null;
-    this.status = null;
-    this.gen = 0; // current out segment being read
-    this.offset = 0; // consumed bytes within current segment
-    this.cumConsumed = 0; // cumulative bytes consumed across segments
-    this.lastAckTotal = 0;
-    this.lastAckAt = 0;
-    this.outSeq = 1; // next chunk number to write
-    this.queue = []; // encoded frames awaiting commit
-    this.pumping = false;
-    this.reading = false;
-    this.readAgain = false;
-    this.closed = false;
-    this.pumpError = null; // first async send failure; surfaced via onError + next send()
     this.onError = onError;
-    this.stats = { chunksWritten: 0, bytesIn: 0, bytesOut: 0, wakeups: 0 };
-    // Control plane: JSON-RPC over RPC frames (spec D10). One endpoint per
-    // session owns id correlation; responses are consumed in _drainSegment.
     this.rpc = new RpcEndpoint((msg) => this.sendJson(FrameType.RPC, msg));
   }
 
-  async _init(spec) {
+  async _init(spec: SpawnSpec): Promise<void> {
     this.inDir = await op(`creating session ${this.id}/in/`, () => this.dir.getDirectoryHandle("in", { create: true }));
     // spawn.json is written last: its appearance signals a complete session.
     // It carries a JSON-RPC spawn *request*; the host answers on the out
     // stream, so spawn failures arrive as real error objects (code,
     // message) instead of a status.json state to poll for. Register the
     // pending id before the file exists so the answer can't race us.
-    this.ready = this.rpc.expect(SPAWN_REQUEST_ID).then(({ result }) => result);
+    this.ready = this.rpc.expect<SpawnResult>(SPAWN_REQUEST_ID).then(({ result }) => result);
     this.ready.catch(() => {}); // surfacing is the awaiter's job, not the console's
     await this._writeFile("spawn.json", new TextEncoder().encode(JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spec))));
     await this._startNotifier();
   }
 
-  async _writeFile(name, bytes, dir = this.dir) {
+  async _writeFile(name: string, bytes: Uint8Array, dir: FileSystemDirectoryHandle = this.dir): Promise<void> {
     return op(`committing ${name}`, async () => {
       const fh = await dir.getFileHandle(name, { create: true });
       const w = await fh.createWritable();
-      await w.write(bytes);
+      await w.write(bytes as Uint8Array<ArrayBuffer>);
       await w.close(); // atomic commit point
     });
   }
@@ -143,32 +201,32 @@ export class FsioSession {
 
   /** Enqueue a frame; frames queued while a commit is in flight are batched
    *  into a single chunk file. Commits are strictly serialized. */
-  send(type, payload) {
+  send(type: number, payload: Uint8Array): void {
     if (this.pumpError) throw this.pumpError;
     this.queue.push(encodeFrame(type, payload));
     this._markActive(); // user input → replies are coming; be ready for them
     this._pump();
   }
 
-  sendJson(type, obj) {
-    return this.send(type, new TextEncoder().encode(JSON.stringify(obj)));
+  sendJson(type: number, obj: unknown): void {
+    this.send(type, new TextEncoder().encode(JSON.stringify(obj)));
   }
 
-  sendData(text) {
-    return this.send(FrameType.DATA, new TextEncoder().encode(text));
+  sendData(text: string): void {
+    this.send(FrameType.DATA, new TextEncoder().encode(text));
   }
 
   /** JSON-RPC request to the host; resolves {result, rx}. */
-  request(method, params, opts) {
-    return this.rpc.request(method, params, opts);
+  request<R = unknown>(method: string, params?: unknown, opts?: { timeoutMs?: number }) {
+    return this.rpc.request<R>(method, params, opts);
   }
 
   /** JSON-RPC notification (fire-and-forget: resize, ack, close…). */
-  notify(method, params) {
+  notify(method: string, params?: unknown): void {
     this.rpc.notify(method, params);
   }
 
-  async _pump() {
+  async _pump(): Promise<void> {
     if (this.pumping) return;
     this.pumping = true;
     try {
@@ -185,8 +243,8 @@ export class FsioSession {
         this.stats.bytesOut += batch.length;
       }
     } catch (e) {
-      this.pumpError = e;
-      this.onError?.(e);
+      this.pumpError = e instanceof Error ? e : new Error(String(e));
+      this.onError?.(this.pumpError);
     } finally {
       this.pumping = false;
     }
@@ -194,7 +252,7 @@ export class FsioSession {
 
   // ---------------- incoming (host -> browser)
 
-  async _startNotifier() {
+  async _startNotifier(): Promise<void> {
     const wake = () => {
       this.stats.wakeups++;
       this._wake();
@@ -207,7 +265,7 @@ export class FsioSession {
       } catch (e) {
         // An observer that won't start is a downgrade, not a failure.
         // (Known trigger: directories under /tmp on macOS — spec/FINDINGS.md F9.)
-        this.onNote?.(`FileSystemObserver refused to start (${e.name}: ${e.message}) — falling back to polling`);
+        this.onNote?.(`FileSystemObserver refused to start (${errName(e)}: ${errMsg(e)}) — falling back to polling`);
         this.observer = null;
         this.mode = "poll";
       }
@@ -222,12 +280,12 @@ export class FsioSession {
   // Adaptive mode: hot poll exists only while traffic is flowing. The
   // observer (300ms cadence) and safety poll cover the idle case; the first
   // event after idle re-arms the hot poll.
-  _markActive() {
+  _markActive(): void {
     this.lastActivity = Date.now();
     if (this.mode !== "adaptive" || this.hotTimer || this.closed) return;
     this.hotTimer = setInterval(() => {
       if (Date.now() - this.lastActivity > 2000) {
-        clearInterval(this.hotTimer);
+        clearInterval(this.hotTimer!);
         this.hotTimer = null;
         return;
       }
@@ -235,7 +293,7 @@ export class FsioSession {
     }, this.pollMs);
   }
 
-  async _wake() {
+  async _wake(): Promise<void> {
     if (this.reading) {
       this.readAgain = true;
       return;
@@ -248,7 +306,7 @@ export class FsioSession {
         await this._checkStatus();
       } while (this.readAgain);
     } catch (e) {
-      this.onNote?.(`reader hiccup (retrying): ${e.message}`);
+      this.onNote?.(`reader hiccup (retrying): ${errMsg(e)}`);
     } finally {
       this.reading = false;
     }
@@ -260,11 +318,11 @@ export class FsioSession {
   // next when the previous one is fully consumed, and ack cumulative
   // consumption so the host can pause the pty (flow control) and delete
   // consumed segments.
-  async _drainOutLog() {
-    let sig;
+  async _drainOutLog(): Promise<void> {
+    let sig: OutSig;
     try {
       const fh = await this.dir.getFileHandle("out.sig");
-      sig = JSON.parse(await (await fh.getFile()).text());
+      sig = JSON.parse(await (await fh.getFile()).text()) as OutSig;
     } catch {
       return; // host hasn't written yet, or sig mid-rename — next wake
     }
@@ -288,17 +346,18 @@ export class FsioSession {
     this._maybeAck();
   }
 
-  async _drainSegment() {
-    let bytes;
+  async _drainSegment(): Promise<void> {
+    let bytes: Uint8Array;
     try {
       const fh = await this.dir.getFileHandle(`out.${String(this.gen).padStart(8, "0")}.log`);
       const file = await fh.getFile();
       if (file.size <= this.offset) return;
       bytes = new Uint8Array(await file.slice(this.offset).arrayBuffer());
-    } catch (e) {
-      // spec/FINDINGS.md F11: a File snapshot goes stale (NotReadableError) if the host
-      // appends between getFile() and the read — routine under live output.
-      // Transient by construction: offset didn't advance, next wake re-reads.
+    } catch {
+      // spec/FINDINGS.md F11: a File snapshot goes stale (NotReadableError)
+      // if the host appends between getFile() and the read — routine under
+      // live output. Transient by construction: offset didn't advance, next
+      // wake re-reads.
       this.stats.staleReads = (this.stats.staleReads ?? 0) + 1;
       return;
     }
@@ -310,7 +369,7 @@ export class FsioSession {
     const t3 = now();
     for (const f of frames) {
       if (f.type === FrameType.RPC) {
-        let msg = null;
+        let msg: unknown = null;
         try {
           msg = decodeJson(f.payload);
         } catch {}
@@ -324,7 +383,7 @@ export class FsioSession {
 
   // Ack at most every 250 ms (or every 256 KB under load). Acks ride the
   // dirname fast lane, so they cost ~3 ms, not ~70.
-  _maybeAck() {
+  _maybeAck(): void {
     if (this.closed || this.cumConsumed <= this.lastAckTotal) return;
     const bytesSince = this.cumConsumed - this.lastAckTotal;
     if (bytesSince < 262144 && Date.now() - this.lastAckAt < 250) return;
@@ -335,11 +394,11 @@ export class FsioSession {
     } catch {}
   }
 
-  async _checkStatus() {
+  async _checkStatus(): Promise<void> {
     try {
       const fh = await this.dir.getFileHandle("status.json");
       const f = await fh.getFile();
-      const status = JSON.parse(await f.text());
+      const status = JSON.parse(await f.text()) as SessionStatus;
       if (JSON.stringify(status) !== JSON.stringify(this.status)) {
         this.status = status;
         this.onStatus?.(status);
@@ -348,7 +407,7 @@ export class FsioSession {
   }
 
   /** Resolve when status.json matches `pred`, reject after timeoutMs. */
-  waitForStatus(pred, timeoutMs = 4000) {
+  waitForStatus(pred: (status: SessionStatus) => boolean, timeoutMs = 4000): Promise<SessionStatus> {
     return new Promise((resolve, reject) => {
       const iv = setInterval(() => {
         if (this.status && pred(this.status)) {
@@ -369,12 +428,12 @@ export class FsioSession {
 
   // ---------------- lifecycle
 
-  // Cleanup is the HOST's job: it deletes the session dir after CTL close.
-  // (Lesson learned: a browser-side recursive delete races with host writes
-  // — doorbell renames, status.json — and dies with InvalidModificationError.
-  // Two processes must never contend for the same files; cleanup has one
-  // owner, and it's the side with POSIX semantics.)
-  async close() {
+  // Cleanup is the HOST's job: it deletes the session dir after the close
+  // notification. (Lesson learned: a browser-side recursive delete races
+  // with host writes — doorbell renames, status.json — and dies with
+  // InvalidModificationError. Two processes must never contend for the same
+  // files; cleanup has one owner, and it's the side with POSIX semantics.)
+  async close(): Promise<void> {
     if (this.closed) return;
     try {
       this.notify("close");
@@ -384,7 +443,7 @@ export class FsioSession {
     this.rpc.failAll(new Error("session closed"));
     this.observer?.disconnect();
     clearInterval(this.pollTimer);
-    clearInterval(this.hotTimer);
+    if (this.hotTimer) clearInterval(this.hotTimer);
     clearInterval(this.safetyTimer);
   }
 }

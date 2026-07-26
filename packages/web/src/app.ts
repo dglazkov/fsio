@@ -1,12 +1,26 @@
-import { FsioClient, FrameType, now, hasObserver, op } from "./fsio.js";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+import {
+  FsioClient,
+  FsioSession,
+  FrameType,
+  now,
+  hasObserver,
+  op,
+  type NotifierMode,
+  type UplinkMode,
+  type PingResult,
+} from "./fsio.js";
 
-const $ = (id) => document.getElementById(id);
+const $ = (id: string): HTMLElement => document.getElementById(id)!;
+const $in = (id: string): HTMLInputElement => $(id) as HTMLInputElement;
 
 // ---------------------------------------------------------------- logging & errors
 
 const logEl = $("logview");
-function log(...a) {
-  const line = a.join(" ");
+function log(...a: unknown[]): void {
+  const line = a.map((x) => (x instanceof Error ? (x.stack ?? x.message) : String(x))).join(" ");
   logEl.textContent += line + "\n";
   logEl.scrollTop = logEl.scrollHeight;
   console.log(...a);
@@ -19,32 +33,35 @@ function log(...a) {
 // (a human, or an agent debugging this very page) can read it without
 // copy-paste. The shared directory is the communication channel; use it.
 class Reporter {
-  constructor() {
-    this.lines = [];
-    this.events = [];
-    this.dirty = false;
-    this.dir = null;
-    this.flushing = false;
-    this.lastWrite = 0;
-  }
-  async attach(fsioDir) {
+  lines: string[] = [];
+  events: Record<string, unknown>[] = [];
+  dirty = false;
+  dir: FileSystemDirectoryHandle | null = null;
+  flushing = false;
+  lastWrite = 0;
+  timer: ReturnType<typeof setInterval> | undefined;
+
+  async attach(fsioDir: FileSystemDirectoryHandle): Promise<void> {
     this.dir = await fsioDir.getDirectoryHandle("client", { create: true });
     clearInterval(this.timer);
     this.timer = setInterval(() => this.flush(), 1000);
     this.dirty = true;
     this.flush();
   }
-  log(line) {
+
+  log(line: string): void {
     this.lines.push(`${new Date().toISOString()} ${line}`);
     if (this.lines.length > 500) this.lines.splice(0, this.lines.length - 500);
     this.dirty = true;
   }
-  event(type, data = {}) {
+
+  event(type: string, data: Record<string, unknown> = {}): void {
     this.events.push({ at: new Date().toISOString(), type, ...data });
     if (this.events.length > 100) this.events.splice(0, this.events.length - 100);
     this.dirty = true;
   }
-  async flush() {
+
+  async flush(): Promise<void> {
     if (!this.dir || this.flushing) return;
     if (!this.dirty && Date.now() - this.lastWrite < 5000) return; // 5s heartbeat when idle
     this.flushing = true;
@@ -72,60 +89,64 @@ class Reporter {
       this.flushing = false;
     }
   }
-  async _write(name, text) {
-    const fh = await this.dir.getFileHandle(name, { create: true });
+
+  async _write(name: string, text: string): Promise<void> {
+    const fh = await this.dir!.getFileHandle(name, { create: true });
     const w = await fh.createWritable();
-    await w.write(new TextEncoder().encode(text));
+    await w.write(new TextEncoder().encode(text) as Uint8Array<ArrayBuffer>);
     await w.close();
   }
 }
 const reporter = new Reporter();
 
-function showError(msg, hint = "") {
+function showError(msg: string, hint = ""): void {
   $("error-msg").textContent = msg;
   $("error-hint").textContent = hint;
   $("error").hidden = false;
   $("error").scrollIntoView({ behavior: "smooth", block: "nearest" });
   reporter.event("error", { msg, hint, step: lastStep });
 }
-function clearError() {
+function clearError(): void {
   $("error").hidden = true;
 }
 
+type FriendlyError = Error & { friendly?: { msg: string; hint?: string } };
+
 /** Throw a user-facing error. */
-function fail(msg, hint) {
-  const e = new Error(msg);
-  e.friendly = { msg, hint };
+function fail(msg: string, hint?: string): never {
+  const e: FriendlyError = new Error(msg);
+  e.friendly = { msg, ...(hint !== undefined && { hint }) };
   throw e;
 }
 
 // Breadcrumbs: the banner always says what we were in the middle of.
 let lastStep = "";
-function step(s, { quiet = false } = {}) {
+function step(s: string, { quiet = false } = {}): void {
   lastStep = s;
   if (!quiet) log("→ " + s);
 }
 
 /** Wrap an event handler: surface every failure on the page, never hang silently. */
-function guard(fn) {
-  return async (...args) => {
+function guard(fn: () => Promise<void>): () => Promise<void> {
+  return async () => {
     clearError();
     lastStep = "";
     try {
-      await fn(...args);
+      await fn();
     } catch (e) {
-      if (e?.name === "AbortError") return; // user closed the picker — not an error
-      const f = e?.friendly ?? {
-        msg: `While ${lastStep || "working"}: ${e?.message ?? e}`,
+      const err = e as FriendlyError | undefined;
+      if (err?.name === "AbortError") return; // user closed the picker — not an error
+      const f = err?.friendly ?? {
+        msg: `While ${lastStep || "working"}: ${err?.message ?? e}`,
         hint: "Please copy the nerd log below and report this — it now names the exact operation that failed.",
       };
       showError(f.msg, f.hint);
-      log("ERROR:", e?.stack ?? e);
+      log("ERROR:", err?.stack ?? e);
     }
   };
 }
 
-function setCheck(id, state, text, hint = "") {
+function setCheck(id: string, state: string, text: string, hint = ""): void {
   const li = $(id);
   li.className = state;
   li.textContent = text;
@@ -137,12 +158,13 @@ function setCheck(id, state, text, hint = "") {
   }
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Background failures (async send loops etc.) must never be console-only.
-window.addEventListener("unhandledrejection", (ev) => {
-  showError("A background task failed: " + (ev.reason?.message ?? ev.reason), "Details in the nerd log below.");
-  log("UNHANDLED:", ev.reason?.stack ?? ev.reason);
+window.addEventListener("unhandledrejection", (ev: PromiseRejectionEvent) => {
+  const reason = ev.reason as FriendlyError | undefined;
+  showError("A background task failed: " + (reason?.message ?? ev.reason), "Details in the nerd log below.");
+  log("UNHANDLED:", reason?.stack ?? ev.reason);
 });
 
 // ---------------------------------------------------------------- static bits
@@ -155,13 +177,13 @@ setCheck(
     : "this browser can't watch folders (FileSystemObserver missing) — using fast polling, which works fine"
 );
 
-$("copy-cmd").onclick = () => navigator.clipboard.writeText($("host-cmd").textContent);
-$("copy-log").onclick = () => navigator.clipboard.writeText(logEl.textContent);
+$("copy-cmd").onclick = () => navigator.clipboard.writeText($("host-cmd").textContent ?? "");
+$("copy-log").onclick = () => navigator.clipboard.writeText(logEl.textContent ?? "");
 
 // ---------------------------------------------------------------- connect
 
-let client = null;
-let hostTimer = null;
+let client: FsioClient | null = null;
+let hostTimer: ReturnType<typeof setInterval> | undefined;
 
 $("pick").onclick = guard(async () => {
   step("opening the folder picker", { quiet: true });
@@ -175,16 +197,16 @@ $("pick").onclick = guard(async () => {
   await refreshHostCheck();
   clearInterval(hostTimer);
   hostTimer = setInterval(refreshHostCheck, 2000);
-  $("run-bench").disabled = false;
-  $("run-commit").disabled = false;
-  $("run-observer-lab").disabled = false;
-  $("open-term").disabled = false;
+  $in("run-bench").disabled = false;
+  $in("run-commit").disabled = false;
+  $in("run-observer-lab").disabled = false;
+  $in("open-term").disabled = false;
   log(`connected to ${root.name}/.fsio`);
 });
 
 async function refreshHostCheck() {
-  const host = await client.hostInfo();
-  if (host.alive) {
+  const host = await client!.hostInfo();
+  if (host.alive && host.info) {
     const extras = [
       host.info.pty ? "full terminal support" : "basic terminal (no pty)",
       host.info.allowShell ? "shell allowed" : "shell disabled",
@@ -203,15 +225,23 @@ async function refreshHostCheck() {
 
 // ---------------------------------------------------------------- shared helpers
 
-function stats(xs) {
-  const s = [...xs].sort((a, b) => a - b);
-  const q = (p) => s[Math.min(s.length - 1, Math.floor(p * s.length))];
-  return { min: s[0], p50: q(0.5), p95: q(0.95), max: s[s.length - 1], mean: s.reduce((a, b) => a + b, 0) / s.length };
+interface Stats {
+  min: number;
+  p50: number;
+  p95: number;
+  max: number;
+  mean: number;
 }
-const ms = (x) => (x >= 100 ? x.toFixed(0) : x.toFixed(1));
-const pad = (x) => ms(x).padStart(7);
 
-function verdictFor(p50) {
+function stats(xs: number[]): Stats {
+  const s = [...xs].sort((a, b) => a - b);
+  const q = (p: number) => s[Math.min(s.length - 1, Math.floor(p * s.length))]!;
+  return { min: s[0]!, p50: q(0.5), p95: q(0.95), max: s[s.length - 1]!, mean: s.reduce((a, b) => a + b, 0) / s.length };
+}
+const ms = (x: number) => (x >= 100 ? x.toFixed(0) : x.toFixed(1));
+const pad = (x: number) => ms(x).padStart(7);
+
+function verdictFor(p50: number): [string, string, string] {
   if (p50 < 16) return ["🚀", "instant", "faster than one frame of your display"];
   if (p50 < 50) return ["✨", "snappy", "you won't feel it while typing"];
   if (p50 < 150) return ["🐢", "usable, but you'll feel it", "fine for output, sluggish for typing"];
@@ -221,17 +251,17 @@ function verdictFor(p50) {
 // ---------------------------------------------------------------- latency bench
 
 $("run-bench").onclick = guard(async () => {
-  const btn = $("run-bench");
+  const btn = $in("run-bench");
   btn.disabled = true;
   $("verdict").hidden = true;
   $("bench-details").hidden = true;
   $("progress").hidden = false;
-  const progress = (frac, text) => {
+  const progress = (frac: number, text: string) => {
     $("progress-bar").style.width = `${Math.round(frac * 100)}%`;
     $("progress-text").textContent = text;
   };
 
-  let session = null;
+  let session: FsioSession | null = null;
   try {
     // --- preflight: is anyone listening?
     step("checking the helper is there");
@@ -244,16 +274,16 @@ $("run-bench").onclick = guard(async () => {
       );
     }
 
-    const count = Number($("b-count").value) || 200;
-    const payload = Number($("b-payload").value) || 0;
+    const count = Number($in("b-count").value) || 200;
+    const payload = Number($in("b-payload").value) || 0;
     const warmup = Math.min(20, count);
     step("creating a test session");
-    session = await client.createSession(
+    session = await client!.createSession(
       { kind: "echo", client: "web-bench" },
       {
-        mode: $("b-mode").value,
-        pollMs: Number($("b-poll").value) || 5,
-        uplink: $("b-uplink").value,
+        mode: $in("b-mode").value as NotifierMode,
+        pollMs: Number($in("b-poll").value) || 5,
+        uplink: $in("b-uplink").value as UplinkMode,
         onError: (e) => log("send failed:", e.message),
         onNote: (m) => log("note:", m),
       }
@@ -271,12 +301,12 @@ $("run-bench").onclick = guard(async () => {
 
     // --- ping-pong
     const total = warmup + count;
-    const results = [];
-    const rtts = [];
+    const results: { rtt: number; up: number; host: number; down: number }[] = [];
+    const rtts: number[] = [];
     for (let i = 0; i < total; i++) {
       step(`sending message ${i + 1} of ${total}`, { quiet: i % 50 !== 0 });
       const r = await session
-        .request("ping", { t0: now(), filler: "x".repeat(payload) }, { timeoutMs: 5000 })
+        .request<PingResult>("ping", { t0: now(), filler: "x".repeat(payload) }, { timeoutMs: 5000 })
         .then(({ result, rx }) => ({ ...result, t3: rx }), () => null);
       if (r === null) {
         fail(
@@ -308,13 +338,13 @@ $("run-bench").onclick = guard(async () => {
       up: "this page → helper ",
       host: "helper processing  ",
       down: "helper → this page ",
-    };
+    } as const;
     const effMode =
       (session.mode === "observer" ? "observer" : `${session.mode} ${session.pollMs}ms`) +
       (session.uplink === "file" ? "" : " +dirname-up");
     let text = `mode=${effMode} · ${count} messages · ${payload}B extra payload\n\n`;
     text += `leg                   median     95th    worst   (ms)\n`;
-    for (const key of ["rtt", "up", "host", "down"]) {
+    for (const key of ["rtt", "up", "host", "down"] as const) {
       const st = stats(results.map((r) => r[key]));
       text += `${legNames[key]} ${pad(st.p50)}  ${pad(st.p95)}  ${pad(st.max)}\n`;
     }
@@ -324,7 +354,7 @@ $("run-bench").onclick = guard(async () => {
       mode: effMode,
       count,
       payload,
-      legs: Object.fromEntries(["rtt", "up", "host", "down"].map((k) => [k, stats(results.map((r) => r[k]))])),
+      legs: Object.fromEntries((["rtt", "up", "host", "down"] as const).map((k) => [k, stats(results.map((r) => r[k]))])),
       markdownRow: row,
     });
     $("bench-out").textContent = text;
@@ -343,18 +373,18 @@ $("run-bench").onclick = guard(async () => {
 // send cost: close() is where Chrome runs its after-write safety checks.
 
 $("run-commit").onclick = guard(async () => {
-  const btn = $("run-commit");
+  const btn = $in("run-commit");
   btn.disabled = true;
   $("verdict").hidden = true;
   $("progress").hidden = false;
   try {
     step("creating the scratch folder");
     const dir = await op("creating tmp-write-bench/", () =>
-      client.fsioDir.getDirectoryHandle("tmp-write-bench", { create: true })
+      client!.fsioDir.getDirectoryHandle("tmp-write-bench", { create: true })
     );
     const N = 50;
-    const bytes = new TextEncoder().encode("x".repeat(64));
-    const legs = { open: [], start: [], write: [], commit: [] };
+    const bytes = new TextEncoder().encode("x".repeat(64)) as Uint8Array<ArrayBuffer>;
+    const legs = { open: [] as number[], start: [] as number[], write: [] as number[], commit: [] as number[] };
     for (let i = 0; i < N; i++) {
       step(`writing scratch file ${i + 1} of ${N}`, { quiet: true });
       $("progress-bar").style.width = `${Math.round(((i + 1) / N) * 100)}%`;
@@ -375,14 +405,14 @@ $("run-commit").onclick = guard(async () => {
     // Cleanup is best-effort: a leftover tmp dir is harmless, a scary error
     // banner is not.
     try {
-      await client.fsioDir.removeEntry("tmp-write-bench", { recursive: true });
+      await client!.fsioDir.removeEntry("tmp-write-bench", { recursive: true });
     } catch (e) {
-      log("write-bench cleanup skipped:", e.message);
+      log("write-bench cleanup skipped:", e instanceof Error ? e.message : e);
     }
 
-    const total = stats(legs.open.map((_, i) => legs.open[i] + legs.start[i] + legs.write[i] + legs.commit[i]));
+    const total = stats(legs.open.map((_, i) => legs.open[i]! + legs.start[i]! + legs.write[i]! + legs.commit[i]!));
     const commit = stats(legs.commit);
-    let head;
+    let head: string;
     if (commit.p50 > 20) {
       head =
         `✍️ <span class="big">${ms(total.p50)} ms</span> to write one small file — ` +
@@ -390,16 +420,15 @@ $("run-commit").onclick = guard(async () => {
         `<span style="color:#9aa5b8">That's likely Chrome's safety scan on every saved file — the floor for every message this page sends. ` +
         `Try the “folder-name trick” under advanced settings, which sidesteps it.</span>`;
     } else {
-      head =
-        `✍️ <span class="big">${ms(total.p50)} ms</span> to write one small file — commit step is cheap here (${ms(commit.p50)} ms).`;
+      head = `✍️ <span class="big">${ms(total.p50)} ms</span> to write one small file — commit step is cheap here (${ms(commit.p50)} ms).`;
     }
     $("verdict").innerHTML = head;
     $("verdict").hidden = false;
 
-    const names = { open: "open the file      ", start: "start writing      ", write: "write 64 bytes     ", commit: "commit (close)     " };
+    const names = { open: "open the file      ", start: "start writing      ", write: "write 64 bytes     ", commit: "commit (close)     " } as const;
     let text = `write-speed microbench · ${N} files · 64 B each\n\nphase                 median     95th    worst   (ms)\n`;
-    for (const [k, xs] of Object.entries(legs)) {
-      const st = stats(xs);
+    for (const k of ["open", "start", "write", "commit"] as const) {
+      const st = stats(legs[k]);
       text += `${names[k]} ${pad(st.p50)}  ${pad(st.p95)}  ${pad(st.max)}\n`;
     }
     $("bench-out").textContent = text;
@@ -408,7 +437,7 @@ $("run-commit").onclick = guard(async () => {
     log(`write bench: total p50 ${ms(total.p50)}ms, commit p50 ${ms(commit.p50)}ms`);
     reporter.event("write-bench", {
       files: N,
-      legs: Object.fromEntries(Object.entries(legs).map(([k, xs]) => [k, stats(xs)])),
+      legs: Object.fromEntries((["open", "start", "write", "commit"] as const).map((k) => [k, stats(legs[k])])),
     });
   } finally {
     $("progress").hidden = true;
@@ -428,16 +457,24 @@ $("run-commit").onclick = guard(async () => {
 //      (isolated-event latency through the whole protocol)
 // Results go to the page, the nerd log, and .fsio/client/report.json.
 
+interface LabResults {
+  support: boolean;
+  matrix: { target: string; recursive: boolean; ok: boolean; err: string | null }[];
+  isolated: Record<string, (number | null)[]>;
+  burst: { sentIn?: number; eventsSeen?: number; batches?: number; firstLatency?: number | null; lastLatency?: number | null };
+  echo: { mode?: string; rtts?: (number | null)[] };
+}
+
 $("run-observer-lab").onclick = guard(async () => {
-  const btn = $("run-observer-lab");
+  const btn = $in("run-observer-lab");
   btn.disabled = true;
   $("verdict").hidden = true;
   const out = $("bench-out");
   $("bench-details").hidden = false;
   out.textContent = "observer lab running…";
-  const results = { support: hasObserver, matrix: [], isolated: {}, burst: {}, echo: {} };
-  const lines = [];
-  const say = (s) => {
+  const results: LabResults = { support: hasObserver, matrix: [], isolated: {}, burst: {}, echo: {} };
+  const lines: string[] = [];
+  const say = (s: string) => {
     lines.push(s);
     out.textContent = lines.join("\n");
     log("lab: " + s);
@@ -452,26 +489,26 @@ $("run-observer-lab").onclick = guard(async () => {
     // ---- A. observe() matrix
     step("observer lab: testing observe() on various handles");
     say("A. can observe() even start?");
-    let labDir = null;
+    let labDir: FileSystemDirectoryHandle | null = null;
     try {
-      labDir = await client.fsioDir.getDirectoryHandle("obs-lab", { create: true });
+      labDir = await client!.fsioDir.getDirectoryHandle("obs-lab", { create: true });
     } catch (e) {
-      say(`   (couldn't create scratch dir: ${e.name})`);
+      say(`   (couldn't create scratch dir: ${e instanceof Error ? e.name : e})`);
     }
-    const targets = [
-      ["picked folder", client.root],
-      [".fsio", client.fsioDir],
-      ...(labDir ? [["fresh subfolder", labDir]] : []),
+    const targets: [string, FileSystemHandle][] = [
+      ["picked folder", client!.root],
+      [".fsio", client!.fsioDir],
+      ...(labDir ? ([["fresh subfolder", labDir]] as [string, FileSystemHandle][]) : []),
     ];
     for (const [label, handle] of targets) {
       for (const recursive of [false, true]) {
-        let err = null;
-        let obs = null;
+        let err: string | null = null;
+        let obs: FileSystemObserver | null = null;
         try {
           obs = new FileSystemObserver(() => {});
           await obs.observe(handle, { recursive });
         } catch (e) {
-          err = `${e.name}: ${e.message}`;
+          err = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
         }
         obs?.disconnect();
         results.matrix.push({ target: label, recursive, ok: !err, err });
@@ -480,9 +517,9 @@ $("run-observer-lab").onclick = guard(async () => {
     }
 
     // ---- B & C need a working observer on the lab dir
-    let labEvents = [];
-    let waiter = null;
-    let labObs = null;
+    const labEvents: { t: number; type: string; name: string }[] = [];
+    let waiter: ((t: number) => void) | null = null;
+    let labObs: FileSystemObserver | null = null;
     if (labDir) {
       try {
         labObs = new FileSystemObserver((records) => {
@@ -493,34 +530,35 @@ $("run-observer-lab").onclick = guard(async () => {
         await labObs.observe(labDir, { recursive: true });
       } catch (e) {
         labObs = null;
-        say(`   (no working observer on scratch dir: ${e.name} — skipping latency tests)`);
+        say(`   (no working observer on scratch dir: ${e instanceof Error ? e.name : e} — skipping latency tests)`);
       }
     }
 
-    if (labObs) {
+    if (labObs && labDir) {
+      const lab = labDir;
       // ---- B. isolated event latency, by type
       step("observer lab: isolated event latencies");
       say("B. isolated events (5 each, 400ms apart) — latency ms:");
-      const measure = async (fn) => {
-        const p = new Promise((res) => (waiter = res));
+      const measure = async (fn: () => Promise<unknown>): Promise<number | null> => {
+        const p = new Promise<number>((res) => (waiter = res));
         const t0 = performance.now();
         await fn();
         const t = await Promise.race([p, sleep(2500).then(() => null)]);
         waiter = null;
         return t === null ? null : Math.round((t - t0) * 10) / 10;
       };
-      const kinds = {
-        "file create ": (i) => labDir.getFileHandle(`f${i}`, { create: true }),
+      const kinds: Record<string, (i: number) => Promise<unknown>> = {
+        "file create ": (i) => lab.getFileHandle(`f${i}`, { create: true }),
         "file write  ": async (i) => {
-          const w = await (await labDir.getFileHandle(`f${i}`)).createWritable();
-          await w.write(new TextEncoder().encode("x"));
+          const w = await (await lab.getFileHandle(`f${i}`)).createWritable();
+          await w.write(new TextEncoder().encode("x") as Uint8Array<ArrayBuffer>);
           await w.close();
         },
-        "dir create  ": (i) => labDir.getDirectoryHandle(`d${i}`, { create: true }),
-        "dir remove  ": (i) => labDir.removeEntry(`d${i}`),
+        "dir create  ": (i) => lab.getDirectoryHandle(`d${i}`, { create: true }),
+        "dir remove  ": (i) => lab.removeEntry(`d${i}`),
       };
       for (const [name, fn] of Object.entries(kinds)) {
-        const lat = [];
+        const lat: (number | null)[] = [];
         for (let i = 0; i < 5; i++) {
           lat.push(await measure(() => fn(i)));
           await sleep(400);
@@ -533,7 +571,7 @@ $("run-observer-lab").onclick = guard(async () => {
       step("observer lab: burst coalescing");
       const before = labEvents.length;
       const t0 = performance.now();
-      for (let i = 0; i < 20; i++) await labDir.getDirectoryHandle(`burst${i}`, { create: true });
+      for (let i = 0; i < 20; i++) await lab.getDirectoryHandle(`burst${i}`, { create: true });
       const tSent = performance.now() - t0;
       await sleep(2000);
       const burst = labEvents.slice(before);
@@ -542,13 +580,15 @@ $("run-observer-lab").onclick = guard(async () => {
         sentIn: Math.round(tSent),
         eventsSeen: burst.length,
         batches,
-        firstLatency: burst.length ? Math.round(burst[0].t - t0) : null,
-        lastLatency: burst.length ? Math.round(burst[burst.length - 1].t - t0) : null,
+        firstLatency: burst.length ? Math.round(burst[0]!.t - t0) : null,
+        lastLatency: burst.length ? Math.round(burst[burst.length - 1]!.t - t0) : null,
       };
-      say(`C. burst: 20 mkdirs in ${results.burst.sentIn}ms → ${burst.length} events in ~${batches} callback batch(es), first after ${results.burst.firstLatency}ms, last after ${results.burst.lastLatency}ms`);
+      say(
+        `C. burst: 20 mkdirs in ${results.burst.sentIn}ms → ${burst.length} events in ~${batches} callback batch(es), first after ${results.burst.firstLatency}ms, last after ${results.burst.lastLatency}ms`
+      );
       labObs.disconnect();
       try {
-        await client.fsioDir.removeEntry("obs-lab", { recursive: true });
+        await client!.fsioDir.removeEntry("obs-lab", { recursive: true });
       } catch {}
     }
 
@@ -558,7 +598,7 @@ $("run-observer-lab").onclick = guard(async () => {
       say("D. skipped (helper not running) — matrix + local tests above still stand");
     } else {
       step("observer lab: observer-only echo round trips");
-      const session = await client.createSession(
+      const session = await client!.createSession(
         { kind: "echo", client: "observer-lab" },
         {
           mode: "observer",
@@ -567,11 +607,11 @@ $("run-observer-lab").onclick = guard(async () => {
         }
       );
       say(`D. echo RTT via ${session.mode === "observer" ? "observer only" : "POLLING (observer refused again — see note)"} — 15 pings, 400ms apart:`);
-      const rtts = [];
+      const rtts: (number | null)[] = [];
       try {
         for (let i = 0; i < 15; i++) {
           const rtt = await session
-            .request("ping", { t0: now() }, { timeoutMs: 4000 })
+            .request<PingResult>("ping", { t0: now() }, { timeoutMs: 4000 })
             .then(({ result, rx }) => rx - result.t0, () => null);
           rtts.push(rtt === null ? null : Math.round(rtt * 10) / 10);
           await sleep(400);
@@ -580,7 +620,7 @@ $("run-observer-lab").onclick = guard(async () => {
         await session.close().catch(() => {});
       }
       results.echo = { mode: session.mode, rtts };
-      const good = rtts.filter((x) => x !== null);
+      const good = rtts.filter((x): x is number => x !== null);
       say(`   ${rtts.map((x) => (x === null ? "lost" : x)).join("  ")}`);
       if (good.length) {
         const s = stats(good);
@@ -589,7 +629,7 @@ $("run-observer-lab").onclick = guard(async () => {
     }
 
     say("\ndone — full data in .fsio/client/report.json");
-    reporter.event("observer-lab", results);
+    reporter.event("observer-lab", { ...results });
   } finally {
     btn.disabled = false;
   }
@@ -597,9 +637,9 @@ $("run-observer-lab").onclick = guard(async () => {
 
 // ---------------------------------------------------------------- terminal
 
-let term = null;
-let fit = null;
-let termSession = null;
+let term: Terminal | null = null;
+let fit: FitAddon | null = null;
+let termSession: FsioSession | null = null;
 
 $("open-term").onclick = guard(async () => {
   step("checking the helper before starting a shell");
@@ -613,40 +653,40 @@ $("open-term").onclick = guard(async () => {
       "Restart it with the --allow-shell flag: that's the switch that lets this page run programs on your machine."
     );
   }
-  $("open-term").disabled = true;
+  $in("open-term").disabled = true;
   $("term").hidden = false;
 
   if (!term) {
     term = new Terminal({ fontSize: 13, theme: { background: "#14161a" } });
-    fit = new FitAddon.FitAddon();
+    fit = new FitAddon();
     term.loadAddon(fit);
     term.open($("term"));
     new ResizeObserver(() => {
-      fit.fit();
-      termSession?.notify("resize", { cols: term.cols, rows: term.rows });
+      fit!.fit();
+      termSession?.notify("resize", { cols: term!.cols, rows: term!.rows });
     }).observe($("term"));
   }
-  fit.fit();
+  fit!.fit();
   term.reset();
 
   const dec = new TextDecoder();
   step("creating the shell session");
-  termSession = await client.createSession(
+  termSession = await client!.createSession(
     { kind: "shell", cols: term.cols, rows: term.rows },
     {
       onError: (e) => showError("Sending to the shell failed.", e.message),
       onNote: (m) => log("note:", m),
       onFrame: (f) => {
-        if (f.type === FrameType.DATA) term.write(dec.decode(f.payload));
+        if (f.type === FrameType.DATA) term!.write(dec.decode(f.payload));
       },
     }
   );
   termSession.onStatus = (st) => {
-    reporter.event("terminal-status", st);
+    reporter.event("terminal-status", { ...st });
     if (st.state === "exited") {
       $("term-status").textContent = `the shell exited${st.exitCode != null ? ` (code ${st.exitCode})` : ""}`;
-      $("open-term").disabled = false;
-      $("close-term").disabled = true;
+      $in("open-term").disabled = false;
+      $in("close-term").disabled = true;
     }
   };
   // Spawn errors arrive as JSON-RPC error objects on the spawn request —
@@ -657,19 +697,20 @@ $("open-term").onclick = guard(async () => {
       termSession.ready,
       sleep(8000).then(() => Promise.reject(new Error("the helper never answered the spawn request (waited 8 s)"))),
     ]);
-    $("term-status").textContent = info.pty === false
-      ? "connected (basic mode — install node-pty and restart the helper for the full experience)"
-      : "connected — type away";
+    $("term-status").textContent =
+      info.pty === false
+        ? "connected (basic mode — install node-pty and restart the helper for the full experience)"
+        : "connected — type away";
   } catch (e) {
-    showError("The helper refused to start a shell.", e.message);
-    $("open-term").disabled = false;
+    showError("The helper refused to start a shell.", e instanceof Error ? e.message : String(e));
+    $in("open-term").disabled = false;
     await termSession.close().catch(() => {});
     termSession = null;
     return;
   }
-  term.onData((d) => termSession.sendData(d));
+  term.onData((d) => termSession!.sendData(d));
   term.focus();
-  $("close-term").disabled = false;
+  $in("close-term").disabled = false;
   log(`terminal session ${termSession.id}`);
 });
 
@@ -677,6 +718,6 @@ $("close-term").onclick = guard(async () => {
   await termSession?.close();
   termSession = null;
   $("term-status").textContent = "closed";
-  $("close-term").disabled = true;
-  $("open-term").disabled = false;
+  $in("close-term").disabled = true;
+  $in("open-term").disabled = false;
 });

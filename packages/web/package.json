@@ -5,13 +5,16 @@
   "description": "fsio browser client and workbench page",
   "type": "module",
   "scripts": {
-    "build": "wireit"
+    "dev": "vite",
+    "build": "wireit",
+    "preview": "vite preview"
   },
   "wireit": {
     "build": {
-      "command": "node ../../scripts/check-syntax.mjs .",
-      "files": ["*.js", "../../scripts/check-syntax.mjs"],
-      "output": [],
+      "command": "tsc --pretty && vite build --logLevel warn",
+      "files": ["src/**", "index.html", "vite.config.ts", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted",
       "dependencies": ["../common:build"]
     }
   },

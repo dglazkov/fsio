@@ -11,7 +11,7 @@ protocol draft and `spec/FINDINGS.md` for the latency findings.
 npm install
 
 # one command: fresh host on ~/fsio-demo + workbench server
-scripts/dev.sh           # → http://localhost:8765/web/
+scripts/dev.sh           # → http://localhost:8765/
 
 # latency baseline without a browser (host must be running)
 npm run bench -- ~/fsio-demo --count 500 --poll 5
