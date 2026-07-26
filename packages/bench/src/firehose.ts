@@ -6,7 +6,7 @@
 //   - every byte arrives (line count integrity)
 //
 // Usage (host must be running with --allow-shell):
-//   node packages/bench/firehose.mjs <dir> [--lines 400000] [--slow]
+//   node packages/bench/dist/firehose.js <dir> [--lines 400000] [--slow]
 //   --slow: consumer acks lazily to force pause/resume cycles
 
 import fs from "node:fs";
@@ -21,16 +21,23 @@ import {
   rpcRequest,
   rpcNotification,
   SPAWN_REQUEST_ID,
+  type AckParams,
+  type OutSig,
+  type ShellSpawn,
 } from "@fsio/common";
 
 const args = process.argv.slice(2);
 const opts = { lines: 400_000, slow: false };
-let rootArg = null;
+let rootArg: string | null = null;
 for (let i = 0; i < args.length; i++) {
-  const a = args[i];
+  const a = args[i]!;
   if (a === "--lines") opts.lines = Number(args[++i]);
   else if (a === "--slow") opts.slow = true;
   else if (!a.startsWith("-")) rootArg = a;
+}
+if (!rootArg) {
+  console.error("usage: firehose <dir> [--lines n] [--slow]");
+  process.exit(1);
 }
 
 const sessionDir = path.join(path.resolve(rootArg), ".fsio", "sessions", `firehose-${Date.now()}`);
@@ -38,7 +45,7 @@ const inDir = path.join(sessionDir, "in");
 fs.mkdirSync(inDir, { recursive: true });
 
 let seq = 1;
-function commitFrame(bytes) {
+function commitFrame(bytes: Uint8Array): void {
   if (bytes.length <= DIR_CHUNK_MAX_BYTES) {
     fs.mkdirSync(path.join(inDir, dirChunkName(seq++, bytes)));
   } else {
@@ -51,22 +58,25 @@ function commitFrame(bytes) {
 // spawn: emit `lines` numbered lines as fast as possible, then a sentinel
 const marker = "FIREHOSE-DONE";
 const cmd = `seq 1 ${opts.lines}; echo ${marker}`;
-fs.writeFileSync(
-  path.join(sessionDir, ".t"),
-  JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", { kind: "shell", cmd: "/bin/sh", args: ["-c", cmd], pty: true, cols: 200, rows: 24 }))
-);
+const spawnSpec: ShellSpawn = { kind: "shell", cmd: "/bin/sh", args: ["-c", cmd], pty: true, cols: 200, rows: 24 };
+fs.writeFileSync(path.join(sessionDir, ".t"), JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spawnSpec)));
 fs.renameSync(path.join(sessionDir, ".t"), path.join(sessionDir, "spawn.json"));
 
 // segment-aware acking reader (mirrors the web client)
-let gen = 0, offset = 0, cum = 0, lastAck = 0, lastAckAt = 0;
+let gen = 0,
+  offset = 0,
+  cum = 0,
+  lastAck = 0,
+  lastAckAt = 0;
 let text = "";
-let maxDirBytes = 0, maxSegs = 0;
-const segPath = (g) => path.join(sessionDir, `out.${String(g).padStart(8, "0")}.log`);
+let maxDirBytes = 0,
+  maxSegs = 0;
+const segPath = (g: number) => path.join(sessionDir, `out.${String(g).padStart(8, "0")}.log`);
 
-function drain() {
-  let sig;
+function drain(): void {
+  let sig: OutSig;
   try {
-    sig = JSON.parse(fs.readFileSync(path.join(sessionDir, "out.sig"), "utf8"));
+    sig = JSON.parse(fs.readFileSync(path.join(sessionDir, "out.sig"), "utf8")) as OutSig;
   } catch {
     return;
   }
@@ -92,7 +102,8 @@ function drain() {
     if (!opts.slow || Date.now() - lastAckAt > ackInterval) {
       lastAck = cum;
       lastAckAt = Date.now();
-      commitFrame(jsonFrame(FrameType.RPC, rpcNotification("ack", { total: cum })));
+      const ack: AckParams = { total: cum };
+      commitFrame(jsonFrame(FrameType.RPC, rpcNotification("ack", ack)));
     }
   }
   // track worst-case footprint
@@ -114,8 +125,10 @@ const expectMin = opts.lines; // pty adds \r\n; count \n per emitted line (+ she
 const ok = text.includes(marker) && lineCount >= expectMin;
 console.log(`firehose ${ok ? "PASS" : "FAIL"} (${opts.slow ? "slow consumer" : "fast consumer"})`);
 console.log(`  lines expected \u2265${expectMin}, got ${lineCount}; sentinel: ${text.includes(marker)}`);
-console.log(`  received ${(cum / 1048576).toFixed(1)} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s ` +
-  `(${(cum / 1048576 / ((Date.now() - t0) / 1000)).toFixed(1)} MB/s)`);
+console.log(
+  `  received ${(cum / 1048576).toFixed(1)} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s ` +
+    `(${(cum / 1048576 / ((Date.now() - t0) / 1000)).toFixed(1)} MB/s)`
+);
 console.log(`  peak on disk: ${(maxDirBytes / 1048576).toFixed(1)} MB across \u2264${maxSegs} segments (cap \u2248 12 MB)`);
 
 commitFrame(jsonFrame(FrameType.RPC, rpcNotification("close")));

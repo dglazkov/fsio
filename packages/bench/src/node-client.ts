@@ -4,7 +4,7 @@
 // numbers can be compared against it.
 //
 // Usage (host must be running against the same <dir>):
-//   node packages/bench/node-client.js <dir> [--count 200] [--poll <ms>] [--payload 0] [--warmup 20]
+//   node packages/bench/dist/node-client.js <dir> [--count 200] [--poll <ms>] [--payload 0] [--warmup 20]
 //
 //   --poll <ms>   use polling instead of fs.watch for pong detection
 
@@ -22,18 +22,21 @@ import {
   RpcEndpoint,
   rpcRequest,
   SPAWN_REQUEST_ID,
+  type EchoSpawn,
+  type PingParams,
+  type PingResult,
 } from "@fsio/common";
 
 const args = process.argv.slice(2);
 const opts = { count: 200, poll: 0, payload: 0, warmup: 20, uplink: "file" };
-let rootArg = null;
+let rootArg: string | null = null;
 for (let i = 0; i < args.length; i++) {
-  const a = args[i];
+  const a = args[i]!;
   if (a === "--count") opts.count = Number(args[++i]);
   else if (a === "--poll") opts.poll = Number(args[++i]);
   else if (a === "--payload") opts.payload = Number(args[++i]);
   else if (a === "--warmup") opts.warmup = Number(args[++i]);
-  else if (a === "--uplink") opts.uplink = args[++i];
+  else if (a === "--uplink") opts.uplink = args[++i] ?? "file";
   else if (!a.startsWith("-")) rootArg = a;
 }
 if (!rootArg) {
@@ -60,13 +63,14 @@ try {
 
 // ---- create session
 fs.mkdirSync(inDir, { recursive: true });
+const spawnSpec: EchoSpawn = { kind: "echo", client: "node-bench" };
 const tmp = path.join(sessionDir, ".tmp-spawn");
-fs.writeFileSync(tmp, JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", { kind: "echo", client: "node-bench" })));
+fs.writeFileSync(tmp, JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spawnSpec)));
 fs.renameSync(tmp, path.join(sessionDir, "spawn.json"));
 
 // ---- chunk writer (atomic: temp + rename)
 let outSeq = 1;
-function commitFrame(bytes) {
+function commitFrame(bytes: Uint8Array): void {
   if (opts.uplink === "dirname" && bytes.length <= DIR_CHUNK_MAX_BYTES) {
     fs.mkdirSync(path.join(inDir, dirChunkName(outSeq++, bytes)));
     return;
@@ -77,13 +81,13 @@ function commitFrame(bytes) {
   fs.renameSync(t, path.join(inDir, name));
 }
 
-// ---- out.log reader + rpc endpoint (id correlation lives in common/rpc.js)
+// ---- out.log reader + rpc endpoint (id correlation lives in common/rpc.ts)
 let offset = 0;
-let outFd = null;
+let outFd: number | null = null;
 const rpc = new RpcEndpoint((msg) => commitFrame(jsonFrame(FrameType.RPC, msg)));
 
-function drainOutLog() {
-  let size;
+function drainOutLog(): void {
+  let size: number;
   try {
     if (outFd === null) outFd = fs.openSync(outLog, "r");
     size = fs.fstatSync(outFd).size;
@@ -101,7 +105,7 @@ function drainOutLog() {
   }
 }
 
-let watcher = null;
+let watcher: fs.FSWatcher | null = null;
 if (opts.poll > 0) {
   setInterval(drainOutLog, opts.poll);
 } else {
@@ -112,25 +116,33 @@ const safety = setInterval(drainOutLog, 250);
 // ---- ping-pong loop
 const filler = "x".repeat(opts.payload);
 
-async function ping() {
-  const { result, rx } = await rpc.request("ping", { t0: now(), filler });
+async function ping(): Promise<PingResult & { t3: number }> {
+  const params: PingParams = { t0: now(), filler };
+  const { result, rx } = await rpc.request<PingResult>("ping", params);
   return { ...result, t3: rx };
 }
 
-function stats(xs) {
+function stats(xs: number[]): { min: number; p50: number; p95: number; max: number; mean: number } {
   const s = [...xs].sort((a, b) => a - b);
-  const q = (p) => s[Math.min(s.length - 1, Math.floor(p * s.length))];
+  const q = (p: number) => s[Math.min(s.length - 1, Math.floor(p * s.length))]!;
   const mean = s.reduce((a, b) => a + b, 0) / s.length;
-  return { min: s[0], p50: q(0.5), p95: q(0.95), max: s[s.length - 1], mean };
+  return { min: s[0]!, p50: q(0.5), p95: q(0.95), max: s[s.length - 1]!, mean };
 }
 
-const fmt = (x) => x.toFixed(2).padStart(8);
+const fmt = (x: number) => x.toFixed(2).padStart(8);
 
 const mode = (opts.poll > 0 ? `poll ${opts.poll}ms` : "fs.watch") + (opts.uplink === "dirname" ? " +dirname-up" : "");
 console.log(`fsio node bench: session ${sessionId}`);
 console.log(`  mode=${mode} count=${opts.count} warmup=${opts.warmup} payload=${opts.payload}B`);
 
-const results = [];
+interface Legs {
+  rtt: number;
+  up: number;
+  host: number;
+  down: number;
+}
+
+const results: Legs[] = [];
 for (let i = 0; i < opts.warmup + opts.count; i++) {
   const r = await ping();
   if (i >= opts.warmup) {
@@ -144,7 +156,7 @@ for (let i = 0; i < opts.warmup + opts.count; i++) {
 }
 
 console.log(`\n  leg        min      p50      p95      max     mean  (ms)`);
-for (const key of ["rtt", "up", "host", "down"]) {
+for (const key of ["rtt", "up", "host", "down"] as const) {
   const s = stats(results.map((r) => r[key]));
   console.log(`  ${key.padEnd(5)}${fmt(s.min)} ${fmt(s.p50)} ${fmt(s.p95)} ${fmt(s.max)} ${fmt(s.mean)}`);
 }

@@ -26,7 +26,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --fresh wipes .fsio (old sessions, stale host.json) on startup
-node packages/host/fsio-host.js "$DIR" --fresh --allow-shell 2>&1 | sed 's/^/[host]  /' &
+npm run build
+node packages/host/dist/fsio-host.js "$DIR" --fresh --allow-shell 2>&1 | sed 's/^/[host]  /' &
 HOST_PID=$!
 node packages/host/serve.js "$PORT" 2>&1 | sed 's/^/[serve] /' &
 SERVE_PID=$!

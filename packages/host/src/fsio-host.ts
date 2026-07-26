@@ -2,7 +2,7 @@
 // fsio host: attaches to <dir>/.fsio, serves sessions created by clients.
 //
 // Usage:
-//   node packages/host/fsio-host.js <dir> [--allow-shell] [--poll <ms>] [--no-watch] [--fresh]
+//   node packages/host/dist/fsio-host.js <dir> [--allow-shell] [--poll <ms>] [--no-watch] [--fresh]
 //
 //   --allow-shell   permit `kind: "shell"` sessions (spawns processes!)
 //   --hot <ms>      hot-poll interval while sessions are active (default 5, 0=off)
@@ -12,7 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawn as cpSpawn } from "node:child_process";
+import { spawn as cpSpawn, type ChildProcess } from "node:child_process";
 import {
   FrameType,
   frameTypeName,
@@ -28,6 +28,19 @@ import {
   rpcResult,
   rpcError,
   PROTOCOL_VERSION,
+  type Frame,
+  type RpcId,
+  type RpcResponseMsg,
+  type FsioManifest,
+  type HostInfo,
+  type OutSig,
+  type SessionStatus,
+  type ShellSpawn,
+  type SpawnResult,
+  type PingResult,
+  type ResizeParams,
+  type SignalParams,
+  type AckParams,
 } from "@fsio/common";
 
 const HEARTBEAT_MS = 2000;
@@ -40,13 +53,15 @@ const ACK_WINDOW = 4 * 1024 * 1024; // pause output when unacked exceeds this
 const ACK_RESUME = 2 * 1024 * 1024; // resume when unacked drops below this
 const RETRY_MS = 5; // fast retry when a chunk looks torn/empty
 
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 // ---------------------------------------------------------------- args
 
 const args = process.argv.slice(2);
 const flags = { allowShell: false, poll: 0, hot: 5, watch: true, fresh: false };
-let rootArg = null;
+let rootArg: string | null = null;
 for (let i = 0; i < args.length; i++) {
-  const a = args[i];
+  const a = args[i]!;
   if (a === "--allow-shell") flags.allowShell = true;
   else if (a === "--poll") flags.poll = Number(args[++i]);
   else if (a === "--hot") flags.hot = Number(args[++i]);
@@ -70,29 +85,29 @@ const sessionsDir = path.join(fsioDir, "sessions");
 if (flags.fresh) fs.rmSync(fsioDir, { recursive: true, force: true });
 fs.mkdirSync(sessionsDir, { recursive: true });
 
-const log = (...a) => console.log(new Date().toISOString(), ...a);
+const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 
 // ---------------------------------------------------------------- helpers
 
-function writeFileAtomic(file, data) {
+function writeFileAtomic(file: string, data: string | Uint8Array): void {
   const tmp = path.join(path.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
   fs.writeFileSync(tmp, data);
   fs.renameSync(tmp, file);
 }
 
-function writeJsonAtomic(file, obj) {
+function writeJsonAtomic(file: string, obj: unknown): void {
   writeFileAtomic(file, JSON.stringify(obj, null, 2));
 }
 
-function readJson(file) {
+function readJson<T>(file: string): T | null {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return JSON.parse(fs.readFileSync(file, "utf8")) as T;
   } catch {
     return null;
   }
 }
 
-function watchDir(p, cb) {
+function watchDir(p: string, cb: () => void): fs.FSWatcher | null {
   if (!flags.watch) return null;
   try {
     const w = fs.watch(p, cb);
@@ -105,9 +120,32 @@ function watchDir(p, cb) {
 
 // ---------------------------------------------------------------- node-pty (optional)
 
-let ptyMod = null;
+// Local minimal surface instead of node-pty's own types: the dependency is
+// *optional*, and a missing optional dep must never break `npm run build`.
+// (Hence also the variable specifier: keeps tsc from resolving the module.)
+interface PtyProcess {
+  pid: number;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: string): void;
+  pause(): void;
+  resume(): void;
+  onData(cb: (data: string) => void): void;
+  onExit(cb: (e: { exitCode: number }) => void): void;
+}
+
+interface PtyModule {
+  spawn(
+    file: string,
+    args: string[],
+    opts: { name: string; cols: number; rows: number; cwd: string; env: NodeJS.ProcessEnv }
+  ): PtyProcess;
+}
+
+let ptyMod: PtyModule | null = null;
 try {
-  ptyMod = await import("node-pty");
+  const specifier = "node-pty";
+  ptyMod = (await import(specifier)) as PtyModule;
   log("node-pty available: shell sessions get a real pty");
 } catch {
   log("node-pty not installed: shell sessions fall back to pipes (no pty). `npm i node-pty` for full terminal support.");
@@ -115,46 +153,63 @@ try {
 
 // ---------------------------------------------------------------- session state
 
-/** @type {Map<string, Session>} */
-const sessions = new Map();
+const sessions = new Map<string, Session>();
+
+/** Spawn params as read from spawn.json — legacy bare specs mean we cannot
+ *  trust the shape until `kind` is inspected. */
+type SpawnParams = Partial<Omit<ShellSpawn, "kind">> & { kind?: string };
+
+type RpcInbound = { id?: RpcId; method?: string; params?: unknown };
 
 class Session {
-  constructor(id) {
+  id: string;
+  dir: string;
+  inDir: string;
+  spawn: SpawnParams | null = null; // params from the JSON-RPC request in spawn.json
+  spawnId: RpcId | null = null; // request id to answer (null = legacy bare spec)
+  spawnAnswered = false;
+  started = false;
+  done = false;
+  nextInSeq: number | null = null; // discovered from the smallest chunk present
+  // Output stream state: segmented log + cumulative byte accounting.
+  outGen = 0; // current segment number
+  segBytes = 0; // bytes in current segment
+  prevFinal = 0; // final size of segment outGen-1 (for reader handoff)
+  outTotal = 0; // cumulative bytes ever appended
+  ackTotal = 0; // cumulative bytes the client has confirmed consuming
+  paused = false; // output paused waiting for acks
+  doneSegs: { gen: number; endTotal: number }[] = []; // finished segments
+  proc: PtyProcess | ChildProcess | null = null;
+  usesPty = false;
+  watchers: (fs.FSWatcher | null)[] = [];
+  retryTimer: ReturnType<typeof setTimeout> | null = null;
+  lastActivity = Date.now();
+
+  constructor(id: string) {
     this.id = id;
     this.dir = path.join(sessionsDir, id);
     this.inDir = path.join(this.dir, "in");
-    this.spawn = null; // spawn params (from the JSON-RPC request in spawn.json)
-    this.spawnId = null; // request id to answer (null = legacy bare spec)
-    this.spawnAnswered = false;
-    this.started = false;
-    this.done = false;
-    this.nextInSeq = null; // discovered from the smallest chunk present
-    // Output stream state: segmented log + cumulative byte accounting.
-    this.outGen = 0; // current segment number
-    this.segBytes = 0; // bytes in current segment
-    this.prevFinal = 0; // final size of segment outGen-1 (for reader handoff)
-    this.outTotal = 0; // cumulative bytes ever appended
-    this.ackTotal = 0; // cumulative bytes the client has confirmed consuming
-    this.paused = false; // output paused waiting for acks
-    this.doneSegs = []; // finished segments: {gen, endTotal}
-    this.proc = null; // pty or child process
-    this.usesPty = false;
-    this.watchers = [];
-    this.retryTimer = null;
-    this.lastActivity = Date.now();
   }
 
-  segPath(gen) {
+  get pty(): PtyProcess | null {
+    return this.usesPty ? (this.proc as PtyProcess) : null;
+  }
+
+  get child(): ChildProcess | null {
+    return this.usesPty || !this.proc ? null : (this.proc as ChildProcess);
+  }
+
+  segPath(gen: number): string {
     return path.join(this.dir, `out.${String(gen).padStart(8, "0")}.log`);
   }
 
   // Append with open/write/close per call, then bump a rename-committed
-  // doorbell file. Rationale (measured, spec/FINDINGS.md F1): on macOS, appends through
-  // a long-held fd are nearly invisible to FSEvents-backed watchers — events
-  // fire on close() and renames, not on in-place writes.
+  // doorbell file. Rationale (measured, spec/FINDINGS.md F1): on macOS,
+  // appends through a long-held fd are nearly invisible to FSEvents-backed
+  // watchers — events fire on close() and renames, not on in-place writes.
   // Segments always rotate on frame boundaries (rotation happens between
   // appends), so every segment is independently parseable.
-  appendFrame(type, payload) {
+  appendFrame(type: number, payload: Uint8Array): void {
     const bytes = encodeFrame(type, payload);
     const fd = fs.openSync(this.segPath(this.outGen), "a");
     fs.writeSync(fd, bytes);
@@ -170,51 +225,57 @@ class Session {
     }
     // Doorbell doubles as the reader's map: current segment, its size, the
     // final size of the previous segment, and the cumulative total.
-    writeFileAtomic(
-      path.join(this.dir, "out.sig"),
-      JSON.stringify({ gen: this.outGen, size: this.segBytes, prevFinal: this.prevFinal, total: this.outTotal })
-    );
+    const sig: OutSig = { gen: this.outGen, size: this.segBytes, prevFinal: this.prevFinal, total: this.outTotal };
+    writeFileAtomic(path.join(this.dir, "out.sig"), JSON.stringify(sig));
     this.checkWindow();
   }
 
-  ack(total) {
+  ack(total: number): void {
     this.ackTotal = Math.max(this.ackTotal, total);
     this.gcSegments();
     this.checkWindow();
   }
 
-  gcSegments() {
-    while (this.doneSegs.length > 0 && this.ackTotal >= this.doneSegs[0].endTotal) {
-      const seg = this.doneSegs.shift();
+  gcSegments(): void {
+    while (this.doneSegs.length > 0 && this.ackTotal >= this.doneSegs[0]!.endTotal) {
+      const seg = this.doneSegs.shift()!;
       try {
         fs.unlinkSync(this.segPath(seg.gen));
       } catch {}
     }
   }
 
-  checkWindow() {
+  checkWindow(): void {
     if (!this.proc) return;
     const unacked = this.outTotal - this.ackTotal;
     if (!this.paused && unacked > ACK_WINDOW) {
       this.paused = true;
       try {
-        this.usesPty ? this.proc.pause() : (this.proc.stdout.pause(), this.proc.stderr.pause());
+        if (this.pty) this.pty.pause();
+        else {
+          this.child!.stdout!.pause();
+          this.child!.stderr!.pause();
+        }
       } catch {}
       log(`session ${this.id}: output paused (${(unacked / 1048576).toFixed(1)} MB unacked)`);
     } else if (this.paused && unacked <= ACK_RESUME) {
       this.paused = false;
       try {
-        this.usesPty ? this.proc.resume() : (this.proc.stdout.resume(), this.proc.stderr.resume());
+        if (this.pty) this.pty.resume();
+        else {
+          this.child!.stdout!.resume();
+          this.child!.stderr!.resume();
+        }
       } catch {}
       log(`session ${this.id}: output resumed`);
     }
   }
 
-  appendJson(type, obj) {
+  appendJson(type: number, obj: unknown): void {
     this.appendFrame(type, new TextEncoder().encode(JSON.stringify(obj)));
   }
 
-  setStatus(obj) {
+  setStatus(obj: Omit<SessionStatus, "t">): void {
     writeJsonAtomic(path.join(this.dir, "status.json"), { t: now(), ...obj });
   }
 
@@ -222,21 +283,21 @@ class Session {
   // JSON-RPC error objects instead of a status.json state the client must
   // poll for and interpret. Duplicated answers (host restart re-adopting a
   // session) are fine: clients ignore responses with unknown ids.
-  answerSpawn(msg) {
+  answerSpawn(make: (id: RpcId) => RpcResponseMsg): void {
     if (this.spawnId === null || this.spawnAnswered) return;
     this.spawnAnswered = true;
-    this.appendJson(FrameType.RPC, msg);
+    this.appendJson(FrameType.RPC, make(this.spawnId));
   }
 
-  spawnOk(result) {
-    this.answerSpawn(rpcResult(this.spawnId, result));
+  spawnOk(result: SpawnResult): void {
+    this.answerSpawn((id) => rpcResult(id, result));
   }
 
-  spawnFail(code, message) {
-    this.answerSpawn(rpcError(this.spawnId, code, message));
+  spawnFail(code: number, message: string): void {
+    this.answerSpawn((id) => rpcError(id, code, message));
   }
 
-  scheduleRetry() {
+  scheduleRetry(): void {
     if (this.retryTimer) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -244,13 +305,14 @@ class Session {
     }, RETRY_MS);
   }
 
-  close() {
+  close(): void {
     this.done = true;
     for (const w of this.watchers) w?.close();
     this.watchers = [];
     if (this.proc) {
       try {
-        this.usesPty ? this.proc.kill() : this.proc.kill("SIGTERM");
+        if (this.pty) this.pty.kill();
+        else this.child!.kill("SIGTERM");
       } catch {}
       this.proc = null;
     }
@@ -264,7 +326,7 @@ class Session {
 let scanning = false;
 let rescan = false;
 
-function scheduleScan() {
+function scheduleScan(): void {
   if (scanning) {
     rescan = true;
     return;
@@ -272,21 +334,21 @@ function scheduleScan() {
   runScan();
 }
 
-async function runScan() {
+function runScan(): void {
   scanning = true;
   do {
     rescan = false;
     try {
       scanOnce();
     } catch (e) {
-      log("scan error:", e.message);
+      log("scan error:", errMsg(e));
     }
   } while (rescan);
   scanning = false;
 }
 
-function scanOnce() {
-  let entries;
+function scanOnce(): void {
+  let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
   } catch {
@@ -303,10 +365,10 @@ function scanOnce() {
   }
 }
 
-function adoptSession(id) {
+function adoptSession(id: string): void {
   const s = new Session(id);
   sessions.set(id, s);
-  const status = readJson(path.join(s.dir, "status.json"));
+  const status = readJson<SessionStatus>(path.join(s.dir, "status.json"));
   if (status && status.state === "exited") {
     s.done = true;
     // Stale leftover (e.g. host restarted before cleanup): GC after a grace
@@ -318,14 +380,14 @@ function adoptSession(id) {
   log(`session ${id}: adopted`);
 }
 
-function tryStart(s) {
-  const raw = readJson(path.join(s.dir, "spawn.json"));
+function tryStart(s: Session): void {
+  const raw = readJson<RpcInbound & { jsonrpc?: string } & SpawnParams>(path.join(s.dir, "spawn.json"));
   if (!raw) return; // not written yet; a watch event will re-trigger
   // spawn.json carries a JSON-RPC "spawn" request (the file is the bootstrap
   // transport; the response rides the out stream). Legacy bare specs are
   // tolerated: no id, no response, status.json only.
   if (raw.jsonrpc === "2.0" && raw.method === "spawn") {
-    s.spawn = raw.params ?? {};
+    s.spawn = (raw.params ?? {}) as SpawnParams;
     s.spawnId = raw.id ?? null;
   } else {
     s.spawn = raw;
@@ -354,16 +416,16 @@ function tryStart(s) {
   }
 }
 
-function startShell(s) {
-  const spec = s.spawn;
+function startShell(s: Session): void {
+  const spec = s.spawn!;
   const cmd = spec.cmd || process.env.SHELL || "/bin/bash";
   const cmdArgs = spec.args ?? [];
   const cols = spec.cols ?? 80;
   const rows = spec.rows ?? 24;
   const cwd = spec.cwd ? path.resolve(sharedDir, spec.cwd) : sharedDir;
 
-  // A spawn failure must never be silent: the client is watching status.json
-  // and will otherwise stare at an empty terminal forever.
+  // A spawn failure must never be silent: the client is awaiting the spawn
+  // response and will otherwise stare at an empty terminal forever.
   if (ptyMod && spec.pty !== false) {
     try {
       const p = ptyMod.spawn(cmd, cmdArgs, {
@@ -385,14 +447,14 @@ function startShell(s) {
       s.spawnOk({ kind: "shell", pty: true, pid: p.pid, cmd });
       return;
     } catch (e) {
-      log(`session ${s.id}: pty spawn failed (${e.message}); falling back to pipes`);
+      log(`session ${s.id}: pty spawn failed (${errMsg(e)}); falling back to pipes`);
     }
   }
   try {
     const p = cpSpawn(cmd, cmdArgs, { cwd, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
     // ENOENT etc. arrive async; answer the spawn request only once the
     // outcome is known ('spawn' fires on success, 'error' instead of it).
-    p.on("spawn", () => s.spawnOk({ kind: "shell", pty: false, pid: p.pid, cmd }));
+    p.on("spawn", () => s.spawnOk({ kind: "shell", pty: false, pid: p.pid!, cmd }));
     p.on("error", (e) => {
       log(`session ${s.id}: spawn error: ${e.message}`);
       s.setStatus({ state: "error", error: `could not start ${cmd}: ${e.message}` });
@@ -400,8 +462,9 @@ function startShell(s) {
       s.proc = null;
     });
     s.proc = p;
-    p.stdout.on("data", (d) => s.appendFrame(FrameType.DATA, d));
-    p.stderr.on("data", (d) => s.appendFrame(FrameType.DATA, d));
+    s.usesPty = false;
+    p.stdout!.on("data", (d: Buffer) => s.appendFrame(FrameType.DATA, d));
+    p.stderr!.on("data", (d: Buffer) => s.appendFrame(FrameType.DATA, d));
     p.on("exit", (code) => {
       log(`session ${s.id}: exited code=${code}`);
       s.setStatus({ state: "exited", exitCode: code });
@@ -409,36 +472,36 @@ function startShell(s) {
     });
     s.setStatus({ state: "running", kind: "shell", pty: false, pid: p.pid, cmd });
   } catch (e) {
-    log(`session ${s.id}: spawn failed: ${e.message}`);
-    s.setStatus({ state: "error", error: `could not start ${cmd}: ${e.message}` });
-    s.spawnFail(RpcErrors.SPAWN_FAILED, `could not start ${cmd}: ${e.message}`);
+    log(`session ${s.id}: spawn failed: ${errMsg(e)}`);
+    s.setStatus({ state: "error", error: `could not start ${cmd}: ${errMsg(e)}` });
+    s.spawnFail(RpcErrors.SPAWN_FAILED, `could not start ${cmd}: ${errMsg(e)}`);
     s.done = true;
   }
 }
 
 // Consume in/ chunks strictly in sequence order. Two kinds share one
 // sequence space: NNNNNNNN.f files (payload = content) and
-// NNNNNNNN-<b64url> directories (payload = name; experimental fast lane).
-function processIncoming(s) {
-  let names;
+// NNNNNNNN-<b64url> directories (payload = name; fast lane, F10).
+function processIncoming(s: Session): void {
+  let names: string[];
   try {
     names = fs.readdirSync(s.inDir);
   } catch {
     return; // in/ not created yet
   }
-  const chunks = new Map(); // seq -> {name, data?}
+  const chunks = new Map<number, { name: string; data?: string }>();
   for (const n of names) {
     let m;
     if ((m = CHUNK_RE.exec(n))) chunks.set(Number(m[1]), { name: n });
-    else if ((m = DIR_CHUNK_RE.exec(n))) chunks.set(Number(m[1]), { name: n, data: m[2] });
+    else if ((m = DIR_CHUNK_RE.exec(n))) chunks.set(Number(m[1]), { name: n, data: m[2]! });
   }
   if (chunks.size === 0) return;
   if (s.nextInSeq === null) s.nextInSeq = Math.min(...chunks.keys());
 
   while (chunks.has(s.nextInSeq)) {
-    const chunk = chunks.get(s.nextInSeq);
+    const chunk = chunks.get(s.nextInSeq)!;
     const p = path.join(s.inDir, chunk.name);
-    let bytes;
+    let bytes: Uint8Array;
     if (chunk.data !== undefined) {
       bytes = b64urlDecode(chunk.data); // dirname chunk: payload is the name
     } else {
@@ -469,20 +532,20 @@ function processIncoming(s) {
   }
 }
 
-function handleFrame(s, frame, t1) {
+function handleFrame(s: Session, frame: Frame, t1: number): void {
   switch (frame.type) {
     case FrameType.DATA: {
       if (!s.proc) break;
-      if (s.usesPty) s.proc.write(Buffer.from(frame.payload).toString("utf8"));
-      else s.proc.stdin.write(Buffer.from(frame.payload));
+      if (s.pty) s.pty.write(Buffer.from(frame.payload).toString("utf8"));
+      else s.child!.stdin!.write(Buffer.from(frame.payload));
       break;
     }
     case FrameType.RPC: {
-      let msg;
+      let msg: RpcInbound;
       try {
-        msg = decodeJson(frame.payload);
+        msg = decodeJson<RpcInbound>(frame.payload);
       } catch (e) {
-        s.appendJson(FrameType.RPC, rpcError(null, RpcErrors.PARSE_ERROR, `unparseable RPC frame: ${e.message}`));
+        s.appendJson(FrameType.RPC, rpcError(null, RpcErrors.PARSE_ERROR, `unparseable RPC frame: ${errMsg(e)}`));
         break;
       }
       handleRpc(s, msg, t1);
@@ -497,31 +560,38 @@ function handleFrame(s, frame, t1) {
 // Requests get responses on the out stream; notifications are
 // fire-and-forget; responses from the client are not expected (the host
 // never sends requests in v0) and are ignored.
-function handleRpc(s, msg, t1) {
+function handleRpc(s: Session, msg: RpcInbound, t1: number): void {
   const { id, method, params = {} } = msg;
   if (method === undefined) return; // a response; host has no pending requests
   const isRequest = id !== undefined;
   switch (method) {
-    case "ping":
+    case "ping": {
       // Result echoes params (filler exercises the downlink under payload
       // tests) plus host receive/append timestamps for leg attribution.
-      if (isRequest) s.appendJson(FrameType.RPC, rpcResult(id, { ...params, t1, t2: now() }));
+      const result: PingResult = { t0: 0, ...(params as object), t1, t2: now() };
+      if (isRequest) s.appendJson(FrameType.RPC, rpcResult(id, result));
       break;
-    case "resize":
-      if (s.proc && s.usesPty) s.proc.resize(params.cols, params.rows);
+    }
+    case "resize": {
+      const { cols, rows } = params as ResizeParams;
+      s.pty?.resize(cols, rows);
       break;
+    }
     case "ack":
-      s.ack(params.total);
+      s.ack((params as AckParams).total);
       break;
-    case "signal":
+    case "signal": {
+      const { sig } = params as SignalParams;
       if (s.proc) {
         try {
-          s.usesPty ? s.proc.kill(params.sig) : s.proc.kill(params.sig ?? "SIGTERM");
+          if (s.pty) s.pty.kill(sig);
+          else s.child!.kill((sig ?? "SIGTERM") as NodeJS.Signals);
         } catch {}
       }
       break;
+    }
     case "eof":
-      if (s.proc && !s.usesPty) s.proc.stdin.end();
+      s.child?.stdin?.end();
       break;
     case "close":
       log(`session ${s.id}: closed by client`);
@@ -537,39 +607,41 @@ function handleRpc(s, msg, t1) {
   }
 }
 
-function removeSessionDir(s, why) {
+function removeSessionDir(s: Session, why: string): void {
   try {
     fs.rmSync(s.dir, { recursive: true, force: true });
     log(`session ${s.id}: removed (${why})`);
   } catch (e) {
-    log(`session ${s.id}: cleanup failed: ${e.message}`);
+    log(`session ${s.id}: cleanup failed: ${errMsg(e)}`);
   }
 }
 
 // ---------------------------------------------------------------- startup
 
-writeJsonAtomic(path.join(fsioDir, "fsio.json"), { protocol: PROTOCOL_VERSION });
+const manifest: FsioManifest = { protocol: PROTOCOL_VERSION };
+writeJsonAtomic(path.join(fsioDir, "fsio.json"), manifest);
 
 let hbSeq = 0;
-function heartbeat() {
-  writeJsonAtomic(path.join(fsioDir, "host.json"), {
+const startedAt = now();
+function heartbeat(): void {
+  const info: HostInfo = {
     pid: process.pid,
     protocol: PROTOCOL_VERSION,
     allowShell: flags.allowShell,
     pty: !!ptyMod,
-    startedAt: startedAt,
+    startedAt,
     seq: hbSeq++,
     t: now(),
-  });
+  };
+  writeJsonAtomic(path.join(fsioDir, "host.json"), info);
 }
-const startedAt = now();
 heartbeat();
 setInterval(heartbeat, HEARTBEAT_MS);
 
-// GC: clients that vanish without CTL close (crashed tab, hard refresh)
-// leave "running" sessions behind forever. Echo sessions are workbench
-// artifacts — reap them after idle timeout. Shell sessions are left alone
-// (they may hold real user processes).
+// GC: clients that vanish without close (crashed tab, hard refresh) leave
+// "running" sessions behind forever. Echo sessions are workbench artifacts
+// — reap them after idle timeout. Shell sessions are left alone (they may
+// hold real user processes).
 setInterval(() => {
   for (const s of sessions.values()) {
     if (s.started && !s.done && s.spawn?.kind === "echo" && Date.now() - s.lastActivity > IDLE_GC_MS) {
@@ -584,8 +656,8 @@ watchDir(sessionsDir, scheduleScan);
 setInterval(scheduleScan, SAFETY_POLL_MS);
 if (flags.poll > 0) setInterval(scheduleScan, flags.poll);
 // Hot poll: fs.watch wakeups ride FSEvents with ~50ms latency on macOS
-// (measured; spec/FINDINGS.md F2). While a session is live, poll fast so the uplink
-// isn't notification-bound. Idle cost is zero.
+// (measured; spec/FINDINGS.md F2). While a session is live, poll fast so
+// the uplink isn't notification-bound. Idle cost is zero.
 if (flags.hot > 0) {
   setInterval(() => {
     for (const s of sessions.values()) {

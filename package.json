@@ -13,9 +13,9 @@
   "scripts": {
     "build": "wireit",
     "test": "wireit",
-    "host": "node packages/host/fsio-host.js",
+    "host": "node packages/host/dist/fsio-host.js",
     "serve": "node packages/host/serve.js",
-    "bench": "node packages/bench/node-client.js",
+    "bench": "node packages/bench/dist/node-client.js",
     "dev": "scripts/dev.sh",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },

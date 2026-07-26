@@ -10,14 +10,15 @@
   },
   "wireit": {
     "build": {
-      "command": "node ../../scripts/check-syntax.mjs .",
-      "files": ["*.js", "*.mjs", "../../scripts/check-syntax.mjs"],
-      "output": [],
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted",
       "dependencies": ["../common:build"]
     },
     "test": {
-      "command": "node test-smoke.mjs",
-      "files": ["*.js", "*.mjs", "../host/*.js"],
+      "command": "node dist/test-smoke.js",
+      "files": ["../host/src/**", "../common/src/**"],
       "output": [],
       "dependencies": ["build", "../host:build"]
     }

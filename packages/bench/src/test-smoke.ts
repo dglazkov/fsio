@@ -17,18 +17,18 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const hostJs = path.join(here, "..", "host", "fsio-host.js");
+const here = path.dirname(fileURLToPath(import.meta.url)); // …/bench/dist
+const hostJs = path.join(here, "..", "..", "host", "dist", "fsio-host.js");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-smoke-"));
 
 const P50_CEILING_MS = 100;
 
-function run(label, args, timeoutMs) {
+function run(label: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     console.log(`\n=== ${label}`);
     const p = spawn(process.execPath, args, { stdio: ["ignore", "pipe", "inherit"] });
     let out = "";
-    p.stdout.on("data", (d) => {
+    p.stdout.on("data", (d: Buffer) => {
       out += d;
       process.stdout.write(d);
     });
@@ -45,8 +45,11 @@ function run(label, args, timeoutMs) {
 }
 
 // The bench prints a markdown row: | node client | mode | count | payload | min | p50 | p95 | max |
-function assertP50(label, out) {
-  const row = out.split("\n").map((l) => l.trim()).find((l) => l.startsWith("| node client |"));
+function assertP50(label: string, out: string): void {
+  const row = out
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("| node client |"));
   if (!row) throw new Error(`${label}: no result row in output`);
   const p50 = Number(row.split("|")[6]);
   if (!(p50 > 0)) throw new Error(`${label}: unparseable p50 in: ${row}`);
@@ -78,7 +81,7 @@ for (let i = 0; ; i++) {
 
 // ---- the battery
 const nodeClient = path.join(here, "node-client.js");
-const firehose = path.join(here, "firehose.mjs");
+const firehose = path.join(here, "firehose.js");
 let ok = false;
 try {
   const out1 = await run("echo bench (file uplink)", [nodeClient, dir, "--count", "50", "--poll", "5"], 60_000);
@@ -89,7 +92,7 @@ try {
   await run("firehose (slow consumer)", [firehose, dir, "--lines", "800000", "--slow"], 150_000);
   ok = true;
 } catch (e) {
-  console.error(`\nsmoke FAIL: ${e.message}`);
+  console.error(`\nsmoke FAIL: ${e instanceof Error ? e.message : e}`);
 } finally {
   shuttingDown = true;
   host.kill();
