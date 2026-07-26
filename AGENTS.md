@@ -36,9 +36,12 @@ style.
    closing an issue, re-check whether it unblocks a `p3` (promote it). A
    priority is a claim about the dependency graph *and the current goal*
    (a working demo; agent-verifiable browser loops) — cite what it waits
-   on, and beware "just became possible" masquerading as "now urgent"
-   (that bias once put npm packaging at p1 the day the host became
-   embeddable).
+   on, and beware two biases with label-shaped disguises: "just became
+   possible" masquerading as "now urgent" (once put npm packaging at p1
+   the day the host became embeddable), and "minutes of effort"
+   masquerading as priority (once put a crbug-filing errand at p1 —
+   effort is orthogonal; genuinely-free tasks are done opportunistically,
+   not ranked first).
 3. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
    prefer a short-lived branch + PR so CI gates the merge.
 4. Commit messages explain *why*, cite F/D/issue numbers, and record
