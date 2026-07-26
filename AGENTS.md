@@ -33,7 +33,10 @@ style.
    issue closed. Backlog items discovered mid-work become new issues, not
    scope creep.
 2. Session-end triage: every new issue gets a `p1`/`p2`/`p3` label; when
-   closing an issue, re-check whether it unblocks a `p3` (promote it). A
+   closing an issue, re-check whether it unblocks a `p3` (promote it).
+   Titles state *remaining* work, not history — when scope shifts,
+   retitle (#9 sat as "Investigate… (report upstream?)" long after the
+   investigation ended; the actual next step was three comments deep). A
    priority is a claim about the dependency graph *and the current goal*
    (a working demo; agent-verifiable browser loops) — cite what it waits
    on, and beware two biases with label-shaped disguises: "just became
