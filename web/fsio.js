@@ -1,6 +1,6 @@
 // fsio browser client library (v0).
 //
-// Transport asymmetry (deliberate, see spec/PROTOCOL.md):
+// Transport asymmetry (deliberate, see spec/DECISIONS.md D2):
 //   host -> browser: append-only framed log (sessions/<id>/out.log); browser
 //     reads from a byte offset on each wakeup.
 //   browser -> host: numbered chunk files (sessions/<id>/in/NNNNNNNN.f);
@@ -79,13 +79,13 @@ export class FsioSession {
     this.safetyMs = safetyMs; // 0 disables the safety poll (measurement labs)
     this.onNote = onNote; // non-fatal observations, e.g. observer fallback
     // uplink "auto": small frame batches ride the dirname fast lane (≤80ms
-    // → ~3ms measured, spec F10 — directory creation skips Chrome's
+    // → ~3ms measured, spec/FINDINGS.md F10 — directory creation skips Chrome's
     // after-write scan); big batches fall back to file chunks. "file"
     // forces file chunks.
-    this.uplink = uplink; // "file" | "dirname" (experimental; see spec)
+    this.uplink = uplink; // "file" | "dirname" (see spec/FINDINGS.md F10)
     this.id = id;
     this.dir = dirHandle;
-    // Notifier modes (spec F6, refined by the observer lab):
+    // Notifier modes (spec/FINDINGS.md F6, refined by the observer lab):
     //   adaptive (default) — observer as idle sentinel (Chrome delivers on a
     //     ~300ms cadence: fine for waking up, useless for streams) + hot poll
     //     only while traffic flowed in the last 2s. Interactive latency of
@@ -186,7 +186,7 @@ export class FsioSession {
         await this.observer.observe(this.dir, { recursive: true });
       } catch (e) {
         // An observer that won't start is a downgrade, not a failure.
-        // (Known trigger: directories under /tmp on macOS — spec F9.)
+        // (Known trigger: directories under /tmp on macOS — spec/FINDINGS.md F9.)
         this.onNote?.(`FileSystemObserver refused to start (${e.name}: ${e.message}) — falling back to polling`);
         this.observer = null;
         this.mode = "poll";
@@ -276,7 +276,7 @@ export class FsioSession {
       if (file.size <= this.offset) return;
       bytes = new Uint8Array(await file.slice(this.offset).arrayBuffer());
     } catch (e) {
-      // Spec F11: a File snapshot goes stale (NotReadableError) if the host
+      // spec/FINDINGS.md F11: a File snapshot goes stale (NotReadableError) if the host
       // appends between getFile() and the read — routine under live output.
       // Transient by construction: offset didn't advance, next wake re-reads.
       this.stats.staleReads = (this.stats.staleReads ?? 0) + 1;

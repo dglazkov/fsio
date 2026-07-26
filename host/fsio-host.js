@@ -144,7 +144,7 @@ class Session {
   }
 
   // Append with open/write/close per call, then bump a rename-committed
-  // doorbell file. Rationale (measured, see spec): on macOS, appends through
+  // doorbell file. Rationale (measured, spec/FINDINGS.md F1): on macOS, appends through
   // a long-held fd are nearly invisible to FSEvents-backed watchers — events
   // fire on close() and renames, not on in-place writes.
   // Segments always rotate on frame boundaries (rotation happens between
@@ -527,7 +527,7 @@ watchDir(sessionsDir, scheduleScan);
 setInterval(scheduleScan, SAFETY_POLL_MS);
 if (flags.poll > 0) setInterval(scheduleScan, flags.poll);
 // Hot poll: fs.watch wakeups ride FSEvents with ~50ms latency on macOS
-// (measured; see spec). While a session is live, poll fast so the uplink
+// (measured; spec/FINDINGS.md F2). While a session is live, poll fast so the uplink
 // isn't notification-bound. Idle cost is zero.
 if (flags.hot > 0) {
   setInterval(() => {

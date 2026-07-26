@@ -3,7 +3,7 @@
 An experiment mashing together Web Platform FS API and stdio: a shared
 directory acts as a pipe between a web page (File System Access API +
 FileSystemObserver) and a native process. See `spec/PROTOCOL.md` for the
-protocol draft and latency findings.
+protocol draft and `spec/FINDINGS.md` for the latency findings.
 
 ## Quickstart
 
@@ -24,7 +24,9 @@ resize). Without it, shells fall back to plain pipes.
 
 ## Layout
 
-- `spec/PROTOCOL.md` — the living spec; the prototype is its workbench
+- `spec/PROTOCOL.md` — the normative spec; the prototype is its workbench
+- `spec/FINDINGS.md` — measured platform behaviors (F1–F12), the lab notebook
+- `spec/DECISIONS.md` — why the protocol is shaped this way (ADR-lite)
 - `common/frames.js` — frame encoding shared by host and clients
 - `host/fsio-host.js` — native host: adopts sessions, echoes pings, spawns shells
 - `web/` — browser client library + workbench page
@@ -39,5 +41,5 @@ resize). Without it, shells fall back to plain pipes.
   after-write scan on every file `close()`)
 - key lessons: notification strategy, not the filesystem, is the latency
   budget; every file needs exactly one writer; and the browser's write path
-  taxes file commits but not directory creation — see spec/PROTOCOL.md
-  findings F1–F10
+  taxes file commits but not directory creation — see spec/FINDINGS.md
+  (F1–F12)
