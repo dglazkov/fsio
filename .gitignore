@@ -12,6 +12,7 @@ tmp/
 # build output (npm run build regenerates; wireit owns freshness)
 dist/
 dist-web/
+artifact-dist/
 
 # wireit cache
 .wireit/
