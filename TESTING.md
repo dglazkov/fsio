@@ -25,6 +25,12 @@ Conventions:
   implementation accident.
 - Hermetic or it doesn't merge: every integration scenario gets its own
   tmpdir and host process. No shared state, no ordering dependencies.
+- **Poll, don't snapshot.** A cross-process assertion that samples state
+  once after an awaited precursor is a flake: adjacent effects on the
+  other side interleave arbitrarily from outside. Two shipped examples:
+  chunk deletion trails the response it acks (8f66d9e), and a session is
+  listed from dir-adoption on, before its spawn.json is parsed
+  (post-#27). If the target state is sticky, `waitFor` it.
 - Time-based host behaviors (60 s stale-session GC, 5 min idle reap) are
   **not** tested at real timescales: #17's `HostServer` inversion made the
   intervals injectable, so `test-lifecycle.ts` runs them at milliseconds.
