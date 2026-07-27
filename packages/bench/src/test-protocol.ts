@@ -192,7 +192,10 @@ test("torn chunk: host waits for completion, never skips (invariant 3, F-derived
     fs.writeFileSync(chunkPath, Buffer.concat([Buffer.from(whole), Buffer.from(ping(2))]));
     await waitFor(() => s.response(2), "second ping response");
     assert.ok(s.response(1), "first frame of the completed chunk was processed");
-    assert.ok(!fs.existsSync(chunkPath), "completed chunk was consumed (deletion = ack)");
+    // Deletion (= ack) trails the responses by one syscall inside the host;
+    // observed from another process they interleave, so poll rather than
+    // snapshot (flaked on a slow macos runner: run 30229414055).
+    await waitFor(() => !fs.existsSync(chunkPath), "completed chunk consumed (deletion = ack)");
   } finally {
     await h.stop();
   }
