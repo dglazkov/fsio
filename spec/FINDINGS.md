@@ -199,6 +199,67 @@ assumed: backlog never exceeded 3). Paste UX wants local-echo masking
 ([#10](https://github.com/dglazkov/fsio/issues/10)), not lane changes.
 → [D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches)
 
+### F14 — a CDP synthesized directory drop mints a real (read-only) directory handle; the picker itself has no automatable answer
+
+Measured with Playwright 1.62 driving Chrome for Testing 151.0.7922.34
+(stable Chrome on the same box was 150.0.7871.187), spike for
+[#19](https://github.com/dglazkov/fsio/issues/19). The three picker-bypass
+routes, in the issue's preference order:
+
+- **Fake-picker flag** — absent. Grepped the CfT binary: no
+  `--use-fake-ui-for-file-system-access`. Chrome only fakes File System
+  Access in `content_shell`/web-tests.
+- **CDP `Page.setInterceptFileChooserDialog`** — dead in Chromium 151. The
+  event fires for `showDirectoryPicker()` but carries **no `backendNodeId`**
+  (there is no `<input>`), so `DOM.setFileInputFiles` has nothing to target
+  and the picker aborts (`AbortError: Intercepted by …`).
+- **CDP `Input.dispatchDragEvent` with `{files:[path]}`** → 
+  `DataTransferItem.getAsFileSystemHandle()` → **mints a real
+  `FileSystemDirectoryHandle`.** Verified headed **and** headless: it
+  enumerates entries, reads files, and sees **live host writes** (host
+  rewrote `out.sig` after the handle existed; the page read the new value).
+
+The minted handle is **read-only**: `queryPermission({mode:"readwrite"})`
+returns `"prompt"`. So this route alone drives the **downlink** direction
+(host writes → browser observes, e.g. F6) with zero permission — but not
+the write-heavy client (see F15).
+→ downlink drift half of
+[#22](https://github.com/dglazkov/fsio/issues/22); mechanism for the
+harness [#21](https://github.com/dglazkov/fsio/issues/21).
+
+### F15 — browser write access is gated per session and cannot be automated; one gesture unlocks the whole session
+
+Same rig as F14. The write grant is a **designed invariant**, not an
+unautomated gap — every lever preserves it:
+
+- **No CDP descriptor.** `Browser.setPermission` rejects `file-system` and
+  `file-handling` (`Invalid PermissionDescriptor name`).
+- **No policy allow.** The CfT binary exposes only
+  `DefaultFileSystem{Read,Write}GuardSetting` (ask/block) and
+  `FileSystem{Read,Write}AskForUrls` (force-*ask*) — there is no
+  allow-list. Policy cannot silently grant filesystem write.
+- **Persistent "Allow on every visit" does not silently reactivate across
+  process launches.** After granting once (headed, one human click), a
+  **new process** on the same persistent profile — even with the handle
+  restored from IndexedDB (the canonical flow) — returns
+  `queryPermission → "prompt"`, and `requestPermission({readwrite})` stayed
+  **unresolved past 8000 ms with no human** (i.e. a prompt was on screen).
+- **Within a session, one grant covers everything.** After the click, a
+  second handle showed `queryPermission → "granted"` and
+  `requestPermission → "granted" in 0 ms`.
+- **Headless auto-denies:** `queryPermission → "denied"` (matches #19's
+  "headed under xvfb" note).
+
+Consequence: unattended browser **write** — F7 `close()` cost, F10 dirname
+uplink — is impossible on stable/CfT Chrome by design. The cost falls
+*exactly* on the browser-only platform truth; everything unattended-able is
+served by a no-write path (client logic via #17's node shim; downlink via
+F14; OPFS). Each verification session costs **one human gesture**, after
+which the agent drives unattended — the basis for the one-click harness
+[#21](https://github.com/dglazkov/fsio/issues/21) and why the uplink drift
+job [#22](https://github.com/dglazkov/fsio/issues/22) can't run on
+ephemeral CI.
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
