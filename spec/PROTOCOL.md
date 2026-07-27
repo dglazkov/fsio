@@ -230,6 +230,15 @@ Spawn params (the `spawn` request's `params`):
   the CLI's `--allow-shell` is the static form (violations get error
   `1001`); embedders install `onSpawnRequest` hooks (denials get `1004`).
 
+Kinds beyond these two are host-defined
+([D13](DECISIONS.md#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry)):
+a host MAY serve additional kinds registered by its embedder, with
+kind-specific spawn params and kind-specific extra fields in the spawn
+result. The wire behavior is unchanged — DATA frames plus JSON-RPC — and
+"unknown kind" (`1003`) means *not in this host's registry*. `ack` and
+`close` keep their host-level meaning on every kind; `ping` MUST be
+answered on every kind (it is the transport diagnostic).
+
 ## Security posture (v0 stance)
 
 Running the host with `--allow-shell` grants any page that can write to the

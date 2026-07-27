@@ -67,7 +67,16 @@ export interface ShellSpawn {
   client?: string;
 }
 
-export type SpawnSpec = EchoSpawn | ShellSpawn;
+/** Registered-kind sessions (D13): the host-side kind handler defines the
+ *  spec's meaning; the protocol only requires `kind`. */
+export interface KindSpawn {
+  kind: string;
+  /** free-form client identification, diagnostics only */
+  client?: string;
+  [param: string]: unknown;
+}
+
+export type SpawnSpec = EchoSpawn | ShellSpawn | KindSpawn;
 
 /** Result of a successful `spawn` request. */
 export interface SpawnResult {
@@ -75,6 +84,8 @@ export interface SpawnResult {
   pid: number;
   pty?: boolean;
   cmd?: string;
+  /** registered kinds may add result fields (D13). */
+  [extra: string]: unknown;
 }
 
 // ---- control-plane method registry (spec "Control plane"; D10)

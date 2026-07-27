@@ -277,7 +277,7 @@ test("validity precedes policy: unknown kind is 1003 and the hook is never consu
       },
     },
     async (client) => {
-      const s = client.createSession({ kind: "quantum" } as never, { pollMs: 5 });
+      const s = client.createSession({ kind: "quantum" }, { pollMs: 5 });
       try {
         await assert.rejects(s.ready, (e: unknown) => {
           assert.ok(e instanceof RpcError);
@@ -290,6 +290,145 @@ test("validity precedes policy: unknown kind is 1003 and the hook is never consu
       }
     }
   );
+});
+
+// ---------------------------------------------- registered kinds (D13)
+
+test("registerKind: DATA roundtrip, custom RPC method, extra spawn-result fields", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({ root });
+  // A kind is RPC methods + a DATA sink/source (D13): reverse every line,
+  // answer `sum`, advertise a motd in the spawn result.
+  server.registerKind("rev", (ctx) => ({
+    result: { motd: `hello ${String(ctx.spec.client)}` },
+    onData: (bytes) => {
+      const line = Buffer.from(bytes).toString().trimEnd();
+      ctx.write([...line].reverse().join("") + "\n");
+    },
+    methods: {
+      sum: (params) => ({ total: ((params as { xs: number[] }).xs ?? []).reduce((a, b) => a + b, 0) }),
+    },
+  }));
+  await server.start();
+  const client = new FsioClient(new ShimDirectory(root));
+  try {
+    await client.connect();
+    const s = client.createSession({ kind: "rev", client: "b1-kind" }, { pollMs: 5 });
+    const chunks: Buffer[] = [];
+    s.on("data", (b) => chunks.push(Buffer.from(b)));
+    try {
+      const info = await s.ready;
+      assert.equal(info.kind, "rev");
+      assert.equal(info["motd"], "hello b1-kind"); // kind result fields reach ready
+      s.sendData("stressed\n");
+      await waitFor(() => Buffer.concat(chunks).toString().includes("desserts"), "reversed line back");
+      const { result } = await s.request<{ total: number }>("sum", { xs: [1, 2, 3] }, { timeoutMs: 5000 });
+      assert.equal(result.total, 6);
+      // builtin ping still answers on custom kinds (transport diagnostic);
+      // undefined methods still -32601.
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      await assert.rejects(s.request("no-such", {}, { timeoutMs: 5000 }), (e: unknown) => {
+        assert.ok(e instanceof RpcError);
+        assert.equal(e.code, RpcErrors.METHOD_NOT_FOUND);
+        return true;
+      });
+    } finally {
+      await s.close();
+    }
+  } finally {
+    server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("registered kinds pass the spawn policy; handler throw fails the spawn with 1002", async () => {
+  const judged: string[] = [];
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({
+    root,
+    onSpawnRequest: (_spec, info) => {
+      judged.push(info.kind);
+      return info.kind !== "vetoed"; // policy sees registered kinds too (D12+D13)
+    },
+  });
+  server.registerKind("vetoed", () => ({}));
+  server.registerKind("broken", () => {
+    throw new Error("no backing store");
+  });
+  await server.start();
+  const client = new FsioClient(new ShimDirectory(root));
+  try {
+    await client.connect();
+    const denied = client.createSession({ kind: "vetoed" }, { pollMs: 5 });
+    await assert.rejects(denied.ready, (e: unknown) => {
+      assert.ok(e instanceof RpcError);
+      assert.equal(e.code, RpcErrors.SPAWN_DENIED);
+      return true;
+    });
+    await denied.close();
+    const broken = client.createSession({ kind: "broken" }, { pollMs: 5 });
+    await assert.rejects(broken.ready, (e: unknown) => {
+      assert.ok(e instanceof RpcError);
+      assert.equal(e.code, RpcErrors.SPAWN_FAILED);
+      assert.match(e.message, /no backing store/);
+      return true;
+    });
+    await broken.close();
+    assert.deepEqual(judged, ["vetoed", "broken"]);
+  } finally {
+    server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("kind exit() reaches the client as an exited status; onClose fires on client close", async () => {
+  let closed = 0;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({ root, timings: { closeDelayMs: 50 } });
+  server.registerKind("oneshot", (ctx) => ({
+    methods: {
+      finish: () => {
+        ctx.exit(7);
+        return {};
+      },
+    },
+    onClose: () => closed++,
+  }));
+  await server.start();
+  const client = new FsioClient(new ShimDirectory(root));
+  try {
+    await client.connect();
+    const s = client.createSession({ kind: "oneshot" }, { pollMs: 5 });
+    try {
+      await s.ready;
+      await s.request("finish", {}, { timeoutMs: 5000 });
+      const st = await s.waitForStatus((x) => x.state === "exited");
+      assert.equal(st.exitCode, 7);
+    } finally {
+      await s.close();
+    }
+    const dir = path.join(root, ".fsio", "sessions", s.id);
+    await waitFor(() => !fs.existsSync(dir), "host to remove the closed kind session dir");
+    // exit() already detached the kind session; close teardown is for live
+    // sessions only — onClose after exit would be a double-teardown.
+    assert.equal(closed, 0, "onClose must not fire after the kind's own exit()");
+  } finally {
+    server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("registerKind guards its namespace: shell and duplicates are refused", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  try {
+    const server = new HostServer({ root }); // never started — registration is pre-start config
+    server.registerKind("mine", () => ({}));
+    assert.throws(() => server.registerKind("mine", () => ({})), /already registered/);
+    assert.throws(() => server.registerKind("shell", () => ({})), /already registered/);
+    assert.throws(() => server.registerKind("echo", () => ({})), /already registered/); // echo IS the registry
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ------------------------------------- listener exception isolation (D11)
