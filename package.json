@@ -29,13 +29,15 @@
         "./packages/client:build",
         "./packages/host:build",
         "./packages/workbench:build",
+        "./packages/terminal-demo:build",
         "./packages/bench:build"
       ]
     },
     "test": {
       "dependencies": [
         "./packages/common:test",
-        "./packages/bench:test"
+        "./packages/bench:test",
+        "./packages/terminal-demo:test"
       ]
     }
   },

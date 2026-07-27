@@ -17,6 +17,7 @@ and in CI (wireit graph; see README). One command, no surprises.
 | client conformance (B1) | the real `@fsio/client` over a Node fs shim against an in-process host: event delivery, D11 construction/disposal semantics, uplink lane selection, D6 cleanup ownership, D12 spawn policy, D13 registered kinds, D14 introspection + injected pty | `packages/bench/src/test-client.ts` + `fs-shim.ts` | per push |
 | smoke | one full happy path per uplink lane + flow control, with a *generous* latency ceiling (100 ms p50 — catches the F1/F2 wakeup-regression class, never runner jitter) | `packages/bench/src/test-smoke.ts` | per push |
 | labs | platform measurement, not pass/fail: benches, observer lab, write microbench. Results feed [spec/FINDINGS.md](spec/FINDINGS.md), never CI verdicts | `packages/bench`, workbench | when investigating |
+| sandbox posture | the terminal-demo Seatbelt profile, layer by layer (ROOT allow, `.fsio` deny via SBPL last-match-wins, outside-ROOT deny, fail-closed pty wrapper) — macOS-only, skips elsewhere (same posture as the F-findings being macOS-measured) | `packages/terminal-demo/src/test-sandbox.ts` | per push |
 
 Conventions:
 
