@@ -53,6 +53,9 @@ export interface EchoSpawn {
   kind: "echo";
   /** free-form client identification, diagnostics only */
   client?: string;
+  /** web origin of the creating page — stamped by the client library,
+   *  advisory/display-only (D15; spec "Session kinds"). */
+  origin?: string;
 }
 
 export interface ShellSpawn {
@@ -65,6 +68,8 @@ export interface ShellSpawn {
   /** false forces the pipe fallback even when node-pty is available */
   pty?: boolean;
   client?: string;
+  /** web origin of the creating page (D15) — advisory, display-only. */
+  origin?: string;
 }
 
 /** Registered-kind sessions (D13): the host-side kind handler defines the
@@ -73,6 +78,8 @@ export interface KindSpawn {
   kind: string;
   /** free-form client identification, diagnostics only */
   client?: string;
+  /** web origin of the creating page (D15) — advisory, display-only. */
+  origin?: string;
   [param: string]: unknown;
 }
 

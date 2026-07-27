@@ -477,6 +477,46 @@ test("listSessions: phases pending → running → gone; fields for a confirmati
   }
 });
 
+// ------------------------------------------------- origin stamping (D15)
+
+test("origin: library-stamped from location, overrides a spoofed caller value, visible to policy and listSessions (D15)", async () => {
+  // Spec "Session kinds": the reference client stamps `location.origin`
+  // itself — a page cannot claim a foreign origin through the API — and
+  // the host surfaces it on both displays (D12 policy info, D14
+  // listSessions). Node has no `location`; simulate the browser reality.
+  const g = globalThis as { location?: { origin: string } };
+  g.location = { origin: "https://demo.example" };
+  try {
+    // Explicit plumbing instead of withHost: the test needs the server
+    // handle for listSessions (same reasoning as the phases test above).
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+    let policySaw: string | undefined;
+    const server = new HostServer({
+      root,
+      onSpawnRequest: (_spec, info) => {
+        policySaw = info.origin;
+        return true;
+      },
+    });
+    await server.start();
+    const client = new FsioClient(new ShimDirectory(root));
+    try {
+      await client.connect();
+      const s = client.createSession({ kind: "echo", origin: "https://spoofed.example" }, { pollMs: 5 });
+      await s.ready;
+      assert.equal(policySaw, "https://demo.example", "policy must see the stamped origin, not the caller's claim");
+      const listed = server.listSessions().find((x) => x.id === s.id)!;
+      assert.equal(listed.origin, "https://demo.example");
+      await s.close();
+    } finally {
+      void server.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    delete g.location;
+  }
+});
+
 // ------------------------------------------- pty injection (D14, Q6 of #26)
 
 test("injected PtyModule: the pty branch runs under CI — spawn result, data, resize, kill", async () => {

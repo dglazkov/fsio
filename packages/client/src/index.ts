@@ -199,6 +199,13 @@ export class FsioSession {
 
   constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec, opts: SessionOptions = {}) {
     const { mode = "auto", pollMs = 5, uplink = "auto", safetyMs = 500 } = opts;
+    // D15: a web-page client reports its origin — stamped HERE, overriding
+    // caller-supplied values, so a page cannot claim a foreign origin
+    // through this API. (It can still write spawn.json by hand: the field
+    // stays advisory and hosts must treat it as display-only — spec
+    // "Session kinds".) Node embedders have no `location`; absent = absent.
+    const webOrigin = (globalThis as { location?: { origin?: unknown } }).location?.origin;
+    if (typeof webOrigin === "string") spec = { ...spec, origin: webOrigin };
     this.id = id;
     this.pollMs = pollMs;
     this.safetyMs = safetyMs;
