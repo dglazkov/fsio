@@ -24,6 +24,8 @@ export const RpcErrors = {
   SHELL_NOT_ALLOWED: 1001,
   SPAWN_FAILED: 1002,
   UNKNOWN_KIND: 1003,
+  /** host spawn policy (onSpawnRequest hook) refused the session (D12). */
+  SPAWN_DENIED: 1004,
 } as const;
 
 /** Conventional id for the spawn request carried by spawn.json. */
