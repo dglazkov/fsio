@@ -1,8 +1,8 @@
 {
-  "name": "@fsio/web",
+  "name": "@fsio/workbench",
   "version": "0.0.1",
   "private": true,
-  "description": "fsio workbench page (the client library lives in @fsio/client)",
+  "description": "fsio measurement workbench (the client library lives in @fsio/client)",
   "type": "module",
   "scripts": {
     "dev": "vite",

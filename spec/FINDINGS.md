@@ -133,7 +133,7 @@ Solved by the observer lab differential: the full observe() matrix
 fails with `InvalidModificationError` for the same code against `/tmp/...`
 — almost certainly the `/tmp → /private/tmp` symlink. Confirmed
 (2026-07-26) by a dependency-free standalone page
-([packages/web/repro/observer-tmp.html](../packages/web/repro/observer-tmp.html)):
+([packages/workbench/repro/observer-tmp.html](../packages/workbench/repro/observer-tmp.html)):
 all five observe() variants (dir/subdir/file × recursive) succeed under
 `$HOME` and all five throw `InvalidModificationError` under `/tmp` — same
 code, same gesture, only the path differs. That page is the Chromium bug

@@ -28,7 +28,7 @@
         "./packages/common:build",
         "./packages/client:build",
         "./packages/host:build",
-        "./packages/web:build",
+        "./packages/workbench:build",
         "./packages/bench:build"
       ]
     },

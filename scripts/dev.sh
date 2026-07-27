@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Dev loop for the web workbench: fresh host on ~/fsio-demo + static server.
+# Dev loop for the workbench: fresh host on ~/fsio-demo + static server.
 #
 #   scripts/dev.sh          # kill stale processes, wipe .fsio, start both
 #
 # Then open http://localhost:8765/ and pick ~/fsio-demo.
-# Ctrl-C stops both. Logs are prefixed [host] / [web].
+# Ctrl-C stops both. Logs are prefixed [host] / [wb].
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -14,7 +14,7 @@ PORT="${FSIO_PORT:-8765}"
 # ---- stop stale instances (previous dev runs), clear old sessions
 pkill -f "host/dist/fsio-host.js" 2>/dev/null && echo "stopped stale host" || true
 # vite's argv doesn't name the project; the port does (strictPort in config)
-lsof -ti "tcp:$PORT" 2>/dev/null | xargs kill 2>/dev/null && echo "stopped stale web server" || true
+lsof -ti "tcp:$PORT" 2>/dev/null | xargs kill 2>/dev/null && echo "stopped stale workbench server" || true
 sleep 0.2
 mkdir -p "$DIR"
 
@@ -29,7 +29,7 @@ trap cleanup EXIT INT TERM
 npm run build
 node packages/host/dist/fsio-host.js "$DIR" --fresh --allow-shell 2>&1 | sed 's/^/[host] /' &
 HOST_PID=$!
-(cd packages/web && npx vite --port "$PORT" --strictPort 2>&1 | sed 's/^/[web]  /') &
+(cd packages/workbench && npx vite --port "$PORT" --strictPort 2>&1 | sed 's/^/[wb]   /') &
 WEB_PID=$!
 
 sleep 0.5
