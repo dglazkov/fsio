@@ -121,6 +121,47 @@ test("close() retracts host.json and stops the heartbeat", async () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("await close(): resolves only after a TERM-ignoring child is SIGKILLed (D14)", async () => {
+  // Q5 of #26: close() was sync while child exit was async. The promise
+  // resolves once children are actually gone — SIGTERM, then SIGKILL after
+  // killGraceMs. The child here traps TERM, so only escalation can end it.
+  const root = tmpRoot();
+  const server = new HostServer({ root, allowShell: true, timings: { killGraceMs: 150 } });
+  await server.start();
+  const dir = makeSession(root, "stubborn", {
+    kind: "shell",
+    cmd: "/bin/sh",
+    // Two traps for the test's own races (both bit, measured): the loop
+    // keeps `sh -c` from exec()ing a lone trailing command (which discards
+    // the trap — close resolved in 6 ms); the marker file proves the trap
+    // is *armed* before we SIGTERM ("running" status only means the OS
+    // process exists — close resolved in 8 ms when TERM beat the trap).
+    args: ["-c", "trap '' TERM; : > trapped.marker; while true; do sleep 0.5; done"],
+    pty: false,
+  });
+  const st = await waitFor(() => {
+    const s = status(dir);
+    return s?.state === "running" ? s : null;
+  }, "stubborn shell running");
+  const pid = st.pid!;
+  await waitFor(() => fs.existsSync(path.join(root, "trapped.marker")), "trap to be armed");
+  const t0 = Date.now();
+  await server.close();
+  const elapsed = Date.now() - t0;
+  const alive = (() => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  assert.ok(!alive, "child survived an awaited close()");
+  assert.ok(elapsed >= 140, `close() resolved before the SIGKILL grace elapsed (${elapsed}ms)`);
+  assert.ok(elapsed < 5000, `close() took implausibly long (${elapsed}ms)`);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("close() terminates session child processes", async () => {
   // D6: the host owns cleanup — including processes it spawned. An embedder
   // calling close() must not leak children.

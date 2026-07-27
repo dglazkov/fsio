@@ -59,7 +59,8 @@ host.close(); // kills session children, releases timers/watchers, retracts host
 | `watch` | `true` | use `fs.watch` wakeups |
 | `hotPollMs` | `5` | fast poll while sessions are live (F2); `0` = off |
 | `pollMs` | `0` | unconditional poll loop |
-| `logger` | silent | `(...args) => void` |
+| `logger` | silent | leveled `{info, warn, error}` line sink — `console` works as-is (D14) |
+| `pty` | auto-load node-pty | inject a `PtyModule`, or `false` to force the pipe fallback (D14) |
 | `timings` | see below | every time-based behavior, injectable |
 | `limits` | see below | flow-control knobs |
 
@@ -70,7 +71,8 @@ reap, [#3](https://github.com/dglazkov/fsio/issues/3)) · `idleSweepMs`
 lifecycle) · `closeDelayMs` 500 · `retryMs` 5 (torn-chunk retry, F11).
 
 `limits`: `segMax` 8 MiB (out-segment rotation) · `ackWindow` 4 MiB (pause
-output) · `ackResume` 2 MiB (resume).
+output) · `ackResume` 2 MiB (resume). `timings` also covers close():
+`killGraceMs` 3000 (SIGTERM → SIGKILL escalation, D14).
 
 Injectable timings are why the host's time-based behaviors are testable at
 millisecond timescales — see
@@ -86,14 +88,22 @@ millisecond timescales — see
 - **`close()`** is the full teardown: session child processes get killed,
   all timers and watchers are released (an embedder's process can exit
   cleanly), and `host.json` is unlinked so peers read the host as gone
-  rather than flapping. Session *dirs* are not deleted on close — a
-  restarted host re-adopts them (spec: Session lifecycle).
+  rather than flapping. All of that is synchronous; the returned promise
+  additionally resolves once children have *actually exited* — SIGTERM,
+  then SIGKILL after `timings.killGraceMs` (D14) — so `await host.close()`
+  before `process.exit()` leaks nothing. Session *dirs* are not deleted on
+  close — a restarted host re-adopts them (spec: Session lifecycle).
+- **`listSessions()`** (D14) returns read-only `SessionInfo` snapshots:
+  `{id, kind, client, phase, pid?, pty?, bytesOut, bytesAcked,
+  lastActivityAt}`, `phase: adopted → pending → running → exited | done`
+  (`pending` = waiting on the D12 spawn policy — this is the view a
+  confirmation UI renders, #16).
 - **One `HostServer` per shared dir.** Nothing arbitrates multiple hosts on
   one `.fsio`; the second heartbeat writer wins. Don't.
 - **Logging is the only error channel** for scan-loop errors (they are
-  swallowed by design — the scan is idempotent and retried). A structured
-  error hook is an open question on
-  [#17](https://github.com/dglazkov/fsio/issues/17).
+  swallowed by design — the scan is idempotent and retried); they arrive
+  at `logger.error`. Machine-readable state is deliberately *not* the
+  log's job — read the protocol files and `listSessions()` (D14).
 
 ### Spawn policy (`onSpawnRequest`, D12)
 

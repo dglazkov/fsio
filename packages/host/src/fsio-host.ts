@@ -33,7 +33,13 @@ if (!rootArg) {
   process.exit(1);
 }
 
-const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
+// Timestamped, level-tagged lines (HostLogger is leveled — D14).
+const line = (tag: string, a: unknown[]) => console.log(new Date().toISOString(), ...(tag ? [tag] : []), ...a);
+const log = {
+  info: (...a: unknown[]) => line("", a),
+  warn: (...a: unknown[]) => line("[warn]", a),
+  error: (...a: unknown[]) => line("[error]", a),
+};
 
 const server = new HostServer({
   root: rootArg,
@@ -47,13 +53,13 @@ const server = new HostServer({
 
 await server.start();
 
-log(`fsio host on ${server.fsioDir}`);
-log(`  shell sessions: ${server.allowShell ? "ALLOWED" : "disabled (--allow-shell to enable)"}`);
-log(
+log.info(`fsio host on ${server.fsioDir}`);
+log.info(`  shell sessions: ${server.allowShell ? "ALLOWED" : "disabled (--allow-shell to enable)"}`);
+log.info(
   `  wakeup: ${flags.watch ? "fs.watch" : "no fs.watch"}${flags.poll ? ` + ${flags.poll}ms poll` : ""}${flags.hot ? ` + ${flags.hot}ms hot poll` : ""} + ${server.timings.safetyPollMs}ms safety poll`
 );
 
 process.on("SIGINT", () => {
-  server.close();
-  process.exit(0);
+  // await the reap (D14): children get SIGTERM → killGraceMs → SIGKILL
+  void server.close().then(() => process.exit(0));
 });
