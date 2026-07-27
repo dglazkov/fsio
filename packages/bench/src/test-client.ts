@@ -452,8 +452,14 @@ test("listSessions: phases pending → running → gone; fields for a confirmati
   try {
     await client.connect();
     const s = client.createSession({ kind: "echo", client: "b1-list" }, { pollMs: 5 });
-    const pending = await waitFor(() => server.listSessions().find((x) => x.id === s.id), "session to appear");
-    assert.equal(pending.phase, "pending"); // policy hasn't answered (D12)
+    // Poll for the phase, don't snapshot the first sighting: a session is
+    // listed from dir-adoption on, and "adopted" (spawn.json not yet read)
+    // precedes "pending" — CI caught that window (run 30232116904). The
+    // gated policy makes "pending" sticky, so waiting for it is sound.
+    const pending = await waitFor(() => {
+      const x = server.listSessions().find((i) => i.id === s.id);
+      return x?.phase === "pending" ? x : null;
+    }, "session to reach the pending phase");
     assert.equal(pending.kind, "echo");
     assert.equal(pending.client, "b1-list");
     release!();
