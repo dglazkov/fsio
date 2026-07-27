@@ -5,7 +5,7 @@ alternatives rejected, and the findings that forced it. Numbers (D1, D2, …)
 are stable and never reused; superseded decisions get a note, not an edit.
 
 Companions: [PROTOCOL.md](PROTOCOL.md) (the normative spec),
-[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F12).
+[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F15).
 
 ## D1 — events are wakeups, not messages
 
@@ -217,3 +217,57 @@ path).
 **Findings.** None directly; the envelope budget leans on F10 (dirname
 lane) and the latency neutrality on F4. Settles issue
 [#14](https://github.com/dglazkov/fsio/issues/14); feeds #2 and #8.
+
+## D11 — client library surface: events, synchronous construction, structural FS types
+
+**Decision.** `@fsio/client`'s public surface (extracted from the workbench,
+[#17](https://github.com/dglazkov/fsio/issues/17) slice 2):
+
+1. **Events over constructor callbacks.** `session.on(type, listener)`
+   returns the unsubscribe function; event types are `frame` (every
+   delivered frame), `data` (DATA payloads — the one obvious way to consume
+   output), `status`, `note`, `error`. RPC responses are consumed by the
+   control plane and never surface as events. `close()` drops all
+   listeners. Listener exceptions are isolated: they route to the `error`
+   event (and to a fresh stack if unobserved) instead of unwinding the
+   drain loop — a throwing consumer can no longer lose the rest of a
+   segment's frames, which the old `onFrame` callback silently could.
+2. **`createSession()` is synchronous.** Construction performs no I/O; all
+   init failures (session-dir creation, spawn.json commit) reject
+   `session.ready`. This makes the listener-attachment race unrepresentable:
+   no event can fire before the caller's synchronous window closes. (The
+   race was real: the D7 observer-refusal `note` fired *during* the old
+   async `createSession`, before any caller could have subscribed.)
+3. **The FS dependency is a structural type** (`FsDirectory`/`FsFile`/
+   `FsSnapshot`/`FsWritable` — the exact subset of the File System Access
+   API the client uses). Real `FileSystemDirectoryHandle`s satisfy it
+   as-is; so does a Node shim over real `fs`, which is what makes the
+   client testable per push (TESTING.md B1). Internals are ES `#private`
+   fields so the published `.d.ts` stays lib.dom-free.
+
+**Context.** The pre-extraction client mixed three callback registration
+styles (`onFrame`/`onError`/`onNote` in options, `onStatus` as a mutable
+public field), exposed its reader state (`gen`, `offset`, `queue`…) as
+public fields, and required `FrameType` filtering just to read terminal
+output. [#17](https://github.com/dglazkov/fsio/issues/17) called for a
+deliberate pass before [#8](https://github.com/dglazkov/fsio/issues/8)
+freezes anything. Verified by the B1 conformance tier
+(`packages/bench/src/test-client.ts`): 8 scenarios, real client against
+real in-process host, ~0.5 s.
+
+**Alternatives rejected.** DOM `EventTarget`/`CustomEvent` (wraps every
+payload in `.detail`, drags lib.dom into the public types, and buys nothing
+— no bubbling or composition applies here). Keeping constructor callbacks
+(single-consumer; the workbench already wanted the terminal *and* the
+reporter on one session). Async `createSession` with callbacks in options
+(the only other race-free shape — but it welds subscription to
+construction). A `dispose()`/`Symbol.dispose` object per subscription
+(heavier than returning the unsubscriber; revisit if `using` becomes
+idiomatic). Exposing the DOM handle types directly in the API (kills B1:
+Node consumers would need lib.dom or casts).
+
+**Findings.** F9/D7 motivated the race analysis in (2); F10 lane stats
+stay observable via `session.stats` and `uplinkBacklog()` (the labs'
+surface, [#4](https://github.com/dglazkov/fsio/issues/4)). Feeds #8 (this
+is the surface a freeze would freeze) and #16 (the workbench now consumes
+the library it demos).

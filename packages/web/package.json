@@ -2,7 +2,7 @@
   "name": "@fsio/web",
   "version": "0.0.1",
   "private": true,
-  "description": "fsio browser client and workbench page",
+  "description": "fsio workbench page (the client library lives in @fsio/client)",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,11 +15,11 @@
       "files": ["src/**", "index.html", "vite.config.ts", "tsconfig.json", "../../tsconfig.base.json"],
       "output": ["dist/**"],
       "clean": "if-file-deleted",
-      "dependencies": ["../common:build"]
+      "dependencies": ["../client:build"]
     }
   },
   "dependencies": {
-    "@fsio/common": "*",
+    "@fsio/client": "*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0"
   }
