@@ -62,6 +62,16 @@ const profilePath = path.join(fsioDir, "sandbox.sb");
 const cfg: SandboxConfig = { profilePath, root: rootReal, fsio: fsioDir, tmp: tmpReal };
 const pty = sandboxedPty(realPty, cfg);
 
+// Shell hygiene inside the sandbox (found by the S4 cooperative loop,
+// first real spawn): Apple's /etc/zshrc_Apple_Terminal writes session-
+// restore files into ~/.zsh_sessions at startup — denied by the profile,
+// which zsh escalates into a confusing "override rw-------?" prompt. And
+// history files in $HOME would die the same way at exit. Point both
+// somewhere harmless instead of widening the write wall: demo shells are
+// ephemeral by design (arguably a feature — they leave no trace).
+process.env["SHELL_SESSIONS_DISABLE"] = "1";
+process.env["HISTFILE"] = path.join(tmpReal, "fsio-terminal-demo-history");
+
 const server = new HostServer({
   root: rootReal,
   // The sandbox is the gate; the policy only narrates (#16 ledger: no y/N
