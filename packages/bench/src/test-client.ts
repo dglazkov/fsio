@@ -123,6 +123,9 @@ test("auto uplink: small batches ride the dirname lane, big ones fall back to fi
       const before = s.stats.fileChunks;
       await s.request<PingResult>("ping", { t0: now(), filler: "x".repeat(400) }, { timeoutMs: 5000 }); // > DIR_CHUNK_MAX_BYTES
       assert.ok(s.stats.fileChunks > before, `oversized ping should fall back to a file chunk (stats: ${JSON.stringify(s.stats)})`);
+      // uplinkBacklog (the labs' backlog probe, #4): a response implies the
+      // host consumed-and-deleted our chunks, so the backlog must read 0.
+      assert.equal(await s.uplinkBacklog(), 0, "in/ should be drained once requests are answered");
     } finally {
       await s.close();
     }
