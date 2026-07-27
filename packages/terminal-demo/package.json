@@ -2,22 +2,23 @@
   "name": "@fsio/terminal-demo",
   "version": "0.0.1",
   "private": true,
-  "description": "fsio /terminal demo: native helper (sandboxed working-folder shell over @fsio/host)",
+  "description": "fsio /terminal demo: page + native helper (sandboxed working-folder shell over @fsio/host)",
   "type": "module",
   "bin": {
     "fsio-terminal-helper": "./dist/helper.js"
   },
   "scripts": {
     "build": "wireit",
-    "test": "wireit"
+    "test": "wireit",
+    "dev": "vite"
   },
   "wireit": {
     "build": {
-      "command": "tsc --pretty",
-      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
-      "output": ["dist/**"],
+      "command": "tsc --pretty && tsc --pretty -p web/tsconfig.json && vite build --logLevel warn",
+      "files": ["src/**", "web/**", "vite.config.ts", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**", "dist-web/**"],
       "clean": "if-file-deleted",
-      "dependencies": ["../host:build"]
+      "dependencies": ["../host:build", "../client:build"]
     },
     "test": {
       "command": "node --test --test-concurrency=1 dist/test-sandbox.js",
@@ -27,7 +28,10 @@
     }
   },
   "dependencies": {
+    "@fsio/client": "*",
     "@fsio/host": "*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "node-pty": "^1.1.0"
   }
 }
