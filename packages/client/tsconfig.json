@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    // DOM for the implementation (TextEncoder, timers, the real FS API);
+    // the PUBLIC surface must stay lib-agnostic — see src/fs.ts. Internals
+    // are ES #private fields precisely so no DOM type leaks into dist/*.d.ts
+    // (Node consumers — the B1 fs shim — compile without lib.dom).
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["src"]
+}

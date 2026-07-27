@@ -26,6 +26,7 @@
     "build": {
       "dependencies": [
         "./packages/common:build",
+        "./packages/client:build",
         "./packages/host:build",
         "./packages/web:build",
         "./packages/bench:build"

@@ -1,0 +1,28 @@
+{
+  "name": "@fsio/client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio client: sessions over a shared directory via the File System Access API surface",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted",
+      "dependencies": ["../common:build"]
+    }
+  },
+  "dependencies": {
+    "@fsio/common": "*"
+  }
+}

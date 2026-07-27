@@ -4,14 +4,13 @@ import "@xterm/xterm/css/xterm.css";
 import {
   FsioClient,
   FsioSession,
-  FrameType,
   now,
   hasObserver,
   op,
   type NotifierMode,
   type UplinkMode,
   type PingResult,
-} from "./fsio.js";
+} from "@fsio/client";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 const $in = (id: string): HTMLInputElement => $(id) as HTMLInputElement;
@@ -183,6 +182,11 @@ $("copy-log").onclick = () => navigator.clipboard.writeText(logEl.textContent ??
 // ---------------------------------------------------------------- connect
 
 let client: FsioClient | null = null;
+// The workbench's own real handles: labs and the reporter poke at the raw
+// FS (observer targets, scratch dirs, removeEntry); the library keeps its
+// structural FS surface to itself (@fsio/client fs.ts).
+let pickedRoot: FileSystemDirectoryHandle | null = null;
+let fsioDir: FileSystemDirectoryHandle | null = null;
 let hostTimer: ReturnType<typeof setInterval> | undefined;
 
 $("pick").onclick = guard(async () => {
@@ -191,7 +195,9 @@ $("pick").onclick = guard(async () => {
   step("setting up .fsio in the folder");
   client = new FsioClient(root);
   await client.connect();
-  await reporter.attach(client.fsioDir);
+  pickedRoot = root;
+  fsioDir = await root.getDirectoryHandle(".fsio");
+  await reporter.attach(fsioDir);
   reporter.event("connected", { folder: root.name });
   setCheck("chk-dir", "ok", `folder chosen: ${root.name}/`);
   await refreshHostCheck();
@@ -279,16 +285,16 @@ $("run-bench").onclick = guard(async () => {
     const payload = Number($in("b-payload").value) || 0;
     const warmup = Math.min(20, count);
     step("creating a test session");
-    session = await client!.createSession(
+    session = client!.createSession(
       { kind: "echo", client: "web-bench" },
       {
         mode: $in("b-mode").value as NotifierMode,
         pollMs: Number($in("b-poll").value) || 5,
         uplink: $in("b-uplink").value as UplinkMode,
-        onError: (e) => log("send failed:", e.message),
-        onNote: (m) => log("note:", m),
       }
     );
+    session.on("error", (e) => log("send failed:", e.message));
+    session.on("note", (m) => log("note:", m));
 
     // --- wait for the helper to answer the spawn request
     step("waiting for the helper to pick up the session");
@@ -381,7 +387,7 @@ $("run-commit").onclick = guard(async () => {
   try {
     step("creating the scratch folder");
     const dir = await op("creating tmp-write-bench/", () =>
-      client!.fsioDir.getDirectoryHandle("tmp-write-bench", { create: true })
+      fsioDir!.getDirectoryHandle("tmp-write-bench", { create: true })
     );
     const N = 50;
     const bytes = new TextEncoder().encode("x".repeat(64)) as Uint8Array<ArrayBuffer>;
@@ -406,7 +412,7 @@ $("run-commit").onclick = guard(async () => {
     // Cleanup is best-effort: a leftover tmp dir is harmless, a scary error
     // banner is not.
     try {
-      await client!.fsioDir.removeEntry("tmp-write-bench", { recursive: true });
+      await fsioDir!.removeEntry("tmp-write-bench", { recursive: true });
     } catch (e) {
       log("write-bench cleanup skipped:", e instanceof Error ? e.message : e);
     }
@@ -480,17 +486,15 @@ $("run-throughput-lab").onclick = guard(async () => {
     if (!host.alive) {
       fail("The helper doesn't seem to be running in this folder.", "Start it with the command from step 1 and try again.");
     }
-    session = await client!.createSession(
+    session = client!.createSession(
       { kind: "echo", client: "web-throughput-lab" },
-      { mode: "adaptive", pollMs: 5, uplink: "auto", onError: (e) => log("send failed:", e.message), onNote: (m) => log("note:", m) }
+      { mode: "adaptive", pollMs: 5, uplink: "auto" }
     );
+    session.on("error", (e) => log("send failed:", e.message));
+    session.on("note", (m) => log("note:", m));
     await Promise.race([session.ready, sleep(4000).then(() => Promise.reject(new Error("spawn timeout")))]);
     const markStats = () => ({ ...session!.stats });
-    const backlog = async () => {
-      let n = 0;
-      for await (const _ of session!.inDir.keys()) n++;
-      return n;
-    };
+    const backlog = () => session!.uplinkBacklog();
 
     // ---- A. paced typing
     step("throughput lab A: paced sends (typing cadence)");
@@ -636,13 +640,13 @@ $("run-observer-lab").onclick = guard(async () => {
     say("A. can observe() even start?");
     let labDir: FileSystemDirectoryHandle | null = null;
     try {
-      labDir = await client!.fsioDir.getDirectoryHandle("obs-lab", { create: true });
+      labDir = await fsioDir!.getDirectoryHandle("obs-lab", { create: true });
     } catch (e) {
       say(`   (couldn't create scratch dir: ${e instanceof Error ? e.name : e})`);
     }
     const targets: [string, FileSystemHandle][] = [
-      ["picked folder", client!.root],
-      [".fsio", client!.fsioDir],
+      ["picked folder", pickedRoot!],
+      [".fsio", fsioDir!],
       ...(labDir ? ([["fresh subfolder", labDir]] as [string, FileSystemHandle][]) : []),
     ];
     for (const [label, handle] of targets) {
@@ -733,7 +737,7 @@ $("run-observer-lab").onclick = guard(async () => {
       );
       labObs.disconnect();
       try {
-        await client!.fsioDir.removeEntry("obs-lab", { recursive: true });
+        await fsioDir!.removeEntry("obs-lab", { recursive: true });
       } catch {}
     }
 
@@ -743,14 +747,17 @@ $("run-observer-lab").onclick = guard(async () => {
       say("D. skipped (helper not running) — matrix + local tests above still stand");
     } else {
       step("observer lab: observer-only echo round trips");
-      const session = await client!.createSession(
+      const session = client!.createSession(
         { kind: "echo", client: "observer-lab" },
         {
           mode: "observer",
           safetyMs: 0, // no safety poll: observer sinks or swims alone
-          onNote: (m) => say("   note: " + m),
         }
       );
+      session.on("note", (m) => say("   note: " + m));
+      // ready implies the notifier started: session.mode now reports the
+      // effective lane (observer, or the D7 downgrade to polling).
+      await session.ready.catch(() => {});
       say(`D. echo RTT via ${session.mode === "observer" ? "observer only" : "POLLING (observer refused again — see note)"} — 15 pings, 400ms apart:`);
       const rtts: (number | null)[] = [];
       try {
@@ -814,26 +821,21 @@ $("open-term").onclick = guard(async () => {
   fit!.fit();
   term.reset();
 
-  const dec = new TextDecoder();
   step("creating the shell session");
-  termSession = await client!.createSession(
-    { kind: "shell", cols: term.cols, rows: term.rows },
-    {
-      onError: (e) => showError("Sending to the shell failed.", e.message),
-      onNote: (m) => log("note:", m),
-      onFrame: (f) => {
-        if (f.type === FrameType.DATA) term!.write(dec.decode(f.payload));
-      },
-    }
-  );
-  termSession.onStatus = (st) => {
+  termSession = client!.createSession({ kind: "shell", cols: term.cols, rows: term.rows });
+  termSession.on("error", (e) => showError("Sending to the shell failed.", e.message));
+  termSession.on("note", (m) => log("note:", m));
+  // xterm accepts Uint8Array directly — no TextDecoder, no split-codepoint
+  // hazard on chunk boundaries.
+  termSession.on("data", (b) => term!.write(b));
+  termSession.on("status", (st) => {
     reporter.event("terminal-status", { ...st });
     if (st.state === "exited") {
       $("term-status").textContent = `the shell exited${st.exitCode != null ? ` (code ${st.exitCode})` : ""}`;
       $in("open-term").disabled = false;
       $in("close-term").disabled = true;
     }
-  };
+  });
   // Spawn errors arrive as JSON-RPC error objects on the spawn request —
   // no more polling status.json and interpreting states.
   step("waiting for the shell to start");

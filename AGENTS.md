@@ -10,7 +10,7 @@ style.
 - `spec/PROTOCOL.md` — normative (MUST/SHOULD). `spec/FINDINGS.md` — measured
   platform behaviors, F-numbered. `spec/DECISIONS.md` — ADR-lite, D-numbered.
 - `TESTING.md` — test tiers and what deliberately isn't tested.
-- `packages/{common,host,web,bench}` — npm workspaces; `common` is the
+- `packages/{common,client,host,web,bench}` — npm workspaces; `common` is the
   single source of protocol truth (types + codec + JSON-RPC), both sides
   import it.
 
