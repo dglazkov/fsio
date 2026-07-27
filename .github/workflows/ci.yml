@@ -29,3 +29,33 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  # #16 S5: the npx-installable helper. Every push to main rebuilds the
+  # single-file bundle and force-pushes it (one orphan commit, no history)
+  # to the `terminal-demo` branch, which is what the demo page's one-liner
+  # installs: npx github:dglazkov/fsio#terminal-demo
+  artifact:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm i -g npm@11.6.1
+      - uses: google/wireit@setup-github-actions-caching/v2
+      - run: npm ci
+      - run: npm run -w @fsio/terminal-demo bundle
+      - name: push artifact branch
+        run: |
+          cd packages/terminal-demo/artifact-dist
+          git init -q -b terminal-demo
+          git -c user.name=ci -c user.email=ci@fsio add -A
+          git -c user.name=ci -c user.email=ci@fsio commit -qm "terminal-demo artifact from ${GITHUB_SHA}"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}" terminal-demo
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

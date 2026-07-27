@@ -10,6 +10,7 @@
   "scripts": {
     "build": "wireit",
     "test": "wireit",
+    "bundle": "wireit",
     "dev": "vite"
   },
   "wireit": {
@@ -25,7 +26,16 @@
       "files": ["../host/src/**"],
       "output": [],
       "dependencies": ["build"]
+    },
+    "bundle": {
+      "command": "node scripts/make-artifact.mjs",
+      "files": ["scripts/make-artifact.mjs", "artifact/**"],
+      "output": ["artifact-dist/**"],
+      "dependencies": ["build"]
     }
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.2"
   },
   "dependencies": {
     "@fsio/client": "*",
