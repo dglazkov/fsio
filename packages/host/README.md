@@ -11,10 +11,12 @@ subtree, per [spec/PROTOCOL.md](../../spec/PROTOCOL.md). Two ways in: a CLI
 > accurate but nothing is frozen; freezing is
 > [#8](https://github.com/dglazkov/fsio/issues/8)'s job, and the open API
 > questions live on
-> [#17](https://github.com/dglazkov/fsio/issues/17). `onSpawnRequest`
-> (spawn policy, [D12](../../spec/DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy))
-> is in; expect `registerKind` (custom session kinds) to land before any
-> freeze.
+> [#17](https://github.com/dglazkov/fsio/issues/17). The #17 surface is
+> complete: `onSpawnRequest` (spawn policy,
+> [D12](../../spec/DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy))
+> and `registerKind` (custom session kinds,
+> [D13](../../spec/DECISIONS.md#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry))
+> are in.
 
 ## CLI
 
@@ -122,3 +124,39 @@ const host = new HostServer({
   policy's actual verdict.
 - Host restart re-adoption **re-judges** live sessions: a confirmation
   prompt will re-ask. For a security gate that's the correct default.
+
+### Custom session kinds (`registerKind`, D13)
+
+A kind is a set of RPC methods plus a DATA sink/source — "stdio-shaped
+bridge over files, bring your own semantics":
+
+```ts
+host.registerKind("rev", (ctx) => ({
+  result: { motd: "lines come back reversed" },      // merged into ready's result
+  onData: (bytes) => {                                // client → host DATA
+    const line = Buffer.from(bytes).toString().trimEnd();
+    ctx.write([...line].reverse().join("") + "\n");   // host → client DATA
+  },
+  methods: {                                          // JSON-RPC, D10
+    sum: ({ xs }) => ({ total: xs.reduce((a, b) => a + b, 0) }),
+  },
+  onClose: () => releaseWhatever(),                   // client close / host close / GC
+}));
+```
+
+- The handler runs per allowed spawn (**after** the D12 policy — policy
+  applies to registered kinds too) and may be async; a throw fails the
+  spawn with `1002`.
+- `ack`/`close` are host-reserved; methods the kind doesn't define fall
+  through to the builtins (`ping` answers on every kind), then `-32601`.
+  Throw an object with a numeric `code` (e.g. common's `RpcError`) for
+  coded method errors.
+- `ctx.exit(code)` publishes the exited status and stops delivery; the
+  session dir still waits for the client's `close` (D6). `onClose` does
+  not fire after the kind's own `exit()`.
+- `echo` is itself a registry entry; `shell` is native and its name is
+  reserved.
+- **No backpressure hook yet**: `ctx.write` appends regardless of the ack
+  window (shells pause their pty; kinds have no equivalent). Deferred to
+  [#10](https://github.com/dglazkov/fsio/issues/10)'s credit design —
+  don't stream gigabytes from a kind today.

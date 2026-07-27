@@ -313,3 +313,43 @@ denied).
 
 **Findings.** None measured; behavioral rules enforced by the B1 tier.
 Feeds #6 (policy content), #16 (confirmation UX), #8 (freeze surface).
+
+## D13 — session kinds are a host-side registry; echo is just an entry
+
+**Decision.** `host.registerKind(name, handler)`: the handler runs once
+per allowed spawn (after the D12 policy) and returns the session's
+behavior — `{result?, onData?, methods?, onClose?}` plus a context with
+`write()`/`exit()`. A kind is a set of RPC methods plus a DATA
+sink/source — the unit D10 made natural. Rules: `ack`/`close` are
+host-reserved and never dispatched to kinds; methods a kind doesn't
+define fall through to the builtins (`ping` answers on every kind — it's
+the transport diagnostic), then `-32601`; a throwing handler fails the
+spawn (`1002`); `exit()` publishes the exited status and stops delivery,
+but the client's `close` still drains (cleanup stays host-owned, D6).
+"Unknown kind" now means "not in this host's registry" — still `1003`,
+still checked before the policy runs. **echo migrated to the registry**
+(the trivial `() => ({})` handler), so the mechanism is exercised by
+every workbench bench run, not just by exotic embedders. **shell stays
+native**: pty handling and pause/resume flow control have no kind-API
+hooks. Schema impact: `SpawnSpec` admits `{kind: string, …params}`
+(`KindSpawn`); `SpawnResult` admits kind-specific extra fields.
+
+**Context.** The final #17 slice — the platform claim ("stdio-shaped
+bridge over files, bring your own semantics"). The immediate consumer is
+[#18](https://github.com/dglazkov/fsio/issues/18)'s ACP demo (an agent
+protocol as a kind). Enforced by four B1 scenarios (real client ↔ real
+host: DATA roundtrip + custom method + extra result fields; policy
+applies to registered kinds; handler throw → 1002; exit()/onClose
+lifecycle; namespace guards).
+
+**Alternatives rejected.** Subclassing `HostServer` (couples embedders to
+scan internals). Kind-as-child-process (that's what `shell` *is*; the
+registry is for in-process semantics). Routing kind DATA through JSON-RPC
+(rejected once already in D10 — bytes stay raw). Flow-control/
+backpressure hooks in the kind API now (no consumer streams enough to hit
+the 4 MiB ack window yet, and
+[#10](https://github.com/dglazkov/fsio/issues/10)'s chunk credits may
+reshape the mechanism — design it once, there).
+
+**Findings.** None; behavior enforced by the B1 tier. Feeds #18 (first
+real kind), #8 (freeze surface), #10 (backpressure hook design).

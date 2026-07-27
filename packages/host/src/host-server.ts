@@ -67,6 +67,44 @@ export interface SpawnRequestInfo {
  *  reason and (rarely) a custom JSON-RPC error code (default 1004). */
 export type SpawnDecision = boolean | { allow: boolean; reason?: string; code?: number };
 
+// ---- registered kinds (D13): a kind is a set of RPC methods plus a DATA
+// sink/source — "stdio-shaped bridge over files, bring your own semantics".
+
+/** What a kind handler gets to work with. */
+export interface KindContext {
+  readonly sessionId: string;
+  /** the spawn request's params, as sent (the kind defines their meaning). */
+  readonly spec: Readonly<Record<string, unknown>>;
+  /** append DATA to the session's out stream (host → client). */
+  write(data: Uint8Array | string): void;
+  /** report the session as exited (status.json); delivery to the kind
+   *  stops. The session dir survives until the client's `close` (D6). */
+  exit(exitCode?: number | null): void;
+  /** session-prefixed logger. */
+  log: HostLogger;
+}
+
+/** A live kind session, as returned by its handler. */
+export interface KindSession {
+  /** extra fields merged into the spawn result the client's `ready` sees. */
+  result?: Record<string, unknown>;
+  /** client → host DATA frames. */
+  onData?: (bytes: Uint8Array) => void;
+  /** RPC methods (requests get the return value as the result; throw an
+   *  object with `code`/`message` — e.g. common's RpcError — for coded
+   *  errors). `ack` and `close` are host-reserved and never dispatched;
+   *  an unhandled method falls back to the builtins (`ping`), then
+   *  `-32601`. */
+  methods?: Record<string, (params: unknown) => unknown | Promise<unknown>>;
+  /** teardown: client close, host close(), or idle GC. Not called after
+   *  the kind's own exit(). */
+  onClose?: () => void;
+}
+
+/** Kind handler: runs per spawned session, after the spawn policy allowed
+ *  it (D12). May be async; a throw/rejection fails the spawn (`1002`). */
+export type KindHandler = (ctx: KindContext) => KindSession | Promise<KindSession>;
+
 /** Spawn policy hook (D12): consulted for every spawn request, every kind.
  *  May return a promise — an async policy IS the confirmation mechanism
  *  (prompt a human, check an allow-list service…); the client just sees
@@ -230,6 +268,7 @@ class Session {
   doneSegs: { gen: number; endTotal: number }[] = []; // finished segments
   proc: PtyProcess | ChildProcess | null = null;
   usesPty = false;
+  kindSession: KindSession | null = null; // registered kinds (D13)
   watchers: (fs.FSWatcher | null)[] = [];
   retryTimer: ReturnType<typeof setTimeout> | null = null;
   lastActivity = Date.now();
@@ -360,6 +399,12 @@ class Session {
 
   close(): void {
     this.done = true;
+    try {
+      this.kindSession?.onClose?.();
+    } catch (e) {
+      this.host.log(`session ${this.id}: kind onClose threw: ${errMsg(e)}`);
+    }
+    this.kindSession = null;
     for (const w of this.watchers) w?.close();
     this.watchers = [];
     if (this.retryTimer) {
@@ -397,6 +442,9 @@ export class HostServer {
   private fresh: boolean;
   private ptyMod: PtyModule | null = null;
   private sessions = new Map<string, Session>();
+  // Kind registry (D13). echo is just the trivial entry; shell stays
+  // native (pty + flow-control pause/resume have no kind-API hooks yet).
+  private kinds = new Map<string, KindHandler>([["echo", () => ({})]]);
   private timers: ReturnType<typeof setInterval>[] = [];
   private pendingCleanups = new Set<ReturnType<typeof setTimeout>>();
   private rootWatcher: fs.FSWatcher | null = null;
@@ -422,6 +470,15 @@ export class HostServer {
     this.timings = { ...DEFAULT_TIMINGS, ...opts.timings };
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
     this.log = opts.logger ?? (() => {});
+  }
+
+  /** Register a session kind (D13): `handler` runs per allowed spawn of
+   *  this kind and returns the session's behavior (DATA sink, RPC methods,
+   *  teardown). Register before clients spawn; names are first-come. */
+  registerKind(kind: string, handler: KindHandler): this {
+    if (kind === "shell" || this.kinds.has(kind)) throw new Error(`kind already registered: ${kind}`);
+    this.kinds.set(kind, handler);
+    return this;
   }
 
   /** Attach to the shared dir and begin serving. Resolves after the first
@@ -605,7 +662,7 @@ export class HostServer {
     const kind = s.spawn.kind ?? "echo";
     // Validity precedes policy: an unknown kind cannot be allowed into
     // existence, and the hook shouldn't have to know the kind registry.
-    if (kind !== "echo" && kind !== "shell") {
+    if (kind !== "shell" && !this.kinds.has(kind)) {
       const error = `unknown kind: ${kind}`;
       s.setStatus({ state: "error", error });
       s.spawnFail(RpcErrors.UNKNOWN_KIND, error);
@@ -658,13 +715,54 @@ export class HostServer {
     }
     s.approved = true;
     this.log(`session ${s.id}: start kind=${kind}`);
-    if (kind === "echo") {
-      s.setStatus({ state: "running", kind, pid: process.pid });
-      s.spawnOk({ kind, pid: process.pid });
-    } else {
-      this.startShell(s);
-    }
+    if (kind === "shell") this.startShell(s);
+    else this.startKind(s, kind);
     this.scheduleScan(); // drain anything queued while the decision was pending
+  }
+
+  // Start a registered kind (D13): run the handler (possibly async), then
+  // answer the spawn request. Echo rides this path too — its handler is
+  // the trivial `() => ({})`, so the registry mechanism is exercised on
+  // every workbench bench run, not just by exotic embedders.
+  private startKind(s: Session, kind: string): void {
+    const handler = this.kinds.get(kind)!;
+    const ctx: KindContext = {
+      sessionId: s.id,
+      spec: (s.spawn ?? {}) as Readonly<Record<string, unknown>>,
+      write: (data) => {
+        if (s.done || !s.kindSession) return;
+        s.appendFrame(FrameType.DATA, typeof data === "string" ? new TextEncoder().encode(data) : data);
+      },
+      exit: (exitCode = null) => {
+        if (s.done || !s.kindSession) return;
+        s.kindSession = null; // delivery stops; close notification still drains
+        s.setStatus({ state: "exited", exitCode });
+        this.log(`session ${s.id}: kind ${kind} exited (code ${exitCode})`);
+      },
+      log: (...args) => this.log(`session ${s.id}:`, ...args),
+    };
+    Promise.resolve()
+      .then(() => handler(ctx))
+      .then((ks) => {
+        if (s.done) {
+          // closed while the handler was setting up — give it its teardown
+          try {
+            ks.onClose?.();
+          } catch {}
+          return;
+        }
+        s.kindSession = ks;
+        s.setStatus({ state: "running", kind, pid: process.pid });
+        s.spawnOk({ kind, pid: process.pid, ...ks.result });
+        this.scheduleScan();
+      })
+      .catch((e: unknown) => {
+        if (s.done) return;
+        const error = `kind ${kind} failed to start: ${errMsg(e)}`;
+        s.setStatus({ state: "error", error });
+        s.spawnFail(RpcErrors.SPAWN_FAILED, error);
+        s.done = true;
+      });
   }
 
   /** The exact thing a shell spec would run — shared by the policy hook's
@@ -809,6 +907,14 @@ export class HostServer {
   private handleFrame(s: Session, frame: Frame, t1: number): void {
     switch (frame.type) {
       case FrameType.DATA: {
+        if (s.kindSession?.onData) {
+          try {
+            s.kindSession.onData(frame.payload);
+          } catch (e) {
+            this.log(`session ${s.id}: kind onData threw: ${errMsg(e)}`);
+          }
+          break;
+        }
         if (!s.proc) break;
         if (s.pty) s.pty.write(Buffer.from(frame.payload).toString("utf8"));
         else s.child!.stdin!.write(Buffer.from(frame.payload));
@@ -838,6 +944,26 @@ export class HostServer {
     const { id, method, params = {} } = msg;
     if (method === undefined) return; // a response; host has no pending requests
     const isRequest = id !== undefined;
+    // Registered kinds get first crack at non-reserved methods (D13):
+    // `ack`/`close` are host integrity and never dispatched; anything the
+    // kind doesn't define falls through to the builtins (`ping` works on
+    // every kind — it's the transport diagnostic), then -32601.
+    if (s.kindSession?.methods && method !== "ack" && method !== "close") {
+      const fn = s.kindSession.methods[method];
+      if (fn) {
+        Promise.resolve()
+          .then(() => fn(params))
+          .then((result) => {
+            if (isRequest && !s.done) s.appendJson(FrameType.RPC, rpcResult(id, result ?? null));
+          })
+          .catch((e: unknown) => {
+            if (!isRequest || s.done) return;
+            const code = typeof (e as { code?: unknown })?.code === "number" ? (e as { code: number }).code : RpcErrors.INTERNAL_ERROR;
+            s.appendJson(FrameType.RPC, rpcError(id, code, errMsg(e)));
+          });
+        return;
+      }
+    }
     switch (method) {
       case "ping": {
         // Result echoes params (filler exercises the downlink under payload

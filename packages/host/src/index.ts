@@ -8,4 +8,7 @@ export {
   type SpawnPolicy,
   type SpawnDecision,
   type SpawnRequestInfo,
+  type KindHandler,
+  type KindContext,
+  type KindSession,
 } from "./host-server.js";
