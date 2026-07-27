@@ -36,6 +36,7 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `packages/host` — native host: adopts sessions, answers pings, spawns shells
 - `packages/workbench` — measurement workbench page (consumes `@fsio/client`)
 - `packages/bench` — node bench clients + protocol/lifecycle/client-conformance tests
+- `packages/terminal-demo` — /terminal demo helper: sandboxed working-folder shell (consumes `@fsio/host`)
 
 ## Headline numbers so far (macOS, APFS, Chrome 150)
 
