@@ -14,7 +14,7 @@ and in CI (wireit graph; see README). One command, no surprises.
 | unit | pure logic: frame codec, RPC correlation, name encodings | `packages/common/src/*.test.ts` (node:test) | per push, seconds |
 | protocol integration | spec MUSTs against a real host over a real FS in a tmpdir: torn writes, ordering, spawn errors, restart adoption | `packages/bench/src/test-protocol.ts` | per push |
 | host lifecycle | time-based host behaviors at short injected timescales: idle GC, stale-session GC, `close()` resource release | `packages/bench/src/test-lifecycle.ts` (in-process `HostServer`) | per push |
-| client conformance (B1) | the real `@fsio/client` over a Node fs shim against an in-process host: event delivery, D11 construction/disposal semantics, uplink lane selection, D6 cleanup ownership, D12 spawn policy, D13 registered kinds | `packages/bench/src/test-client.ts` + `fs-shim.ts` | per push |
+| client conformance (B1) | the real `@fsio/client` over a Node fs shim against an in-process host: event delivery, D11 construction/disposal semantics, uplink lane selection, D6 cleanup ownership, D12 spawn policy, D13 registered kinds, D14 introspection + injected pty | `packages/bench/src/test-client.ts` + `fs-shim.ts` | per push |
 | smoke | one full happy path per uplink lane + flow control, with a *generous* latency ceiling (100 ms p50 — catches the F1/F2 wakeup-regression class, never runner jitter) | `packages/bench/src/test-smoke.ts` | per push |
 | labs | platform measurement, not pass/fail: benches, observer lab, write microbench. Results feed [spec/FINDINGS.md](spec/FINDINGS.md), never CI verdicts | `packages/bench`, workbench | when investigating |
 

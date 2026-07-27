@@ -43,7 +43,39 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
 // ---------------------------------------------------------------- options
 
-export type HostLogger = (...args: unknown[]) => void;
+/** Leveled line logger (D14). Lines are for humans — machine-readable
+ *  state lives in the protocol files and `listSessions()`. Structurally
+ *  satisfied by `console`, so `logger: console` just works. */
+export interface HostLogger {
+  info(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+}
+
+const SILENT_LOGGER: HostLogger = { info() {}, warn() {}, error() {} };
+
+/** Read-only session snapshot (D14): what an embedder can see. Aligned
+ *  with `SpawnRequestInfo` where the fields overlap. */
+export interface SessionInfo {
+  id: string;
+  /** null until spawn.json has been read. */
+  kind: string | null;
+  /** free-form client tag from the spec (diagnostics only). */
+  client?: string | undefined;
+  /** adopted → pending (spawn policy, D12) → running → exited | done. */
+  phase: SessionPhase;
+  /** shell child pid; host pid for in-process kinds. */
+  pid?: number;
+  /** shell sessions: whether a real pty is attached. */
+  pty?: boolean;
+  /** host → client bytes appended / acked (flow-control state, D9). */
+  bytesOut: number;
+  bytesAcked: number;
+  /** ms epoch of last uplink activity. */
+  lastActivityAt: number;
+}
+
+export type SessionPhase = "adopted" | "pending" | "running" | "exited" | "done";
 
 /** What a spawn policy gets to judge, beyond the raw spec: identity plus
  *  the *resolved* command — what would actually run, not what was asked
@@ -130,6 +162,8 @@ export interface HostTimings {
   closeDelayMs?: number;
   /** fast retry when an uplink chunk looks torn/empty (invariant 3, F11). */
   retryMs?: number;
+  /** close(): how long children get after SIGTERM before SIGKILL (D14). */
+  killGraceMs?: number;
 }
 
 /** Flow control knobs (spec: segmented out log + ack window). */
@@ -160,6 +194,9 @@ export interface HostServerOptions {
   /** unconditional poll loop interval (default 0 = off). */
   pollMs?: number;
   logger?: HostLogger;
+  /** pty provider (D14): a PtyModule to use, or `false` to force the pipe
+   *  fallback. Default: auto-load node-pty if installed. */
+  pty?: PtyModule | false;
   timings?: HostTimings;
   limits?: HostLimits;
 }
@@ -172,6 +209,7 @@ const DEFAULT_TIMINGS: Required<HostTimings> = {
   staleGraceMs: 60_000,
   closeDelayMs: 500,
   retryMs: 5,
+  killGraceMs: 3000,
 };
 
 // A `find .` produced 60 MB of scrollback in one file with nothing telling
@@ -207,7 +245,10 @@ function readJson<T>(file: string): T | null {
 // Local minimal surface instead of node-pty's own types: the dependency is
 // *optional*, and a missing optional dep must never break `npm run build`.
 // (Hence also the variable specifier: keeps tsc from resolving the module.)
-interface PtyProcess {
+/** Minimal pty surface. Injectable via `HostServerOptions.pty` (D14):
+ *  bring your own module (or a test fake — `onData`/`onExit` must accept
+ *  multiple listeners). */
+export interface PtyProcess {
   pid: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;
@@ -218,7 +259,7 @@ interface PtyProcess {
   onExit(cb: (e: { exitCode: number }) => void): void;
 }
 
-interface PtyModule {
+export interface PtyModule {
   spawn(
     file: string,
     args: string[],
@@ -256,6 +297,7 @@ class Session {
   spawnAnswered = false;
   started = false;
   approved = false; // spawn policy said yes (D12); gates incoming processing
+  exited = false; // process/kind reported exit (session dir still readable, D6)
   done = false;
   nextInSeq: number | null = null; // discovered from the smallest chunk present
   // Output stream state: segmented log + cumulative byte accounting.
@@ -349,7 +391,7 @@ class Session {
           this.child!.stderr!.pause();
         }
       } catch {}
-      this.host.log(`session ${this.id}: output paused (${(unacked / 1048576).toFixed(1)} MB unacked)`);
+      this.host.log.info(`session ${this.id}: output paused (${(unacked / 1048576).toFixed(1)} MB unacked)`);
     } else if (this.paused && unacked <= ackResume) {
       this.paused = false;
       try {
@@ -359,7 +401,7 @@ class Session {
           this.child!.stderr!.resume();
         }
       } catch {}
-      this.host.log(`session ${this.id}: output resumed`);
+      this.host.log.info(`session ${this.id}: output resumed`);
     }
   }
 
@@ -402,7 +444,7 @@ class Session {
     try {
       this.kindSession?.onClose?.();
     } catch (e) {
-      this.host.log(`session ${this.id}: kind onClose threw: ${errMsg(e)}`);
+      this.host.log.warn(`session ${this.id}: kind onClose threw: ${errMsg(e)}`);
     }
     this.kindSession = null;
     for (const w of this.watchers) w?.close();
@@ -440,6 +482,7 @@ export class HostServer {
   ptyAvailable = false;
 
   private fresh: boolean;
+  private readonly ptyOpt: PtyModule | false | undefined;
   private ptyMod: PtyModule | null = null;
   private sessions = new Map<string, Session>();
   // Kind registry (D13). echo is just the trivial entry; shell stays
@@ -469,7 +512,41 @@ export class HostServer {
     this.pollMs = opts.pollMs ?? 0;
     this.timings = { ...DEFAULT_TIMINGS, ...opts.timings };
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
-    this.log = opts.logger ?? (() => {});
+    this.log = opts.logger ?? SILENT_LOGGER;
+    this.ptyOpt = opts.pty;
+  }
+
+  /** Read-only view of the sessions this host is serving (D14): the
+   *  introspection surface for confirmation UIs (#16) and reattach (#3).
+   *  Snapshots — mutating them changes nothing. */
+  listSessions(): SessionInfo[] {
+    const infos: SessionInfo[] = [];
+    for (const s of this.sessions.values()) {
+      const phase: SessionPhase = s.done
+        ? "done"
+        : s.exited
+          ? "exited"
+          : s.approved
+            ? "running"
+            : s.started
+              ? "pending"
+              : "adopted";
+      const info: SessionInfo = {
+        id: s.id,
+        kind: s.spawn ? (s.spawn.kind ?? "echo") : null,
+        client: s.spawn?.client,
+        phase,
+        bytesOut: s.outTotal,
+        bytesAcked: s.ackTotal,
+        lastActivityAt: s.lastActivity,
+      };
+      if (phase === "running") {
+        info.pid = s.proc ? ((s.proc as { pid?: number }).pid ?? process.pid) : process.pid;
+        if (s.proc) info.pty = s.usesPty;
+      }
+      infos.push(info);
+    }
+    return infos;
   }
 
   /** Register a session kind (D13): `handler` runs per allowed spawn of
@@ -488,10 +565,10 @@ export class HostServer {
     this.running = true;
     this.startedAt = now();
 
-    this.ptyMod = await loadPty();
+    this.ptyMod = this.ptyOpt === false ? null : (this.ptyOpt ?? (await loadPty()));
     this.ptyAvailable = !!this.ptyMod;
-    if (this.ptyMod) this.log("node-pty available: shell sessions get a real pty");
-    else this.log("node-pty not installed: shell sessions fall back to pipes (no pty). `npm i node-pty` for full terminal support.");
+    if (this.ptyMod) this.log.info("pty available: shell sessions get a real pty");
+    else this.log.warn("no pty (node-pty not installed, or pty: false): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
 
     if (this.fresh) fs.rmSync(this.fsioDir, { recursive: true, force: true });
     fs.mkdirSync(this.sessionsDir, { recursive: true });
@@ -532,11 +609,21 @@ export class HostServer {
   }
 
   /** Stop serving: kill session processes, release watchers and timers,
-   *  retract host.json (peers read absence/staleness as host-gone). */
-  close(): void {
-    if (!this.running) return;
+   *  retract host.json (peers read absence/staleness as host-gone). All of
+   *  that happens synchronously — un-awaited calls still fully tear down.
+   *  The returned promise resolves once every child has actually exited
+   *  (SIGTERM, then SIGKILL after `timings.killGraceMs` — D14), so
+   *  embedders can `await host.close()` for a clean process exit. */
+  close(): Promise<void> {
+    if (!this.running) return Promise.resolve();
     this.running = false;
-    for (const s of this.sessions.values()) s.close();
+    const reaps: Promise<void>[] = [];
+    for (const s of this.sessions.values()) {
+      const proc = s.proc;
+      const usesPty = s.usesPty;
+      s.close(); // delivers SIGTERM (and nulls s.proc)
+      if (proc) reaps.push(this.reapChild(s.id, proc, usesPty));
+    }
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     for (const t of this.pendingCleanups) clearTimeout(t);
@@ -546,6 +633,37 @@ export class HostServer {
     try {
       fs.unlinkSync(path.join(this.fsioDir, "host.json"));
     } catch {}
+    return Promise.all(reaps).then(() => {});
+  }
+
+  // Wait for a killed child to actually exit; escalate to SIGKILL after the
+  // grace period. Timers are unref'd and capped — close() can never hang a
+  // process that wants to exit.
+  private reapChild(id: string, proc: PtyProcess | ChildProcess, usesPty: boolean): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(escalate);
+        clearTimeout(cap);
+        resolve();
+      };
+      if (usesPty) (proc as PtyProcess).onExit(done);
+      else if ((proc as ChildProcess).exitCode !== null || (proc as ChildProcess).signalCode !== null) return done();
+      else (proc as ChildProcess).once("exit", done);
+      const grace = this.timings.killGraceMs;
+      const escalate = setTimeout(() => {
+        this.log.warn(`session ${id}: child ignored SIGTERM for ${grace}ms — SIGKILL`);
+        try {
+          if (usesPty) (proc as PtyProcess).kill("SIGKILL");
+          else (proc as ChildProcess).kill("SIGKILL");
+        } catch {}
+      }, grace);
+      const cap = setTimeout(done, grace * 2 + 1000); // absolute ceiling
+      escalate.unref?.();
+      cap.unref?.();
+    });
   }
 
   // ------------------------------------------------------------- internals
@@ -580,7 +698,7 @@ export class HostServer {
   private idleSweep(): void {
     for (const s of this.sessions.values()) {
       if (s.started && !s.done && s.spawn?.kind === "echo" && Date.now() - s.lastActivity > this.timings.idleGcMs) {
-        this.log(`session ${s.id}: idle for ${Math.round(this.timings.idleGcMs / 1000)}s, reaping`);
+        this.log.info(`session ${s.id}: idle for ${Math.round(this.timings.idleGcMs / 1000)}s, reaping`);
         s.close();
         this.removeSessionDir(s, "idle");
       }
@@ -603,7 +721,7 @@ export class HostServer {
       try {
         this.scanOnce();
       } catch (e) {
-        this.log("scan error:", errMsg(e));
+        this.log.error("scan error:", errMsg(e));
       }
     } while (this.rescan);
     this.scanning = false;
@@ -642,7 +760,7 @@ export class HostServer {
       return;
     }
     s.watchers.push(this.watchDir(s.dir, () => this.scheduleScan()));
-    this.log(`session ${id}: adopted`);
+    this.log.info(`session ${id}: adopted`);
   }
 
   private tryStart(s: Session): void {
@@ -675,7 +793,7 @@ export class HostServer {
       client: s.spawn.client,
       ...(kind === "shell" ? this.resolveShell(s.spawn) : {}),
     };
-    this.log(`session ${s.id}: spawn request kind=${kind}${info.cmd ? ` cmd=${info.cmd}` : ""}`);
+    this.log.info(`session ${s.id}: spawn request kind=${kind}${info.cmd ? ` cmd=${info.cmd}` : ""}`);
     void this.decideAndStart(s, kind, info);
   }
 
@@ -700,21 +818,21 @@ export class HostServer {
       decision = this.onSpawnRequest ? await this.onSpawnRequest(s.spawn as Readonly<Record<string, unknown>>, info) : this.defaultPolicy(info);
     } catch (e) {
       // Fail safe: a broken policy must never fail open.
-      this.log(`session ${s.id}: spawn policy threw (${errMsg(e)}) — denying`);
+      this.log.error(`session ${s.id}: spawn policy threw (${errMsg(e)}) — denying`);
       decision = { allow: false, reason: "spawn policy failed" };
     }
     if (!this.running || s.done) return; // host or session closed while deciding
     const d = typeof decision === "boolean" ? { allow: decision } : decision;
     if (!d.allow) {
       const error = d.reason ?? "spawn denied by host policy";
-      this.log(`session ${s.id}: denied (${error})`);
+      this.log.info(`session ${s.id}: denied (${error})`);
       s.setStatus({ state: "error", error });
       s.spawnFail(d.code ?? RpcErrors.SPAWN_DENIED, error);
       s.done = true;
       return;
     }
     s.approved = true;
-    this.log(`session ${s.id}: start kind=${kind}`);
+    this.log.info(`session ${s.id}: start kind=${kind}`);
     if (kind === "shell") this.startShell(s);
     else this.startKind(s, kind);
     this.scheduleScan(); // drain anything queued while the decision was pending
@@ -736,10 +854,15 @@ export class HostServer {
       exit: (exitCode = null) => {
         if (s.done || !s.kindSession) return;
         s.kindSession = null; // delivery stops; close notification still drains
+        s.exited = true;
         s.setStatus({ state: "exited", exitCode });
-        this.log(`session ${s.id}: kind ${kind} exited (code ${exitCode})`);
+        this.log.info(`session ${s.id}: kind ${kind} exited (code ${exitCode})`);
       },
-      log: (...args) => this.log(`session ${s.id}:`, ...args),
+      log: {
+        info: (...args) => this.log.info(`session ${s.id}:`, ...args),
+        warn: (...args) => this.log.warn(`session ${s.id}:`, ...args),
+        error: (...args) => this.log.error(`session ${s.id}:`, ...args),
+      },
     };
     Promise.resolve()
       .then(() => handler(ctx))
@@ -805,7 +928,8 @@ export class HostServer {
         });
         p.onExit(({ exitCode }) => {
           if (s.done) return;
-          this.log(`session ${s.id}: exited code=${exitCode}`);
+          this.log.info(`session ${s.id}: exited code=${exitCode}`);
+          s.exited = true;
           s.setStatus({ state: "exited", exitCode });
           s.proc = null;
         });
@@ -813,7 +937,7 @@ export class HostServer {
         s.spawnOk({ kind: "shell", pty: true, pid: p.pid, cmd });
         return;
       } catch (e) {
-        this.log(`session ${s.id}: pty spawn failed (${errMsg(e)}); falling back to pipes`);
+        this.log.warn(`session ${s.id}: pty spawn failed (${errMsg(e)}); falling back to pipes`);
       }
     }
     try {
@@ -823,7 +947,7 @@ export class HostServer {
       p.on("spawn", () => s.spawnOk({ kind: "shell", pty: false, pid: p.pid!, cmd }));
       p.on("error", (e) => {
         if (s.done) return; // late-callback guard (see pty branch)
-        this.log(`session ${s.id}: spawn error: ${e.message}`);
+        this.log.warn(`session ${s.id}: spawn error: ${e.message}`);
         s.setStatus({ state: "error", error: `could not start ${cmd}: ${e.message}` });
         s.spawnFail(RpcErrors.SPAWN_FAILED, `could not start ${cmd}: ${e.message}`);
         s.proc = null;
@@ -838,13 +962,14 @@ export class HostServer {
       });
       p.on("exit", (code) => {
         if (s.done) return; // late-callback guard (see pty branch)
-        this.log(`session ${s.id}: exited code=${code}`);
+        this.log.info(`session ${s.id}: exited code=${code}`);
+        s.exited = true;
         s.setStatus({ state: "exited", exitCode: code });
         s.proc = null;
       });
       s.setStatus({ state: "running", kind: "shell", pty: false, pid: p.pid, cmd });
     } catch (e) {
-      this.log(`session ${s.id}: spawn failed: ${errMsg(e)}`);
+      this.log.warn(`session ${s.id}: spawn failed: ${errMsg(e)}`);
       s.setStatus({ state: "error", error: `could not start ${cmd}: ${errMsg(e)}` });
       s.spawnFail(RpcErrors.SPAWN_FAILED, `could not start ${cmd}: ${errMsg(e)}`);
       s.done = true;
@@ -911,7 +1036,7 @@ export class HostServer {
           try {
             s.kindSession.onData(frame.payload);
           } catch (e) {
-            this.log(`session ${s.id}: kind onData threw: ${errMsg(e)}`);
+            this.log.warn(`session ${s.id}: kind onData threw: ${errMsg(e)}`);
           }
           break;
         }
@@ -932,7 +1057,7 @@ export class HostServer {
         break;
       }
       default:
-        this.log(`session ${s.id}: ignoring frame type ${frameTypeName(frame.type)}`);
+        this.log.warn(`session ${s.id}: ignoring frame type ${frameTypeName(frame.type)}`);
     }
   }
 
@@ -994,7 +1119,7 @@ export class HostServer {
         s.child?.stdin?.end();
         break;
       case "close":
-        this.log(`session ${s.id}: closed by client`);
+        this.log.info(`session ${s.id}: closed by client`);
         s.setStatus({ state: "exited", exitCode: null, closedByClient: true });
         s.close();
         // Cleanup is host-owned (browser-side deletes race with our writes).
@@ -1009,16 +1134,19 @@ export class HostServer {
         break;
       default:
         if (isRequest) s.appendJson(FrameType.RPC, rpcError(id, RpcErrors.METHOD_NOT_FOUND, `unknown method: ${method}`));
-        else this.log(`session ${s.id}: unknown notification ${method}`);
+        else this.log.warn(`session ${s.id}: unknown notification ${method}`);
     }
   }
 
   private removeSessionDir(s: Session, why: string): void {
     try {
       fs.rmSync(s.dir, { recursive: true, force: true });
-      this.log(`session ${s.id}: removed (${why})`);
+      // The in-memory entry goes with the dir — before listSessions() (D14)
+      // this map only ever grew for the life of the host.
+      this.sessions.delete(s.id);
+      this.log.info(`session ${s.id}: removed (${why})`);
     } catch (e) {
-      this.log(`session ${s.id}: cleanup failed: ${errMsg(e)}`);
+      this.log.warn(`session ${s.id}: cleanup failed: ${errMsg(e)}`);
     }
   }
 }

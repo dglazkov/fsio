@@ -353,3 +353,47 @@ reshape the mechanism — design it once, there).
 
 **Findings.** None; behavior enforced by the B1 tier. Feeds #18 (first
 real kind), #8 (freeze surface), #10 (backpressure hook design).
+
+## D14 — host embedder surface: introspection, leveled log lines, awaited close, injected pty
+
+**Decision.** Settles the four open questions #26 carried out of the #17
+inversion:
+
+1. **`listSessions(): SessionInfo[]`** — read-only snapshots: `{id, kind,
+   client, phase, pid?, pty?, bytesOut, bytesAcked, lastActivityAt}` with
+   `phase: adopted → pending (D12) → running → exited | done`. Session
+   map entries now GC with their dirs — introspection made visible that
+   the map only ever grew for the life of the host.
+2. **Logger is a leveled line sink** `{info, warn, error}`, structurally
+   satisfied by `console`. Lines are for humans; the machine-readable
+   surface is the protocol files plus `listSessions()` — not a log
+   taxonomy. Scan-loop errors go to `error` (settles the "structured
+   error hook" half of old question 3 host-side).
+3. **`close()` returns a promise** that resolves when children have
+   actually exited: SIGTERM → `killGraceMs` (default 3000, injectable) →
+   SIGKILL, with an absolute cap and unref'd timers. All teardown stays
+   synchronous, so un-awaited calls behave exactly as before. Kind
+   `onClose` (D13) remains sync fire-and-forget — kinds own their async
+   cleanup.
+4. **pty is injectable**: `pty?: PtyModule | false` (default: auto-load
+   node-pty). A fake module makes the pty branch of `startShell`
+   CI-testable — the one path B1 could never reach.
+
+**Context.** [#26](https://github.com/dglazkov/fsio/issues/26);
+`listSessions` was the last library-side blocker on #16's host-side
+confirmation UX. Enforced by B1 (phase transitions through a gated D12
+policy; fake-pty spawn/data/resize/kill) and a lifecycle test (awaited
+close SIGKILLs a TERM-trapping child in ~killGraceMs). Two *test-side*
+races were measured and pinned in comments there: `sh -c` exec()s a lone
+trailing command (discarding the trap), and "running" status precedes
+trap arming.
+
+**Alternatives rejected.** A structured event log (premature taxonomy —
+files + `listSessions` are the structured surface; #8 owns freezing).
+Exposing the live `Session` objects or the map (mutable internals;
+snapshots keep invariants host-owned). An EventEmitter host (no consumer
+needs push — confirmation UIs poll at human timescales; revisit with
+#16). `close()` awaiting kind `onClose` (kinds own their async cleanup).
+
+**Findings.** None platform-measured. Feeds #16 (confirmation UI reads
+`listSessions`), #3 (reattach needs the same view), #8 (freeze surface).

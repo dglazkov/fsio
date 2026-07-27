@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HostServer, type HostServerOptions, type SpawnRequestInfo } from "@fsio/host";
+import { HostServer, type HostServerOptions, type SpawnRequestInfo, type PtyModule } from "@fsio/host";
 import { RpcErrors } from "@fsio/common";
 import { FsioClient, RpcError, now, type PingResult } from "@fsio/client";
 import { ShimDirectory } from "./fs-shim.js";
@@ -429,6 +429,98 @@ test("registerKind guards its namespace: shell and duplicates are refused", asyn
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------- host introspection: listSessions (D14)
+
+test("listSessions: phases pending → running → gone; fields for a confirmation UI", async () => {
+  // Q4 of #26 — the surface #16's host-side confirmation reads. Explicit
+  // plumbing instead of withHost: the test needs the server handle.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  let release: (() => void) | null = null;
+  const gate = new Promise<void>((r) => (release = r));
+  const server = new HostServer({
+    root,
+    timings: { closeDelayMs: 50 },
+    onSpawnRequest: async () => {
+      await gate; // hold the session in the pending phase
+      return true;
+    },
+  });
+  await server.start();
+  const client = new FsioClient(new ShimDirectory(root));
+  try {
+    await client.connect();
+    const s = client.createSession({ kind: "echo", client: "b1-list" }, { pollMs: 5 });
+    const pending = await waitFor(() => server.listSessions().find((x) => x.id === s.id), "session to appear");
+    assert.equal(pending.phase, "pending"); // policy hasn't answered (D12)
+    assert.equal(pending.kind, "echo");
+    assert.equal(pending.client, "b1-list");
+    release!();
+    await s.ready;
+    const running = server.listSessions().find((x) => x.id === s.id)!;
+    assert.equal(running.phase, "running");
+    assert.equal(running.pid, process.pid); // in-process kind
+    await s.close();
+    // Host-owned cleanup also drops the in-memory entry — before D14 the
+    // sessions map grew for the life of the host.
+    await waitFor(() => !server.listSessions().some((x) => x.id === s.id), "session entry GC'd with its dir");
+  } finally {
+    void server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ------------------------------------------- pty injection (D14, Q6 of #26)
+
+test("injected PtyModule: the pty branch runs under CI — spawn result, data, resize, kill", async () => {
+  // The one startShell path B1 could never reach: CI has no node-pty. A
+  // fake PtyModule makes the branch testable end-to-end.
+  const calls: { resize: [number, number][]; killed: string[]; spawned: string[] } = { resize: [], killed: [], spawned: [] };
+  const makeFakePty = () => {
+    const dataCbs: ((d: string) => void)[] = [];
+    const exitCbs: ((e: { exitCode: number }) => void)[] = [];
+    return {
+      pid: 4242,
+      write: (data: string) => {
+        for (const cb of dataCbs) cb(`fake-pty:${data}`);
+      },
+      resize: (cols: number, rows: number) => calls.resize.push([cols, rows]),
+      kill: (signal?: string) => {
+        calls.killed.push(signal ?? "SIGTERM");
+        for (const cb of exitCbs) cb({ exitCode: 0 });
+      },
+      pause: () => {},
+      resume: () => {},
+      onData: (cb: (d: string) => void) => dataCbs.push(cb),
+      onExit: (cb: (e: { exitCode: number }) => void) => exitCbs.push(cb),
+    };
+  };
+  const fakeModule: PtyModule = {
+    spawn: (file, _args, _opts) => {
+      calls.spawned.push(file);
+      return makeFakePty();
+    },
+  };
+  await withHost({ allowShell: true, pty: fakeModule }, async (client) => {
+    const s = client.createSession({ kind: "shell", cmd: "fakesh" }, { pollMs: 5 });
+    const chunks: Buffer[] = [];
+    s.on("data", (b) => chunks.push(Buffer.from(b)));
+    try {
+      const info = await s.ready;
+      assert.equal(info.pty, true);
+      assert.equal(info.pid, 4242);
+      assert.deepEqual(calls.spawned, ["fakesh"]);
+      s.sendData("hello");
+      await waitFor(() => Buffer.concat(chunks).toString().includes("fake-pty:hello"), "data through the fake pty");
+      s.notify("resize", { cols: 132, rows: 43 });
+      await waitFor(() => calls.resize.length > 0, "resize to reach the pty");
+      assert.deepEqual(calls.resize[0], [132, 43]);
+    } finally {
+      await s.close();
+    }
+    await waitFor(() => calls.killed.length > 0, "close to kill the pty");
+  });
 });
 
 // ------------------------------------- listener exception isolation (D11)

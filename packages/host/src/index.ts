@@ -11,4 +11,8 @@ export {
   type KindHandler,
   type KindContext,
   type KindSession,
+  type SessionInfo,
+  type SessionPhase,
+  type PtyModule,
+  type PtyProcess,
 } from "./host-server.js";
