@@ -34,7 +34,7 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `packages/common` — frame codec + JSON-RPC control plane (both sides import)
 - `packages/client` — client library: sessions over the shared dir (browser or Node, D11)
 - `packages/host` — native host: adopts sessions, answers pings, spawns shells
-- `packages/web` — workbench page (consumes `@fsio/client`)
+- `packages/workbench` — measurement workbench page (consumes `@fsio/client`)
 - `packages/bench` — node bench clients + protocol/lifecycle/client-conformance tests
 
 ## Headline numbers so far (macOS, APFS, Chrome 150)
