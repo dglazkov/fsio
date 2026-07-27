@@ -230,6 +230,16 @@ Spawn params (the `spawn` request's `params`):
   the CLI's `--allow-shell` is the static form (violations get error
   `1001`); embedders install `onSpawnRequest` hooks (denials get `1004`).
 
+Every spawn spec MAY carry two advisory identity fields: `client` (free-form
+tag) and `origin`. A client that is a web page SHOULD report its web origin
+in `origin`; the reference client library stamps `location.origin` itself,
+overriding caller-supplied values, so a page cannot claim a foreign origin
+through the API. Hosts MUST treat both fields as unauthenticated
+diagnostics — display material, never an authorization input: anything that
+can write the shared directory can write any identity it likes
+([D15](DECISIONS.md#d15--origin-is-client-stamped-advisory-and-display-only),
+[#6](https://github.com/dglazkov/fsio/issues/6)).
+
 Kinds beyond these two are host-defined
 ([D13](DECISIONS.md#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry)):
 a host MAY serve additional kinds registered by its embedder, with
@@ -247,8 +257,13 @@ for per-session confirmation and allow-lists now exists — the async
 `onSpawnRequest` policy hook sees the resolved command and can take
 arbitrarily long to answer
 ([D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy))
-— but no shipped policy uses it yet. Still to spec: the allow-list/
-confirmation content itself (#6), `.fsio/` auto-added to `.gitignore`,
+— and sessions now carry an advisory `origin` a policy or host UI can
+display
+([D15](DECISIONS.md#d15--origin-is-client-stamped-advisory-and-display-only);
+the terminal-demo helper does) — but no shipped policy gates on either, and
+`origin` is unauthenticated by design. Still to spec: the allow-list/
+confirmation content itself (#6), authenticating origin claims (#6),
+`.fsio/` auto-added to `.gitignore`,
 scrubbing env in `spawn.json`, and log retention limits (the log contains
 full scrollback).
 

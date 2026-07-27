@@ -397,3 +397,35 @@ needs push — confirmation UIs poll at human timescales; revisit with
 
 **Findings.** None platform-measured. Feeds #16 (confirmation UI reads
 `listSessions`), #3 (reattach needs the same view), #8 (freeze surface).
+
+## D15 — origin is client-stamped, advisory, and display-only
+
+**Decision.** Spawn specs carry an optional `origin` field naming the web
+origin of the page that created the session. The reference client stamps
+`location.origin` in the library, **overriding caller-supplied values** —
+an app cannot claim a foreign origin through the API. Hosts surface it
+(`SpawnRequestInfo` for D12 policies, `SessionInfo` for D14 introspection,
+the spawn-request log line) and MUST treat it as unauthenticated display
+material: the transport is a shared directory, so any writer can forge any
+identity by writing `spawn.json` directly. Authorization stays with the
+spawn policy — and, for the terminal demo, the sandbox
+([#16](https://github.com/dglazkov/fsio/issues/16)); authenticating origin
+claims remains [#6](https://github.com/dglazkov/fsio/issues/6)'s problem.
+
+**Context.** [#16](https://github.com/dglazkov/fsio/issues/16) S3: the
+demo helper narrates *which page* is driving the shell ("● page connected
+— origin: …") — the first, display-only step of #6's "origin
+identification in the protocol". Enforced by a B1 test: the stamp
+overrides a spoofed caller value, and both host surfaces (policy info,
+`listSessions`) see the stamped origin.
+
+**Alternatives rejected.** Reusing the free-form `client` tag (identity
+worth displaying deserves defined semantics; `client` is caller-controlled
+by design). Signed/verified origins (nothing to anchor trust to in a
+filesystem transport; #6 owns whatever answer exists). Requiring an origin
+(Node embedders — bench, the ACP demo
+[#18](https://github.com/dglazkov/fsio/issues/18) — have none; absence is
+information too).
+
+**Findings.** None platform-measured. Feeds #6 (posture), #16 (helper
+display), #18 (Node-side sessions legitimately originless).

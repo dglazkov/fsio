@@ -62,6 +62,8 @@ export interface SessionInfo {
   kind: string | null;
   /** free-form client tag from the spec (diagnostics only). */
   client?: string | undefined;
+  /** web origin reported by the client (D15) — advisory, display-only. */
+  origin?: string | undefined;
   /** adopted → pending (spawn policy, D12) → running → exited | done. */
   phase: SessionPhase;
   /** shell child pid; host pid for in-process kinds. */
@@ -87,6 +89,9 @@ export interface SpawnRequestInfo {
   /** free-form client identification from the spec (diagnostics only —
    *  anything that can write the folder can claim anything; see #6). */
   client?: string | undefined;
+  /** web origin reported by the client (D15) — same caveat: advisory,
+   *  display-only, never an authorization input. */
+  origin?: string | undefined;
   /** shell kinds only: the exact command/args/cwd that would run. */
   cmd?: string;
   args?: string[];
@@ -535,6 +540,7 @@ export class HostServer {
         id: s.id,
         kind: s.spawn ? (s.spawn.kind ?? "echo") : null,
         client: s.spawn?.client,
+        origin: s.spawn?.origin,
         phase,
         bytesOut: s.outTotal,
         bytesAcked: s.ackTotal,
@@ -791,9 +797,12 @@ export class HostServer {
       sessionId: s.id,
       kind,
       client: s.spawn.client,
+      origin: s.spawn.origin,
       ...(kind === "shell" ? this.resolveShell(s.spawn) : {}),
     };
-    this.log.info(`session ${s.id}: spawn request kind=${kind}${info.cmd ? ` cmd=${info.cmd}` : ""}`);
+    this.log.info(
+      `session ${s.id}: spawn request kind=${kind}${info.origin ? ` origin=${info.origin}` : ""}${info.cmd ? ` cmd=${info.cmd}` : ""}`
+    );
     void this.decideAndStart(s, kind, info);
   }
 

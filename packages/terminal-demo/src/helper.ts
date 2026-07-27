@@ -64,7 +64,13 @@ const pty = sandboxedPty(realPty, cfg);
 
 const server = new HostServer({
   root: rootReal,
-  allowShell: true, // the sandbox is the policy (#16 ledger: no y/N prompt)
+  // The sandbox is the gate; the policy only narrates (#16 ledger: no y/N
+  // prompt — it allows everything a default --allow-shell host would).
+  // `origin` is advisory (D15): display is exactly its job.
+  onSpawnRequest: (_spec, info) => {
+    log.info(`● page connected — origin: ${info.origin ?? "(none reported)"} · ${info.kind}${info.cmd ? ` (${info.cmd})` : ""}`);
+    return true;
+  },
   fresh: true, // demo restarts should never inherit stale sessions
   pty,
   logger: log,
