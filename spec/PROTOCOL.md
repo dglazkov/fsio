@@ -131,7 +131,9 @@ Methods (v0, all client → host):
 | `ack` | notification | `{total}` | — |
 
 Application error codes (beyond the JSON-RPC predefined range): `1001`
-shell-not-allowed, `1002` spawn-failed, `1003` unknown-kind.
+shell-not-allowed, `1002` spawn-failed, `1003` unknown-kind, `1004`
+spawn-denied (host policy refused; the message carries the policy's
+reason — [D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)).
 
 **Spawn bootstrap.** The `spawn` request cannot ride the uplink (the host
 only consumes `in/` after adopting the session), so its envelope is the
@@ -140,6 +142,13 @@ transport, the semantics are unchanged. The host answers on the out
 stream: a result when the session is live, or an error object with a code
 (a failed spawn is no longer a `status.json` state the client must poll
 for and interpret).
+
+The host MAY delay the spawn answer arbitrarily (policy confirmation — a
+human prompt, an allow-list service;
+[D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy))
+and MUST NOT consume uplink chunks before answering with a result: a
+pending session gets no service. Clients therefore own their spawn
+timeouts, and anything sent before `ready` queues rather than fails.
 
 **Fast-lane budget.** Envelope overhead is ~30–40 B per message; every v0
 control message fits the 180 B dirname-lane budget with ≥ 70 B to spare
@@ -216,16 +225,23 @@ Spawn params (the `spawn` request's `params`):
   timestamps. The latency workbench.
 - `{"kind": "shell", cols, rows, cmd?, args?, cwd?}` — host spawns a shell
   under a pty (node-pty if installed; pipe fallback otherwise). DATA frames
-  flow both ways; `resize`/`signal`/`close` control it. Gated behind
-  `--allow-shell` (violations get error `1001`).
+  flow both ways; `resize`/`signal`/`close` control it. Gated by the host
+  spawn policy ([D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)):
+  the CLI's `--allow-shell` is the static form (violations get error
+  `1001`); embedders install `onSpawnRequest` hooks (denials get `1004`).
 
 ## Security posture (v0 stance)
 
 Running the host with `--allow-shell` grants any page that can write to the
-shared directory the ability to run processes as the user. Mitigations to
-spec later: explicit allow-list of commands, per-session user confirmation
-on the host side, `.fsio/` auto-added to `.gitignore`, scrubbing env in
-`spawn.json`, and log retention limits (the log contains full scrollback).
+shared directory the ability to run processes as the user. The *mechanism*
+for per-session confirmation and allow-lists now exists — the async
+`onSpawnRequest` policy hook sees the resolved command and can take
+arbitrarily long to answer
+([D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy))
+— but no shipped policy uses it yet. Still to spec: the allow-list/
+confirmation content itself (#6), `.fsio/` auto-added to `.gitignore`,
+scrubbing env in `spawn.json`, and log retention limits (the log contains
+full scrollback).
 
 ## Open questions
 

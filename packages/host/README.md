@@ -11,9 +11,10 @@ subtree, per [spec/PROTOCOL.md](../../spec/PROTOCOL.md). Two ways in: a CLI
 > accurate but nothing is frozen; freezing is
 > [#8](https://github.com/dglazkov/fsio/issues/8)'s job, and the open API
 > questions live on
-> [#17](https://github.com/dglazkov/fsio/issues/17). Expect
-> `onSpawnRequest` (policy hook) and `registerKind` (custom session kinds)
-> to land before any freeze.
+> [#17](https://github.com/dglazkov/fsio/issues/17). `onSpawnRequest`
+> (spawn policy, [D12](../../spec/DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy))
+> is in; expect `registerKind` (custom session kinds) to land before any
+> freeze.
 
 ## CLI
 
@@ -50,7 +51,8 @@ host.close(); // kills session children, releases timers/watchers, retracts host
 | option | default | meaning |
 |---|---|---|
 | `root` | (required) | shared directory; `.fsio/` lives inside |
-| `allowShell` | `false` | permit `shell` sessions |
+| `allowShell` | `false` | permit `shell` sessions (sugar for the static default policy; ignored when `onSpawnRequest` is set) |
+| `onSpawnRequest` | static policy | `(spec, info) => allow/deny`, may be async — see below |
 | `fresh` | `false` | wipe `.fsio` on start |
 | `watch` | `true` | use `fs.watch` wakeups |
 | `hotPollMs` | `5` | fast poll while sessions are live (F2); `0` = off |
@@ -90,3 +92,33 @@ millisecond timescales — see
   swallowed by design — the scan is idempotent and retried). A structured
   error hook is an open question on
   [#17](https://github.com/dglazkov/fsio/issues/17).
+
+### Spawn policy (`onSpawnRequest`, D12)
+
+```ts
+const host = new HostServer({
+  root: dir,
+  onSpawnRequest: async (spec, info) => {
+    // info: {sessionId, kind, client?, cmd?, args?, cwd?, pty?} — cmd is
+    // RESOLVED (a bare shell spec means $SHELL; you judge what would run).
+    if (info.kind !== "shell") return true;
+    if (!(await askTheHuman(info))) return { allow: false, reason: "user declined" };
+    return true;
+  },
+});
+```
+
+- Consulted for **every** spawn request, every kind; replaces the
+  `allowShell` boolean entirely when present.
+- **Async is the confirmation mechanism**: while the promise is pending the
+  session gets no service — the spawn request sits unanswered and uplink
+  chunks queue unconsumed. Clients own their spawn timeouts (the workbench
+  uses 8 s — a human-confirmation flow should keep that in mind, #16).
+- Denials reach the client as JSON-RPC error `1004` with your `reason`;
+  a throwing/rejecting policy **denies** (fail-safe). Unknown kinds are
+  rejected (`1003`) before the policy runs.
+- With a hook present, `host.json` advertises `allowShell: true` — "asking
+  is not pointless" — so clients attempt the spawn and receive the
+  policy's actual verdict.
+- Host restart re-adoption **re-judges** live sessions: a confirmation
+  prompt will re-ask. For a security gate that's the correct default.

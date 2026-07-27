@@ -271,3 +271,45 @@ stay observable via `session.stats` and `uplinkBacklog()` (the labs'
 surface, [#4](https://github.com/dglazkov/fsio/issues/4)). Feeds #8 (this
 is the surface a freeze would freeze) and #16 (the workbench now consumes
 the library it demos).
+
+## D12 — spawn policy is a host-side hook; confirmation is an async policy
+
+**Decision.** Every spawn request — every kind — passes a policy before
+anything starts. `HostServerOptions.onSpawnRequest(spec, info)` receives
+the raw spec plus the *resolved* command (what would actually run: `cmd`
+defaulted to `$SHELL`, cwd resolved, pty availability — one shared
+resolver, so the judged command cannot drift from the executed one) and
+returns allow/deny, optionally with a client-visible reason; hook denials
+travel as JSON-RPC error `1004`. A promise-returning policy *is* the
+confirmation mechanism: the spawn answer waits, and a pending session
+gets no service (no pings answered, no DATA consumed — uplink chunks
+queue until the verdict). Rules: validity precedes policy (unknown kinds
+are `1003`, the hook is never consulted); a throwing policy denies —
+fail-safe, never fail-open; `allowShell` remains as sugar for the static
+default policy (legacy `1001` + message preserved); host.json advertises
+shells as askable whenever a hook is present (clients should try and get
+the policy's real answer, not self-censor). Restart re-adoption re-judges:
+a confirmation hook will re-prompt for sessions that survived a host
+restart — for a security gate, re-asking is the correct default.
+
+**Context.** #17 slice 3, and the mechanism half of
+[#6](https://github.com/dglazkov/fsio/issues/6)'s "command allow-list /
+confirmation" and [#16](https://github.com/dglazkov/fsio/issues/16)'s
+host-side confirmation (settles #17 open API question 7). The wire sees
+only coded errors — policy content stays out of the protocol. Enforced by
+five B1 scenarios in `packages/bench/src/test-client.ts` (real client,
+real host: deny-with-reason reaches `ready`, async confirm delays it,
+hook overrides the boolean, throw = deny, validity ordering).
+
+**Alternatives rejected.** A `pending-approval` state in `status.json`
+(schema growth; the unanswered spawn request already models the wait —
+revisit only if #16's UX needs the wait to be *visible*). AND-ing the hook
+with `allowShell` (two knobs answering one question; the hook is the
+policy when present). Client-side policy (the client is the untrusted
+party by definition). Sync-only hooks (kills confirmation — the entire
+point is that a human can be in the loop). Serving the uplink while
+pending (leaks echo/ping service to sessions that may be about to be
+denied).
+
+**Findings.** None measured; behavioral rules enforced by the B1 tier.
+Feeds #6 (policy content), #16 (confirmation UX), #8 (freeze surface).

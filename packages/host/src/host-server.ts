@@ -45,6 +45,35 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 
 export type HostLogger = (...args: unknown[]) => void;
 
+/** What a spawn policy gets to judge, beyond the raw spec: identity plus
+ *  the *resolved* command — what would actually run, not what was asked
+ *  for (a shell spec with no `cmd` means $SHELL; the hook must see that). */
+export interface SpawnRequestInfo {
+  sessionId: string;
+  /** kind after defaulting ("echo" when the spec names none). */
+  kind: string;
+  /** free-form client identification from the spec (diagnostics only —
+   *  anything that can write the folder can claim anything; see #6). */
+  client?: string | undefined;
+  /** shell kinds only: the exact command/args/cwd that would run. */
+  cmd?: string;
+  args?: string[];
+  cwd?: string;
+  /** whether a real pty would be used (node-pty present and not opted out). */
+  pty?: boolean;
+}
+
+/** `true`/`false` allow/deny; the object form attaches a client-visible
+ *  reason and (rarely) a custom JSON-RPC error code (default 1004). */
+export type SpawnDecision = boolean | { allow: boolean; reason?: string; code?: number };
+
+/** Spawn policy hook (D12): consulted for every spawn request, every kind.
+ *  May return a promise — an async policy IS the confirmation mechanism
+ *  (prompt a human, check an allow-list service…); the client just sees
+ *  `ready` settle later. A throwing/rejecting policy denies (fail-safe).
+ *  Replaces the `allowShell` boolean when provided. */
+export type SpawnPolicy = (spec: Readonly<Record<string, unknown>>, info: SpawnRequestInfo) => SpawnDecision | Promise<SpawnDecision>;
+
 /** Every time-based host behavior, injectable so tests can run them at
  *  short timescales (TESTING.md: "become testable when #17 makes the
  *  intervals injectable"). Defaults are the measured/spec'd values. */
@@ -78,8 +107,12 @@ export interface HostLimits {
 export interface HostServerOptions {
   /** the shared directory (the one the browser picks); `.fsio` lives inside. */
   root: string;
-  /** permit `kind: "shell"` sessions (spawns processes!). Default false. */
+  /** permit `kind: "shell"` sessions (spawns processes!). Default false.
+   *  Sugar for the static default policy; ignored when `onSpawnRequest`
+   *  is provided. */
   allowShell?: boolean;
+  /** spawn policy hook (D12); overrides `allowShell`. */
+  onSpawnRequest?: SpawnPolicy;
   /** wipe .fsio on startup. Default false. */
   fresh?: boolean;
   /** use fs.watch wakeups. Default true. */
@@ -184,6 +217,7 @@ class Session {
   spawnId: RpcId | null = null; // request id to answer (null = legacy bare spec)
   spawnAnswered = false;
   started = false;
+  approved = false; // spawn policy said yes (D12); gates incoming processing
   done = false;
   nextInSeq: number | null = null; // discovered from the smallest chunk present
   // Output stream state: segmented log + cumulative byte accounting.
@@ -349,6 +383,7 @@ export class HostServer {
   readonly fsioDir: string;
   readonly sessionsDir: string;
   readonly allowShell: boolean;
+  private readonly onSpawnRequest: SpawnPolicy | null;
   readonly watchEnabled: boolean;
   readonly hotPollMs: number;
   readonly pollMs: number;
@@ -379,6 +414,7 @@ export class HostServer {
     this.fsioDir = path.join(this.sharedDir, ".fsio");
     this.sessionsDir = path.join(this.fsioDir, "sessions");
     this.allowShell = opts.allowShell ?? false;
+    this.onSpawnRequest = opts.onSpawnRequest ?? null;
     this.fresh = opts.fresh ?? false;
     this.watchEnabled = opts.watch ?? true;
     this.hotPollMs = opts.hotPollMs ?? 5;
@@ -472,7 +508,10 @@ export class HostServer {
     const info: HostInfo = {
       pid: process.pid,
       protocol: PROTOCOL_VERSION,
-      allowShell: this.allowShell,
+      // With a policy hook the static boolean is meaningless; advertise
+      // shells as askable so clients try and get the policy's real answer
+      // (a coded 1004 with a reason) instead of self-censoring.
+      allowShell: this.onSpawnRequest ? true : this.allowShell,
       pty: this.ptyAvailable,
       startedAt: this.startedAt,
       seq: this.hbSeq++,
@@ -527,7 +566,10 @@ export class HostServer {
     for (const s of this.sessions.values()) {
       if (s.done) continue;
       if (!s.started) this.tryStart(s);
-      if (s.started) this.processIncoming(s);
+      // No uplink service before the policy verdict: a pending-confirmation
+      // session must not answer pings or accept DATA (D12). Chunks queue in
+      // in/ and drain on approval.
+      if (s.approved) this.processIncoming(s);
     }
   }
 
@@ -561,40 +603,94 @@ export class HostServer {
     s.started = true;
     s.watchers.push(this.watchDir(s.inDir, () => this.scheduleScan()));
     const kind = s.spawn.kind ?? "echo";
-    this.log(`session ${s.id}: start kind=${kind}`);
-    if (kind === "echo") {
-      s.setStatus({ state: "running", kind, pid: process.pid });
-      s.spawnOk({ kind, pid: process.pid });
-    } else if (kind === "shell") {
-      if (!this.allowShell) {
-        const error = "shell sessions not allowed; start host with --allow-shell";
-        s.setStatus({ state: "error", error });
-        s.spawnFail(RpcErrors.SHELL_NOT_ALLOWED, error);
-        s.done = true;
-        return;
-      }
-      this.startShell(s);
-    } else {
+    // Validity precedes policy: an unknown kind cannot be allowed into
+    // existence, and the hook shouldn't have to know the kind registry.
+    if (kind !== "echo" && kind !== "shell") {
       const error = `unknown kind: ${kind}`;
       s.setStatus({ state: "error", error });
       s.spawnFail(RpcErrors.UNKNOWN_KIND, error);
       s.done = true;
+      return;
     }
+    const info: SpawnRequestInfo = {
+      sessionId: s.id,
+      kind,
+      client: s.spawn.client,
+      ...(kind === "shell" ? this.resolveShell(s.spawn) : {}),
+    };
+    this.log(`session ${s.id}: spawn request kind=${kind}${info.cmd ? ` cmd=${info.cmd}` : ""}`);
+    void this.decideAndStart(s, kind, info);
+  }
+
+  // The default (static) policy — exactly the historical behavior: echo is
+  // free, shell rides the allowShell boolean with the legacy 1001 code.
+  private defaultPolicy(info: SpawnRequestInfo): SpawnDecision {
+    if (info.kind !== "shell" || this.allowShell) return true;
+    return {
+      allow: false,
+      code: RpcErrors.SHELL_NOT_ALLOWED,
+      reason: "shell sessions not allowed; start host with --allow-shell",
+    };
+  }
+
+  // Consult the spawn policy (D12), then dispatch. Async on purpose: a
+  // promise-returning hook is the confirmation mechanism — the session sits
+  // unanswered (spawn request pending, no incoming processed) until the
+  // policy settles. Sessions that closed while deciding are dropped.
+  private async decideAndStart(s: Session, kind: string, info: SpawnRequestInfo): Promise<void> {
+    let decision: SpawnDecision;
+    try {
+      decision = this.onSpawnRequest ? await this.onSpawnRequest(s.spawn as Readonly<Record<string, unknown>>, info) : this.defaultPolicy(info);
+    } catch (e) {
+      // Fail safe: a broken policy must never fail open.
+      this.log(`session ${s.id}: spawn policy threw (${errMsg(e)}) — denying`);
+      decision = { allow: false, reason: "spawn policy failed" };
+    }
+    if (!this.running || s.done) return; // host or session closed while deciding
+    const d = typeof decision === "boolean" ? { allow: decision } : decision;
+    if (!d.allow) {
+      const error = d.reason ?? "spawn denied by host policy";
+      this.log(`session ${s.id}: denied (${error})`);
+      s.setStatus({ state: "error", error });
+      s.spawnFail(d.code ?? RpcErrors.SPAWN_DENIED, error);
+      s.done = true;
+      return;
+    }
+    s.approved = true;
+    this.log(`session ${s.id}: start kind=${kind}`);
+    if (kind === "echo") {
+      s.setStatus({ state: "running", kind, pid: process.pid });
+      s.spawnOk({ kind, pid: process.pid });
+    } else {
+      this.startShell(s);
+    }
+    this.scheduleScan(); // drain anything queued while the decision was pending
+  }
+
+  /** The exact thing a shell spec would run — shared by the policy hook's
+   *  info and startShell so the judged command can't drift from the
+   *  executed one (#6: "display the exact spawn.json before honoring it"). */
+  private resolveShell(spec: SpawnParams): { cmd: string; args: string[]; cwd: string; pty: boolean } {
+    return {
+      cmd: spec.cmd || process.env.SHELL || "/bin/bash",
+      args: spec.args ?? [],
+      cwd: spec.cwd ? path.resolve(this.sharedDir, spec.cwd) : this.sharedDir,
+      pty: !!this.ptyMod && spec.pty !== false,
+    };
   }
 
   private startShell(s: Session): void {
     const spec = s.spawn!;
-    const cmd = spec.cmd || process.env.SHELL || "/bin/bash";
-    const cmdArgs = spec.args ?? [];
+    const { cmd, args: cmdArgs, cwd, pty: usePty } = this.resolveShell(spec);
     const cols = spec.cols ?? 80;
     const rows = spec.rows ?? 24;
-    const cwd = spec.cwd ? path.resolve(this.sharedDir, spec.cwd) : this.sharedDir;
 
     // A spawn failure must never be silent: the client is awaiting the spawn
     // response and will otherwise stare at an empty terminal forever.
-    if (this.ptyMod && spec.pty !== false) {
+    if (usePty) {
       try {
-        const p = this.ptyMod.spawn(cmd, cmdArgs, {
+        // usePty (from resolveShell) is only true when ptyMod loaded
+        const p = this.ptyMod!.spawn(cmd, cmdArgs, {
           name: "xterm-256color",
           cols,
           rows,

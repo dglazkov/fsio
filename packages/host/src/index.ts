@@ -5,4 +5,7 @@ export {
   type HostTimings,
   type HostLimits,
   type HostLogger,
+  type SpawnPolicy,
+  type SpawnDecision,
+  type SpawnRequestInfo,
 } from "./host-server.js";

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HostServer, type HostServerOptions } from "@fsio/host";
+import { HostServer, type HostServerOptions, type SpawnRequestInfo } from "@fsio/host";
 import { RpcErrors } from "@fsio/common";
 import { FsioClient, RpcError, now, type PingResult } from "@fsio/client";
 import { ShimDirectory } from "./fs-shim.js";
@@ -165,6 +165,131 @@ test("unsubscribe stops delivery; close() lets the host remove the session dir",
     // Cleanup is HOST-owned (D6): the dir disappears without client deletes.
     await waitFor(() => !fs.existsSync(dir), "host to remove the closed session dir");
   });
+});
+
+// ------------------------------------------- spawn policy hook (D12, #6)
+
+test("onSpawnRequest sees the resolved command and denies with a coded reason", async () => {
+  const seen: SpawnRequestInfo[] = [];
+  await withHost(
+    {
+      allowShell: true, // the hook must override the boolean, not AND with it
+      onSpawnRequest: (_spec, info) => {
+        seen.push(info);
+        return { allow: false, reason: "cmd not on the allow-list" };
+      },
+    },
+    async (client) => {
+      const s = client.createSession({ kind: "shell", cmd: "/bin/cat", client: "b1-policy", pty: false }, { pollMs: 5 });
+      try {
+        await assert.rejects(s.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError);
+          assert.equal(e.code, RpcErrors.SPAWN_DENIED);
+          assert.match(e.message, /allow-list/); // the policy's reason reaches the client
+          return true;
+        });
+        // The hook judged the RESOLVED command (D12): what would run, not
+        // just what was asked for.
+        assert.equal(seen.length, 1);
+        assert.equal(seen[0]!.kind, "shell");
+        assert.equal(seen[0]!.cmd, "/bin/cat");
+        assert.equal(seen[0]!.sessionId, s.id);
+        assert.equal(seen[0]!.client, "b1-policy");
+      } finally {
+        await s.close();
+      }
+    }
+  );
+});
+
+test("async policy is the confirmation mechanism: no service before the verdict", async () => {
+  let allowedAt = 0;
+  await withHost(
+    {
+      onSpawnRequest: async () => {
+        await sleep(150);
+        allowedAt = Date.now();
+        return true;
+      },
+    },
+    async (client) => {
+      const t0 = Date.now();
+      const s = client.createSession({ kind: "echo", client: "b1-confirm" }, { pollMs: 5 });
+      try {
+        // Fire a ping while the decision is pending: chunks must queue, not
+        // be served (D12 — a pending-confirmation session answers nothing).
+        const early = s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 10000 });
+        await s.ready;
+        assert.ok(Date.now() - t0 >= 140, `ready resolved before the policy did (${Date.now() - t0}ms)`);
+        const { rx } = await early;
+        assert.ok(rx >= allowedAt - 5, "ping was answered before the spawn was approved");
+      } finally {
+        await s.close();
+      }
+    }
+  );
+});
+
+test("policy allow overrides allowShell:false; the shell really runs", async () => {
+  await withHost({ allowShell: false, onSpawnRequest: () => true }, async (client) => {
+    const s = client.createSession({ kind: "shell", cmd: "/bin/cat", pty: false }, { pollMs: 5 });
+    const chunks: Buffer[] = [];
+    s.on("data", (b) => chunks.push(Buffer.from(b)));
+    try {
+      await s.ready;
+      s.sendData("policy says yes\n");
+      await waitFor(() => Buffer.concat(chunks).toString().includes("policy says yes"), "shell to echo under hook-granted spawn");
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+test("a throwing policy denies — fail-safe, never fail-open", async () => {
+  await withHost(
+    {
+      onSpawnRequest: () => {
+        throw new Error("policy service unreachable");
+      },
+    },
+    async (client) => {
+      const s = client.createSession({ kind: "echo" }, { pollMs: 5 });
+      try {
+        await assert.rejects(s.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError);
+          assert.equal(e.code, RpcErrors.SPAWN_DENIED);
+          return true;
+        });
+      } finally {
+        await s.close();
+      }
+    }
+  );
+});
+
+test("validity precedes policy: unknown kind is 1003 and the hook is never consulted", async () => {
+  let consulted = 0;
+  await withHost(
+    {
+      onSpawnRequest: () => {
+        consulted++;
+        return true;
+      },
+    },
+    async (client) => {
+      const s = client.createSession({ kind: "quantum" } as never, { pollMs: 5 });
+      try {
+        await assert.rejects(s.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError);
+          assert.equal(e.code, RpcErrors.UNKNOWN_KIND);
+          return true;
+        });
+        assert.equal(consulted, 0, "an unknown kind must not reach the policy");
+      } finally {
+        await s.close();
+      }
+    }
+  );
 });
 
 // ------------------------------------- listener exception isolation (D11)
