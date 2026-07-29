@@ -115,6 +115,45 @@ test("ready rejects with a coded RpcError when the host refuses the spawn", asyn
   });
 });
 
+// ------------------------------------------------ heartbeats (D17, #3)
+
+test("client heartbeats flow at heartbeatMs and the host consumes them", async () => {
+  // D17: the presence beacon is a real uplink notification — if the frame
+  // were malformed the host's in-order consumption would stall and the
+  // backlog below would never drain.
+  await withHost({}, async (client) => {
+    const s = client.createSession({ kind: "echo" }, { pollMs: 5, heartbeatMs: 25 });
+    try {
+      await s.ready;
+      const base = s.stats.chunksWritten;
+      await waitFor(() => s.stats.chunksWritten >= base + 3, "several heartbeats committed");
+      const t0 = Date.now();
+      while ((await s.uplinkBacklog()) > 0) {
+        if (Date.now() - t0 > 5000) throw new Error("host did not consume the heartbeat chunks");
+        await sleep(10);
+      }
+      assert.ok(s.stats.dirChunks >= 3, "heartbeats must ride the dirname fast lane");
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+test("heartbeatMs: 0 disables the beacon", async () => {
+  await withHost({}, async (client) => {
+    const s = client.createSession({ kind: "echo" }, { pollMs: 5, heartbeatMs: 0 });
+    try {
+      await s.ready;
+      await sleep(300); // let the spawn-response ack settle — it is uplink traffic too
+      const base = s.stats.chunksWritten;
+      await sleep(150);
+      assert.equal(s.stats.chunksWritten, base, "no uplink traffic expected with the beacon off");
+    } finally {
+      await s.close();
+    }
+  });
+});
+
 // ------------------------------------------------ uplink lanes (F10, #4)
 
 test("auto uplink: small batches ride the dirname lane, big ones fall back to files", async () => {

@@ -75,6 +75,11 @@ export interface SessionInfo {
   bytesAcked: number;
   /** ms epoch of last uplink activity. */
   lastActivityAt: number;
+  /** D17: heartbeat-aware client silent past detachAfterMs — session alive,
+   *  awaiting the client's return (or reattach, #3 phase 2). */
+  detached: boolean;
+  /** ms epoch of the last consumed uplink chunk (presence, D17). */
+  lastClientSeenAt: number;
 }
 
 export type SessionPhase = "adopted" | "pending" | "running" | "exited" | "done";
@@ -161,6 +166,10 @@ export interface HostTimings {
   idleGcMs?: number;
   /** how often the idle sweep runs. */
   idleSweepMs?: number;
+  /** heartbeat-aware sessions whose client has been silent this long are
+   *  detached (echo: reaped) — D17. Must exceed the browser's 1/min
+   *  background timer clamp with margin (F16). */
+  detachAfterMs?: number;
   /** stale exited sessions older than this are GC'd on adoption (spec: Session lifecycle). */
   staleGraceMs?: number;
   /** delay before deleting a closed session dir (lets the client stop watchers). */
@@ -211,6 +220,7 @@ const DEFAULT_TIMINGS: Required<HostTimings> = {
   safetyPollMs: 250,
   idleGcMs: 5 * 60_000,
   idleSweepMs: 30_000,
+  detachAfterMs: 180_000,
   staleGraceMs: 60_000,
   closeDelayMs: 500,
   retryMs: 5,
@@ -324,6 +334,13 @@ class Session {
   watchers: (fs.FSWatcher | null)[] = [];
   retryTimer: ReturnType<typeof setTimeout> | null = null;
   lastActivity = Date.now();
+  // Client-presence accounting (D17): any consumed uplink chunk counts as
+  // "seen"; only clients that ever sent a heartbeat are judged by it —
+  // legacy clients keep the pre-heartbeat behavior (blunt idle GC only).
+  lastClientSeen = Date.now();
+  heartbeatAware = false;
+  detached = false;
+  private statusBase: Omit<SessionStatus, "t" | "detached"> | null = null;
 
   constructor(
     private host: HostServer,
@@ -420,7 +437,19 @@ class Session {
   }
 
   setStatus(obj: Omit<SessionStatus, "t">): void {
+    // Remember the base record so the detached marker (D17) can be layered
+    // on and off without re-deriving state/pid/cmd at toggle time.
+    const { detached: _, ...base } = obj;
+    this.statusBase = base;
     writeJsonAtomic(path.join(this.dir, "status.json"), { t: now(), ...obj });
+  }
+
+  /** Toggle the D17 detached marker in status.json (no-op until the first
+   *  setStatus, and when already in the requested state). */
+  setDetached(detached: boolean): void {
+    if (this.detached === detached || !this.statusBase) return;
+    this.detached = detached;
+    this.setStatus(detached ? { ...this.statusBase, detached: true } : this.statusBase);
   }
 
   // Answer the spawn request (once) on the out stream. Errors get real
@@ -550,6 +579,8 @@ export class HostServer {
         bytesOut: s.outTotal,
         bytesAcked: s.ackTotal,
         lastActivityAt: s.lastActivity,
+        detached: s.detached,
+        lastClientSeenAt: s.lastClientSeen,
       };
       if (phase === "running") {
         info.pid = s.proc ? ((s.proc as { pid?: number }).pid ?? process.pid) : process.pid;
@@ -712,6 +743,24 @@ export class HostServer {
         this.log.info(`session ${s.id}: idle for ${Math.round(this.timings.idleGcMs / 1000)}s, reaping`);
         s.close();
         this.removeSessionDir(s, "idle");
+        continue;
+      }
+      // Vanished-client policy (D17): judged only for heartbeat-aware
+      // clients, and only once approved (a pending policy decision gets no
+      // uplink service, so silence there means nothing). Echo sessions are
+      // stateless workbench artifacts — reap precisely. Anything stateful
+      // (shell, registered kinds) is marked detached, never killed: a
+      // backgrounded tab's beats clamp to 1/min (F16), a frozen tab to
+      // zero, and both users will return.
+      if (s.approved && !s.done && !s.exited && s.heartbeatAware && Date.now() - s.lastClientSeen > this.timings.detachAfterMs) {
+        if (s.spawn?.kind === "echo") {
+          this.log.info(`session ${s.id}: client vanished (no heartbeat for ${Math.round(this.timings.detachAfterMs / 1000)}s), reaping`);
+          s.close();
+          this.removeSessionDir(s, "client vanished");
+        } else if (!s.detached) {
+          this.log.info(`session ${s.id}: client vanished (no heartbeat for ${Math.round(this.timings.detachAfterMs / 1000)}s), marking detached`);
+          s.setDetached(true);
+        }
       }
     }
     this.sweepClientDirs();
@@ -1075,6 +1124,8 @@ export class HostServer {
         return;
       }
       s.lastActivity = Date.now();
+      s.lastClientSeen = Date.now();
+      s.setDetached(false); // any uplink traffic means the client is back (D17)
       for (const f of frames) this.handleFrame(s, f, t1);
       if (chunk.data !== undefined) fs.rmdirSync(p); // consumption ack
       else fs.unlinkSync(p);
@@ -1123,10 +1174,11 @@ export class HostServer {
     if (method === undefined) return; // a response; host has no pending requests
     const isRequest = id !== undefined;
     // Registered kinds get first crack at non-reserved methods (D13):
-    // `ack`/`close` are host integrity and never dispatched; anything the
-    // kind doesn't define falls through to the builtins (`ping` works on
-    // every kind — it's the transport diagnostic), then -32601.
-    if (s.kindSession?.methods && method !== "ack" && method !== "close") {
+    // `ack`/`close`/`heartbeat` are host integrity and never dispatched;
+    // anything the kind doesn't define falls through to the builtins
+    // (`ping` works on every kind — it's the transport diagnostic), then
+    // -32601.
+    if (s.kindSession?.methods && method !== "ack" && method !== "close" && method !== "heartbeat") {
       const fn = s.kindSession.methods[method];
       if (fn) {
         Promise.resolve()
@@ -1157,6 +1209,13 @@ export class HostServer {
       }
       case "ack":
         s.ack((params as AckParams).total);
+        break;
+      case "heartbeat":
+        // Presence beacon (D17). The chunk's arrival already refreshed
+        // lastClientSeen; the method's own meaning is "this client speaks
+        // heartbeats" — which opts the session into vanished-client
+        // policy. Legacy clients never send it and are never judged.
+        s.heartbeatAware = true;
         break;
       case "signal": {
         const { sig } = params as SignalParams;

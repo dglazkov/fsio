@@ -29,6 +29,7 @@ import {
   RpcError,
   RpcErrors,
   rpcRequest,
+  rpcNotification,
   SPAWN_REQUEST_ID,
   type Frame,
   type HostInfo,
@@ -86,6 +87,12 @@ export interface SessionOptions {
   uplink?: UplinkMode;
   /** 0 disables the safety poll (measurement labs) */
   safetyMs?: number;
+  /** Presence-beacon cadence (D17): a `heartbeat` notification every this
+   *  many ms lets the host distinguish "client thinking" from "client
+   *  gone" (detach marking / precise GC). Default 20s — background tabs
+   *  clamp timers to 1/min (F16), and the host's detach window (3 min
+   *  default) tolerates that. 0 disables (labs, legacy behavior). */
+  heartbeatMs?: number;
 }
 
 export interface SessionEventMap {
@@ -147,6 +154,7 @@ export class FsioSession {
   readonly pollMs: number;
   readonly uplink: UplinkMode;
   readonly safetyMs: number;
+  readonly heartbeatMs: number;
   /** Resolves with the spawn result; rejects with RpcError on spawn failure
    *  (and with the underlying error on init failure). */
   readonly ready: Promise<SpawnResult>;
@@ -209,11 +217,12 @@ export class FsioSession {
   #pollTimer: ReturnType<typeof setInterval> | undefined;
   #hotTimer: ReturnType<typeof setInterval> | null = null;
   #safetyTimer: ReturnType<typeof setInterval> | undefined;
+  #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   #lastActivity = 0;
   #wakeFn!: () => void;
 
   constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec, opts: SessionOptions = {}) {
-    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500 } = opts;
+    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500, heartbeatMs = 20_000 } = opts;
     // D15: a web-page client reports its origin — stamped HERE, overriding
     // caller-supplied values, so a page cannot claim a foreign origin
     // through this API. (It can still write spawn.json by hand: the field
@@ -224,6 +233,7 @@ export class FsioSession {
     this.id = id;
     this.pollMs = pollMs;
     this.safetyMs = safetyMs;
+    this.heartbeatMs = heartbeatMs;
     // uplink "auto": small frame batches ride the dirname fast lane (≤80ms
     // → ~3ms measured, spec/FINDINGS.md F10 — directory creation skips
     // Chrome's after-write scan); big batches fall back to file chunks.
@@ -302,9 +312,13 @@ export class FsioSession {
   /** Enqueue a frame; frames queued while a commit is in flight are batched
    *  into a single chunk file. Commits are strictly serialized. */
   send(type: number, payload: Uint8Array): void {
+    this.#enqueue(type, payload);
+    this.#markActive(); // user input → replies are coming; be ready for them
+  }
+
+  #enqueue(type: number, payload: Uint8Array): void {
     if (this.#pumpError) throw this.#pumpError;
     this.#queue.push(encodeFrame(type, payload));
-    this.#markActive(); // user input → replies are coming; be ready for them
     void this.#pump();
   }
 
@@ -415,6 +429,18 @@ export class FsioSession {
     }
     if (this.#mode === "adaptive") this.#markActive(); // session start counts as activity
     if (this.safetyMs > 0) this.#safetyTimer = setInterval(wake, this.safetyMs);
+    // Presence beacon (D17): a quiet uplink notification — #enqueue, not
+    // send(), because a heartbeat must NOT re-arm the adaptive hot poll
+    // (2 s of hot polling per beat would gut the idle economics, F18).
+    // ~44 B framed → always the dirname fast lane. In a hidden tab this
+    // interval clamps to 1/min (F16); the host's detach window absorbs it.
+    if (this.heartbeatMs > 0) {
+      this.#heartbeatTimer = setInterval(() => {
+        try {
+          this.#enqueue(FrameType.RPC, new TextEncoder().encode(JSON.stringify(rpcNotification("heartbeat"))));
+        } catch {} // a dead pump already surfaced via "error"
+      }, this.heartbeatMs);
+    }
   }
 
   // Adaptive mode: hot poll exists only while traffic is flowing. The
@@ -578,6 +604,7 @@ export class FsioSession {
   // files; cleanup has one owner, and it's the side with POSIX semantics.)
   async close(): Promise<void> {
     if (this.#closed) return;
+    clearInterval(this.#heartbeatTimer); // no beats into a closing session
     try {
       this.notify("close");
     } catch {}

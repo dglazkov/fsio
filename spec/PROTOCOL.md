@@ -5,9 +5,9 @@ Platform File System API. Changes to this document track protocol versions.
 
 Companions (non-normative):
 
-- [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F12) behind
+- [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F18) behind
   the rules here. Rules that exist because of a finding cite it.
-- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D10): why the protocol
+- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D17): why the protocol
   is shaped this way, with alternatives rejected.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in
@@ -133,6 +133,7 @@ Methods (v0, all client → host):
 | `eof` | notification | `{}` | — |
 | `close` | notification | `{}` | — |
 | `ack` | notification | `{total}` | — |
+| `heartbeat` | notification | `{}` | — |
 
 Application error codes (beyond the JSON-RPC predefined range): `1001`
 shell-not-allowed, `1002` spawn-failed, `1003` unknown-kind, `1004`
@@ -231,6 +232,21 @@ Only filler-padded pings and DATA batches spill to the file lane.
   F8). The host deletes the session dir ~500 ms after close, and GCs stale
   exited sessions (>60 s) on adoption.
 - Liveness = `host.json` mtime younger than 6 s (3 missed heartbeats).
+- **Client presence and detach**
+  ([D17](DECISIONS.md#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill); F16):
+  a client SHOULD send the `heartbeat` notification periodically (reference
+  cadence 20 s; it fits the dirname fast lane). Sending one opts the
+  session into vanished-client policy; a client that never does is judged
+  only by the legacy idle rules. The host counts any consumed uplink chunk
+  as presence. When a heartbeat-aware client is silent past the detach
+  window — which MUST exceed 3 minutes' worth of the browser's 1/min
+  background timer clamp (F16: a hidden tab beats at 1/min after 5 min,
+  through no fault of its own) — the host marks a stateful session
+  `detached: true` in `status.json` (state unchanged) and MAY reap
+  stateless sessions (echo). The host MUST NOT kill a session's process
+  for heartbeat silence alone. Any subsequently consumed uplink chunk
+  clears the marker. Reattach — a *new* client adopting a detached
+  session — is future work ([#3](https://github.com/dglazkov/fsio/issues/3)).
 
 ## Session kinds (v0)
 
@@ -327,7 +343,10 @@ renumbered.
    → [#4](https://github.com/dglazkov/fsio/issues/4) (lane durability),
    [#10](https://github.com/dglazkov/fsio/issues/10) (local echo)
 9. **Cleanup ownership.** ~~Who deletes finished session dirs?~~ Resolved
-   by F8/D6: the host, on CTL `close` and via stale-session GC. Remaining:
-   GC for sessions whose client vanished without sending `close` (needs
-   client heartbeats).
+   by F8/D6: the host, on CTL `close` and via stale-session GC.
+   ~~Remaining: GC for sessions whose client vanished without sending
+   `close`~~ — resolved by
+   [D17](DECISIONS.md#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill)
+   (client heartbeats; vanished stateless sessions reaped, stateful ones
+   marked detached). Remaining: reattach to a detached session (question 6).
    → [#3](https://github.com/dglazkov/fsio/issues/3)

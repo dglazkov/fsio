@@ -45,6 +45,10 @@ export interface SessionStatus {
   exitCode?: number | null;
   error?: string;
   closedByClient?: boolean;
+  /** running session whose client stopped heartbeating (D17): the session
+   *  is alive but unattended — a reattach candidate, not a corpse. Cleared
+   *  when uplink activity resumes. */
+  detached?: boolean;
 }
 
 // ---- spawn (the request carried by spawn.json; see spec "Control plane")
