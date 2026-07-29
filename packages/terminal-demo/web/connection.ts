@@ -4,7 +4,7 @@
 import { FsioClient, type SessionSummary } from "@fsio/client";
 import { reporter, log, step } from "./reporter";
 import { gate, phase, wizardStep, folder, reconnectTo, helper, pickError, resumable, tabs } from "./state";
-import { openTab, focusActive } from "./tabs";
+import { openTab, focusActive, setActiveTab, urlSessions } from "./tabs";
 
 let client: FsioClient | null = null;
 export const getClient = (): FsioClient | null => client;
@@ -212,6 +212,25 @@ export async function arrive(): Promise<void> {
   const rows = await listResumable();
   reporter.event("sessions-listed", { resumable: rows.length, detached: rows.filter((r) => r.status?.detached).length });
   resumable.set(rows);
+  // URL-restore (#34): the hash names the shells this page had open —
+  // reattach them and skip the picker (the URL already answered it). Gone
+  // ids (exited, GC'd) drop out; none surviving falls through to the
+  // normal arrival. A URL pasted into a second window lands here too:
+  // that's a deliberate carry-the-shells-over, takeover semantics and all.
+  const { ids, active } = urlSessions();
+  if (ids.length > 0) {
+    const running = new Set(rows.map((r) => r.id));
+    const found = ids.filter((id) => running.has(id));
+    reporter.event("url-restore", { wanted: ids.length, found: found.length });
+    if (found.length > 0) {
+      step(`restoring ${found.length} shell${found.length > 1 ? "s" : ""} from the URL`);
+      phase.set("shell");
+      for (const id of found) openTab(id);
+      const act = tabs.get().find((t) => t.sessionId === active);
+      if (act) setActiveTab(act.tabId);
+      return;
+    }
+  }
   if (rows.length === 0) {
     phase.set("shell");
     openTab();

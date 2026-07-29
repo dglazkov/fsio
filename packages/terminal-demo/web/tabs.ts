@@ -22,6 +22,26 @@ reporter.tabSummary = () =>
 
 const pane = (): HTMLElement => document.querySelector("fsio-terminal-pane")!;
 
+// ------------------------------------------------- URL as session state (#34)
+// The hash names the open shells — #s=<id>,<id>&a=<activeId> — so a reload
+// restores the same tabs without the picker, and copying the URL to another
+// window deliberately carries the shells there (attach = takeover, D18; the
+// banner and the shared friendly names make it legible). replaceState only:
+// tab churn must not pollute history. Ids are [a-z0-9-], so the hash is
+// hand-built rather than URLSearchParams-encoded (%2C soup).
+
+export function urlSessions(): { ids: string[]; active: string | null } {
+  const p = new URLSearchParams(location.hash.slice(1));
+  return { ids: (p.get("s") ?? "").split(",").filter(Boolean), active: p.get("a") };
+}
+
+function syncUrl(): void {
+  const ids = tabs.get().map((t) => t.sessionId).filter((id): id is string => id !== null);
+  if (ids.length === 0) return void history.replaceState(null, "", location.pathname + location.search);
+  const act = tabs.get().find((t) => t.tabId === activeTabId.get())?.sessionId;
+  history.replaceState(null, "", `#s=${ids.join(",")}${act ? `&a=${act}` : ""}`);
+}
+
 /** Open a new tab: fresh shell, or resume an existing session (#58/D18).
  *  A session already held by a tab just gets focused — resuming into two
  *  tabs of one page would fence our own writer. */
@@ -85,6 +105,7 @@ export function setActiveTab(tabId: number): void {
     t.fit.fit();
     t.term.focus();
   });
+  syncUrl();
 }
 
 async function startSession(tab: TabRecord, resumeId?: string): Promise<void> {
@@ -100,6 +121,7 @@ async function startSession(tab: TabRecord, resumeId?: string): Promise<void> {
   tab.session = s;
   tab.sessionId = s.id;
   tab.title.set(friendlyName(s.id));
+  syncUrl();
   // Supersede detection must wait for `ready`: while our own attach is in
   // flight, status.json already shows OUR grant's epoch, but s.epoch is
   // still 0 — checking early misreads the grant as a takeover (caught by
@@ -224,6 +246,7 @@ function removeTab(tab: TabRecord): void {
     if (next) setActiveTab(next.tabId);
     else activeTabId.set(null);
   }
+  syncUrl();
 }
 
 /** Focus the active terminal — a modal wizard/picker swallows focus while
