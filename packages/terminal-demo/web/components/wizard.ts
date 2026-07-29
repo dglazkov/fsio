@@ -8,6 +8,7 @@ import { SignalWatcher } from "@lit-labs/signals";
 import { gate, phase, wizardStep, folder, helper, pickError, reconnectTo, resumable, tabs } from "../state";
 import { pickFolder, regrant, dismissPicker, onMac } from "../connection";
 import { openTab } from "../tabs";
+import { friendlyName } from "../names";
 
 const CMD = "npx github:dglazkov/fsio#terminal-demo";
 
@@ -55,7 +56,7 @@ class FsioWizard extends SignalWatcher(LitElement) {
       border-radius: 6px; padding: 0.5rem 0.8rem; margin: 0.4rem 0;
     }
     .sess-info { flex: 1; min-width: 0; }
-    .sess-info code { font-size: 0.85rem; }
+    .sess-info .name { font-weight: 600; color: #eceff4; }
     .sess-info .hint { color: #9aa5b8; font-size: 0.82rem; display: block; margin-top: 0.1rem; }
     .gate strong { color: #ef8a95; }
     .gate .hint { color: #d8b9bc; font-size: 0.9rem; margin-top: 0.4rem; }
@@ -195,7 +196,7 @@ class FsioWizard extends SignalWatcher(LitElement) {
         : rows.map(
             (r) => html`<div class="sess">
               <div class="sess-info">
-                <code>${r.id}</code>
+                <span class="name" title=${r.id}>${friendlyName(r.id)}</span>
                 <span class="hint">
                   ${r.status?.detached
                     ? "detached — no tab is holding it, safe to resume"

@@ -39,7 +39,9 @@ class FsioStatusBar extends SignalWatcher(LitElement) {
       position: absolute; inset: auto 0.5rem 2.4rem auto; margin: 0;
       font-size: 0.85rem; line-height: 1.5;
     }
+    #info-pop h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #eceff4; }
     #info-pop p { color: #9aa5b8; margin: 0 0 0.7rem; }
+    #info-pop em { color: #d8dee9; font-style: normal; font-weight: 600; }
     #info-pop a { color: #81a1c1; }
     pre {
       background: #14161a; border-radius: 6px; padding: 0.8rem; margin: 0.4rem 0 0;
@@ -67,17 +69,30 @@ class FsioStatusBar extends SignalWatcher(LitElement) {
       ${t && t.state.get() === "running"
         ? html`<button class="small" title="keep the shell running; the tab lets go" @click=${() => void detachTab(t)}>detach</button>`
         : nothing}
-      <button class="info" popovertarget="info-pop" title="about / nerd log">ⓘ</button>
+      <button class="info" popovertarget="info-pop" title="what is this?">ⓘ</button>
       <div id="info-pop" popover>
+        <h3>what am I looking at?</h3>
         <p>
-          every keystroke you type is a file write; every character back is a
-          file read. no server, no socket. your shell may grumble once about
-          locking its history file — that's the sandbox declining to let it
-          write outside this folder.
+          A real shell on your machine — but this page has no server behind
+          it. No websocket, no cloud, not even a localhost port. The only
+          connection between this tab and the shell is <em>the folder you
+          picked</em>: every keystroke is written to a file, a tiny helper
+          reads it and feeds the shell, the shell's output is written to
+          another file, and the page reads it back. The filesystem is the
+          entire transport — fast enough that you didn't notice.
         </p>
         <p>
-          shells live in the helper, not the tab: detach keeps one running for
-          next visit; close ends it.
+          Because the sessions themselves live in files, shells outlive the
+          page: detach one and it keeps running with no tab attached; come
+          back later and resume it, scrollback and all. Another window can
+          even take a running shell over while you watch.
+        </p>
+        <p>
+          And the folder is the whole deal in the other direction too: the
+          shell is sandboxed to it. It can read the world, but writes
+          anywhere else are denied — the policy is a plain text file at
+          <code>.fsio/sandbox.sb</code>. (If your shell grumbled once about
+          its history file, that was the sandbox saying no.)
         </p>
         <details>
           <summary>nerd log</summary>

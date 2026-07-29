@@ -8,6 +8,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { tabs, activeTabId, type TabRecord, type TabPhase } from "./state";
 import { reporter, log, step, showNotice } from "./reporter";
 import { getClient, arrive, refreshResumable } from "./connection";
+import { friendlyName } from "./names";
 
 let nextTabId = 1;
 
@@ -98,6 +99,7 @@ async function startSession(tab: TabRecord, resumeId?: string): Promise<void> {
     : client.createSession({ kind: "shell", cols: tab.term.cols, rows: tab.term.rows, client: "terminal-demo" });
   tab.session = s;
   tab.sessionId = s.id;
+  tab.title.set(friendlyName(s.id));
   // Supersede detection must wait for `ready`: while our own attach is in
   // flight, status.json already shows OUR grant's epoch, but s.epoch is
   // still 0 — checking early misreads the grant as a takeover (caught by

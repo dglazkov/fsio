@@ -6,6 +6,7 @@ import { SignalWatcher } from "@lit-labs/signals";
 import { phase, tabs, activeTabId, resumable } from "../state";
 import { refreshResumable } from "../connection";
 import { openTab, setActiveTab, closeTab } from "../tabs";
+import { friendlyName } from "../names";
 import type { TabRecord } from "../state";
 
 class FsioTopBar extends SignalWatcher(LitElement) {
@@ -60,7 +61,7 @@ class FsioTopBar extends SignalWatcher(LitElement) {
     }
     #plus-menu button:hover { background: #2e3440; }
     #plus-menu button .hint { color: #9aa5b8; font-size: 0.78rem; display: block; }
-    #plus-menu code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+    #plus-menu .name { font-weight: 600; color: #eceff4; }
     .menu-sep { color: #5c6675; font-size: 0.75rem; padding: 0.4rem 0.6rem 0.1rem; }
   `;
 
@@ -103,8 +104,8 @@ class FsioTopBar extends SignalWatcher(LitElement) {
     if (rows.length === 0) return nothing;
     return html`<div class="menu-sep">resume a running shell</div>
       ${rows.map(
-        (r) => html`<button @click=${() => this.#pick(() => openTab(r.id))}>
-          <code>${r.id}</code>
+        (r) => html`<button title=${r.id} @click=${() => this.#pick(() => openTab(r.id))}>
+          <span class="name">${friendlyName(r.id)}</span>
           <span class="hint">
             ${r.status?.detached ? "detached — safe to resume" : `held by ${r.client ?? "another client"} — resuming takes it over`}
           </span>
