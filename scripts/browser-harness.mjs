@@ -86,11 +86,30 @@ if (!SKIP_BUILD) {
   if (r.status !== 0) process.exit(2);
 }
 
-// Shared dir under $HOME, never /tmp (F9).
+// Shared dir under $HOME, never /tmp (F9). The Chrome profile lives
+// *beside* the shared dir, not inside it — the dropped handle covers the
+// whole shared dir and profile churn is not part of the experiment.
 const runsDir = path.join(os.homedir(), ".fsio-harness");
 fs.mkdirSync(runsDir, { recursive: true });
-const dir = fs.mkdtempSync(path.join(runsDir, "run-"));
+const run = fs.mkdtempSync(path.join(runsDir, "run-"));
+const dir = path.join(run, "shared");
+const profile = path.join(run, "profile");
+fs.mkdirSync(dir, { recursive: true });
 log(`shared dir: ${dir}`);
+
+// Chrome for Testing ships without Google API keys: its Safe Browsing
+// after-write scan is NOT stable Chrome's ~68 ms delay (F7) — the first
+// harness run saw it hard-abort a commit mid-bench ("AbortError: Aborted
+// due to security policy", #37). Pin the exact configuration F7's A/B
+// already measured (chrome://settings/security → No protection): the
+// harness is a regression detector for OUR stack, not a platform
+// measurement — F7-class platform truth stays with the cooperative loop
+// on stable Chrome and the drift job (#22).
+fs.mkdirSync(path.join(profile, "Default"), { recursive: true });
+fs.writeFileSync(
+  path.join(profile, "Default", "Preferences"),
+  JSON.stringify({ safebrowsing: { enabled: false, enhanced: false } })
+);
 
 const children = [];
 function child(name, cmd, argv, cwd) {
@@ -130,13 +149,14 @@ try {
   await waitFor(`http://localhost:${PORT}/`, () => fetch(`http://localhost:${PORT}/`).then((r) => r.ok).catch(() => false), 15_000);
   log(`host + workbench up (http://localhost:${PORT}/)`);
 
-  // Headed browser (headless auto-denies the write grant — F15).
-  browser = await chromium.launch({ headless: false });
-  const page = await browser.newPage();
+  // Headed browser (headless auto-denies the write grant — F15), on the
+  // prepared profile so the Safe Browsing pref above takes effect.
+  browser = await chromium.launchPersistentContext(profile, { headless: false });
+  const page = browser.pages()[0] ?? (await browser.newPage());
   await page.goto(`http://localhost:${PORT}/`);
 
   // F14: synthesized directory drop mints a real handle.
-  const cdp = await page.context().newCDPSession(page);
+  const cdp = await browser.newCDPSession(page);
   const vp = page.viewportSize();
   const drop = { x: Math.round(vp.width / 2), y: Math.round(vp.height / 2), data: { items: [], files: [dir], dragOperationsMask: 1 } };
   await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...drop });
@@ -154,6 +174,9 @@ try {
   // Latency bench, both uplink lanes. Verdicts come from report.json,
   // read natively — the reporter flushes every ~1 s.
   const benchEvents = () => (readReport(dir)?.events ?? []).filter((e) => e.type === "bench");
+  // The bench controls live inside the collapsed "advanced settings"
+  // <details>; Playwright (rightly) refuses to fill invisible inputs.
+  await page.evaluate(() => (document.getElementById("b-count").closest("details").open = true));
   async function runBench(uplink) {
     const before = benchEvents().length;
     await page.fill("#b-count", "100");
@@ -210,7 +233,7 @@ try {
     else {
       await sleep(500); // let the host finish dying before we sweep its dir
       try {
-        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(run, { recursive: true, force: true });
       } catch {
         // a straggler write recreated something — a leftover run dir is harmless
       }
