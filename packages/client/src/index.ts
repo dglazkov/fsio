@@ -77,6 +77,11 @@ export type UplinkMode = "auto" | "file" | "dirname";
 
 export interface SessionOptions {
   mode?: NotifierMode;
+  /** Hot-poll cadence. Default 15 (D16): p50 RTT ≈ pollMs, and 15 halves
+   *  the streaming CPU burn vs 5 while staying under one display frame
+   *  (F18). Latency-critical embedders can pass 5 — but note the wake
+   *  loop self-saturates at pollMs ≈ wake duration (~4 ms on a fast
+   *  machine), so lower values mostly buy CPU burn, not latency. */
   pollMs?: number;
   uplink?: UplinkMode;
   /** 0 disables the safety poll (measurement labs) */
@@ -208,7 +213,7 @@ export class FsioSession {
   #wakeFn!: () => void;
 
   constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec, opts: SessionOptions = {}) {
-    const { mode = "auto", pollMs = 5, uplink = "auto", safetyMs = 500 } = opts;
+    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500 } = opts;
     // D15: a web-page client reports its origin — stamped HERE, overriding
     // caller-supplied values, so a page cannot claim a foreign origin
     // through this API. (It can still write spawn.json by hand: the field

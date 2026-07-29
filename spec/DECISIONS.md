@@ -68,7 +68,8 @@ Touching a sentinel file's mtime (mtime-only changes coalesce too).
 ## D4 — hybrid / adaptive notification
 
 **Decision.** Peers combine event sources with polling: watch/observer for
-idle efficiency, a ~5 ms hot poll while a session is active. Browser
+idle efficiency, a hot poll while a session is active (default cadence
+settled in [D16](#d16--default-pollms-is-15-ms-half-the-burn-still-under-one-frame)). Browser
 clients go further (*adaptive*): observer as idle sentinel, hot poll only
 while traffic flowed in the last 2 s. A safety poll is mandatory in every
 mode.
@@ -447,3 +448,44 @@ information too).
 
 **Findings.** None platform-measured. Feeds #6 (posture), #16 (helper
 display), #18 (Node-side sessions legitimately originless).
+
+## D16 — default pollMs is 15 ms: half the burn, still under one frame
+
+**Decision.** The browser client's default hot-poll cadence is **15 ms**
+(was 5). Per-session override stays first-class: latency-critical
+embedders pass `pollMs: 5` and get exactly the old behavior — the knob
+moved, nothing was removed.
+
+**Flip-back trigger (read this first if you came here wanting speed).**
+This is a default, not a capability. If interactive feel ever needs the
+old cadence — user reports, a latency-sensitive embedder, a demo that
+must win a benchmark — flip the one constant in
+`packages/client/src/index.ts` (`pollMs = 15`) back to 5, or pass
+`pollMs: 5` per session. Before flipping, know what F18 measured: RTT
+p50 ≈ pollMs, so 5 buys ~10 ms of p50 at roughly **double** the
+streaming CPU burn (58% vs 34% of a core, browser+renderer, on a fast
+2026 arm64 Mac) — and the wake loop self-saturates at pollMs ≈ wake
+duration (~4 ms there), so on slower machines 5 ms mostly buys burn,
+not latency: their RTT floor is their wake duration regardless.
+
+**Context.** 5 ms was chosen on the latency axis alone
+([F2](FINDINGS.md#f2--node-fswatch-adds-50-ms)); the cost axis had no
+numbers until
+[F18](FINDINGS.md#f18--idle-sessions-cost-075session-in-chrome-linear-to-8-and-more-in-the-host-the-pollms-curve-the-wake-loop-self-saturates-at-pollms--wake-duration).
+At 15 ms the p50 (14.8 ms) is still under one 60 Hz display frame — the
+workbench's own verdict tier calls both "instant" — while the streaming
+burn nearly halves and the default moves off the measured saturation
+edge. The burn lands in the *browser process* (F17), invisible to the
+page's DevTools, i.e. it reads as "Chrome is eating my battery" and gets
+blamed on nothing in particular; a default should not do that for a
+latency margin nobody can feel.
+
+**Alternatives rejected.** Keeping 5 (pays double burn for sub-frame
+latency nobody perceives; worse on slow machines, where it saturates).
+50 ms (p50 ≈ 50 ms is a felt sluggishness — F18's own verdict tiers say
+so). Making the default adaptive-by-machine (measuring wake duration at
+startup is attractive but speculative; revisit if slow-machine reports
+arrive — the per-op constant in F18 is the calibration a future
+auto-tuner would use).
+
+**Findings.** F2, F17, F18.
