@@ -52,8 +52,13 @@ class HostFixture {
 
   async stop(keepDir = false): Promise<void> {
     this.stopped = true;
-    this.proc.kill("SIGKILL"); // SIGINT would delete host.json; tests manage dirs themselves
-    await new Promise((r) => this.proc.once("exit", r));
+    // Guard the already-dead case: once("exit") after the event fired never
+    // resolves — a host that exited early (e.g. the #40 live-host refusal)
+    // would hang the suite forever instead of failing its test.
+    if (this.proc.exitCode === null && this.proc.signalCode === null) {
+      this.proc.kill("SIGKILL"); // SIGINT would delete host.json; tests manage dirs themselves
+      await new Promise((r) => this.proc.once("exit", r));
+    }
     if (!keepDir) fs.rmSync(this.dir, { recursive: true, force: true });
   }
 }
@@ -331,7 +336,10 @@ test("host restart: re-adopts live sessions, resumes echo, duplicate spawn answe
     await waitFor(() => s.response(1), "pre-restart ping");
     await h1.stop(true); // keep the shared dir: simulate a crash
 
-    const h2 = await HostFixture.start([], dir);
+    // --takeover: the SIGKILLed corpse's host.json still looks live (#40:
+    // a starting host refuses that) — crash-restart is the escape hatch's
+    // exact use case.
+    const h2 = await HostFixture.start(["--takeover"], dir);
     try {
       s.commit(ping(2));
       await waitFor(() => s.response(2), "post-restart ping", 8000);

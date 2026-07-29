@@ -25,9 +25,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --fresh wipes .fsio (old sessions, stale host.json) on startup
+# --fresh wipes .fsio (old sessions, stale host.json) on startup.
+# --takeover: the pkill above owns this dir's incumbent — its host.json can
+# still look live (#40) while its close() drains, and the refusal would
+# otherwise race the build time.
 npm run build
-node packages/host/dist/fsio-host.js "$DIR" --fresh --allow-shell 2>&1 | sed 's/^/[host] /' &
+node packages/host/dist/fsio-host.js "$DIR" --fresh --allow-shell --takeover 2>&1 | sed 's/^/[host] /' &
 HOST_PID=$!
 (cd packages/workbench && npx vite --port "$PORT" --strictPort 2>&1 | sed 's/^/[wb]   /') &
 WEB_PID=$!

@@ -243,6 +243,18 @@ Only filler-padded pings and DATA batches spill to the file lane.
   F8). The host deletes the session dir ~500 ms after close, and GCs stale
   exited sessions (>60 s) on adoption.
 - Liveness = `host.json` mtime younger than 6 s (3 missed heartbeats).
+- **One live host per `.fsio`**
+  ([#40](https://github.com/dglazkov/fsio/issues/40); invariant 4 — F8,
+  [D6](DECISIONS.md#d6--one-writer-per-file-one-cleanup-owner)): a starting
+  host MUST refuse to serve a directory whose `host.json` is live by the
+  rule above — a second live host would spawn every adopted session again,
+  consume uplink chunks the first host then sees as gaps, write every
+  host-owned file alongside it, and grant its own attach epochs
+  ([D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)).
+  An explicit takeover override MAY skip the refusal (for a killed host
+  whose last heartbeat has not yet gone stale). This is a seatbelt, not a
+  distributed lock: two hosts starting within one heartbeat window can
+  still collide, and the protocol otherwise assumes they don't.
 - **Client presence and detach**
   ([D17](DECISIONS.md#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill); F16):
   a client SHOULD send the `heartbeat` notification periodically (reference

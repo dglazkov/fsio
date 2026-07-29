@@ -16,6 +16,11 @@ PORT="${FSIO_DEMO_PORT:-8766}"
 pkill -f "terminal-demo/dist/helper.js" 2>/dev/null && echo "stopped stale helper" || true
 lsof -ti "tcp:$PORT" 2>/dev/null | xargs kill 2>/dev/null && echo "stopped stale demo server" || true
 sleep 0.2
+# Wait (bounded) for the killed helper to retract host.json — the new
+# helper refuses to start over a live-looking one (#40), and the old one's
+# close() may still be draining child reaps. A stale corpse (SIGKILLed
+# long ago) passes the liveness check anyway, so falling through is safe.
+for _ in $(seq 1 50); do [ -f "$DIR/.fsio/host.json" ] || break; sleep 0.1; done
 mkdir -p "$DIR"
 
 cleanup() {
