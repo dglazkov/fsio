@@ -1,6 +1,10 @@
 # Cloud Build pipeline for the terminal-demo page (#16 S6; the #15
-# deploy-on-tag slot). Trigger: tag push matching v* (created via gcloud,
-# recorded in the S6 commit body). Manual smoke:
+# deploy-on-tag slot). Trigger: tag push matching v* — trigger `deploy-fsio`
+# lives in project fsio-503901, REGION us-west1 (the _REGION below is where
+# the service deploys, not where the trigger lives). Note `gcloud builds
+# triggers list` / `builds list` default to --region=global and show
+# NOTHING for this project — pass --region=us-west1 (a v0.2.0 release was
+# nearly re-deployed by hand chasing that empty listing). Manual smoke:
 #
 #   gcloud builds submit --config cloudbuild.yaml \
 #     --substitutions=_VERSION=manual-$(git rev-parse --short HEAD)
