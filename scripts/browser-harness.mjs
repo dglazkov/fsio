@@ -212,6 +212,21 @@ try {
   await runBench("file");
   await runBench("auto"); // dirname fast lane (F10)
 
+  // B4 conformance battery (#35): the page's own structured verdicts —
+  // the same button a human clicks in the cooperative loop.
+  const confEvents = () => (readReport(dir)?.events ?? []).filter((e) => e.type === "conformance");
+  {
+    const before = confEvents().length;
+    await page.click("#run-conformance");
+    const ev = await waitFor("conformance verdicts in report.json", () => confEvents()[before], 120_000, 500);
+    const bad = (ev.checks ?? []).filter((c) => !c.ok);
+    check(
+      `conformance battery: ${ev.passed}/${ev.checks?.length ?? 0} checks pass`,
+      (ev.checks?.length ?? 0) > 0 && ev.failed === 0,
+      bad.map((c) => `${c.name}: ${c.detail}`).join("; ")
+    );
+  }
+
   // Shell echo: keystrokes → uplink → pty shell → file → native read.
   await page.click("#open-term");
   await page.waitForFunction(() => document.getElementById("term-status").textContent.includes("connected"), { timeout: 20_000 });
