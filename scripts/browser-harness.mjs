@@ -10,19 +10,18 @@
 // "Allow on every visit" in Chrome's permission prompt. Everything else is
 // unattended (F15: one gesture unlocks the whole browser session).
 //
-// Mechanism (F14/F15, measured in the #19 spike):
-//   1. real host + `vite preview` of the built workbench, on a fresh shared
-//      dir under $HOME (never /tmp — F9: observers break there)
-//   2. headed Chrome for Testing via Playwright; CDP Input.dispatchDragEvent
-//      synthesizes a directory drop → the page mints a real handle (F14)
-//   3. page.click('#grant') provides the user activation; the human answers
-//      Chrome's prompt — the one click (F15)
-//   4. drives the page's own buttons: latency bench in both uplink lanes,
-//      then types into the real terminal: `echo <nonce> > harness-echo.txt`
-//      — keystrokes ride the uplink, the shell writes the file, and this
-//      script reads the nonce back from the native side. No self-grading.
-//   5. asserts on <dir>/.fsio/client/<clientId>/report.json with the same generous
-//      ceiling as the node smoke (100 ms p50 — regression class, not jitter)
+// Setup lives in harness-rig.mjs (shared with the measurement labs,
+// #42/#43): build, fresh shared dir under $HOME (F9), Safe-Browsing-off
+// profile (#37), host + vite preview, headed CfT, CDP directory drop
+// (F14), the one grant click (F15). This script is the driving + asserting
+// half:
+//   1. latency bench in both uplink lanes, asserted at the smoke's
+//      generous ceiling (100 ms p50 — regression class, not jitter)
+//   2. B4 conformance battery (#35): the page's own structured verdicts
+//   3. types into the real terminal: `echo <nonce> > harness-echo.txt` —
+//      keystrokes ride the uplink, the shell writes the file, and this
+//      script reads the nonce back natively. No self-grading.
+//   4. asserts on <dir>/.fsio/client/<clientId>/report.json
 //
 // Reports survive teardown: raw fsio-host wipes .fsio only on *startup*
 // under --fresh, never on exit — so unlike the terminal-demo helper (see
@@ -31,11 +30,10 @@
 // Linux note: headed Chrome needs a display — run under xvfb-run. Headless
 // is useless here: it auto-denies the write grant (F15).
 
-import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sleep, waitFor, readReport, startRig } from "./harness-rig.mjs";
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = new Set(process.argv.slice(2));
@@ -43,56 +41,8 @@ const KEEP = args.has("--keep");
 const SKIP_BUILD = args.has("--skip-build");
 const PORT = Number(process.env.FSIO_HARNESS_PORT ?? 8766);
 const P50_CEILING_MS = 100; // same class as bench/test-smoke.ts (#15)
-const GRANT_TIMEOUT_MS = 180_000; // human reaction time
 
 const log = (...a) => console.log("[harness]", ...a);
-const banner = (s) =>
-  console.log(`\n${"=".repeat(64)}\n  ${s}\n${"=".repeat(64)}\n`);
-
-// ---------------------------------------------------------------- utilities
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function waitFor(what, fn, timeoutMs, everyMs = 250) {
-  const t0 = Date.now();
-  for (;;) {
-    const v = await fn();
-    if (v) return v;
-    if (Date.now() - t0 > timeoutMs) throw new Error(`timed out after ${timeoutMs} ms waiting for: ${what}`);
-    await sleep(everyMs);
-  }
-}
-
-/** Per-client report dirs (#39): each page load writes its own
- *  client/<clientId>/report.json — scan and take the newest by mtime. The
- *  harness's page is the only live writer here, but a mid-run reload would
- *  leave an older sibling behind; recency picks the live one. If the newest
- *  is torn mid-write (F11-class), that's a retry, not an error — and never
- *  a reason to fall back to a stale sibling. */
-function readReport(dir) {
-  const root = path.join(dir, ".fsio", "client");
-  let entries;
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  let newest = null;
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const p = path.join(root, e.name, "report.json");
-    try {
-      const mtime = fs.statSync(p).mtimeMs;
-      if (!newest || mtime > newest.mtime) newest = { p, mtime };
-    } catch {}
-  }
-  if (!newest) return null;
-  try {
-    return JSON.parse(fs.readFileSync(newest.p, "utf8"));
-  } catch {
-    return null;
-  }
-}
 
 const checks = [];
 function check(name, ok, detail = "") {
@@ -100,98 +50,13 @@ function check(name, ok, detail = "") {
   console.log(`  ${ok ? "✅" : "❌"} ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
-// ---------------------------------------------------------------- setup
-
-if (!SKIP_BUILD) {
-  log("npm run build (wireit graph is the ground truth)…");
-  const r = spawnSync("npm", ["run", "build"], { cwd: repo, stdio: "inherit" });
-  if (r.status !== 0) process.exit(2);
-}
-
-// Shared dir under $HOME, never /tmp (F9). The Chrome profile lives
-// *beside* the shared dir, not inside it — the dropped handle covers the
-// whole shared dir and profile churn is not part of the experiment.
-const runsDir = path.join(os.homedir(), ".fsio-harness");
-fs.mkdirSync(runsDir, { recursive: true });
-const run = fs.mkdtempSync(path.join(runsDir, "run-"));
-const dir = path.join(run, "shared");
-const profile = path.join(run, "profile");
-fs.mkdirSync(dir, { recursive: true });
-log(`shared dir: ${dir}`);
-
-// Chrome for Testing ships without Google API keys: its Safe Browsing
-// after-write scan is NOT stable Chrome's ~68 ms delay (F7) — the first
-// harness run saw it hard-abort a commit mid-bench ("AbortError: Aborted
-// due to security policy", #37). Pin the exact configuration F7's A/B
-// already measured (chrome://settings/security → No protection): the
-// harness is a regression detector for OUR stack, not a platform
-// measurement — F7-class platform truth stays with the cooperative loop
-// on stable Chrome and the drift job (#22).
-fs.mkdirSync(path.join(profile, "Default"), { recursive: true });
-fs.writeFileSync(
-  path.join(profile, "Default", "Preferences"),
-  JSON.stringify({ safebrowsing: { enabled: false, enhanced: false } })
-);
-
-const children = [];
-function child(name, cmd, argv, cwd) {
-  const p = spawn(cmd, argv, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-  const tail = [];
-  const sink = (d) => {
-    for (const line of String(d).split("\n")) if (line.trim()) tail.push(line);
-    if (tail.length > 40) tail.splice(0, tail.length - 40);
-  };
-  p.stdout.on("data", sink);
-  p.stderr.on("data", sink);
-  children.push({ name, p, tail });
-  return p;
-}
-
-let browser = null;
-async function teardown() {
-  await browser?.close().catch(() => {});
-  for (const { p } of children) p.kill("SIGTERM");
-}
-
 // ---------------------------------------------------------------- main
 
+let rig = null;
 let failed = false;
 try {
-  // Playwright + browser preflight.
-  const { chromium } = await import("playwright");
-  if (!fs.existsSync(chromium.executablePath())) {
-    log("Chrome for Testing not installed — running `npx playwright install chromium`…");
-    const r = spawnSync("npx", ["playwright", "install", "chromium"], { cwd: repo, stdio: "inherit" });
-    if (r.status !== 0) throw new Error("playwright install failed");
-  }
-
-  // Real host + static server for the built workbench.
-  child("host", process.execPath, [path.join(repo, "packages/host/dist/fsio-host.js"), dir, "--fresh", "--allow-shell"]);
-  child("web", "npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], path.join(repo, "packages/workbench"));
-  await waitFor(`http://localhost:${PORT}/`, () => fetch(`http://localhost:${PORT}/`).then((r) => r.ok).catch(() => false), 15_000);
-  log(`host + workbench up (http://localhost:${PORT}/)`);
-
-  // Headed browser (headless auto-denies the write grant — F15), on the
-  // prepared profile so the Safe Browsing pref above takes effect.
-  browser = await chromium.launchPersistentContext(profile, { headless: false });
-  const page = browser.pages()[0] ?? (await browser.newPage());
-  await page.goto(`http://localhost:${PORT}/`);
-
-  // F14: synthesized directory drop mints a real handle.
-  const cdp = await browser.newCDPSession(page);
-  const vp = page.viewportSize();
-  const drop = { x: Math.round(vp.width / 2), y: Math.round(vp.height / 2), data: { items: [], files: [dir], dragOperationsMask: 1 } };
-  await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...drop });
-  await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...drop });
-  await cdp.send("Input.dispatchDragEvent", { type: "drop", ...drop });
-  await page.waitForSelector('body[data-fsio-state="awaiting-grant"]', { timeout: 10_000 });
-  log("directory drop accepted; handle minted (F14)");
-
-  // F15: the one human click.
-  await page.click("#grant"); // real user activation
-  banner('CLICK "Allow on every visit" IN THE BROWSER — the only click needed');
-  await page.waitForSelector('body[data-fsio-state="connected"]', { timeout: GRANT_TIMEOUT_MS });
-  log("write granted; page connected — unattended from here");
+  rig = await startRig({ repo, port: PORT, skipBuild: SKIP_BUILD, log });
+  const { dir, page } = rig;
 
   // Latency bench, both uplink lanes. Verdicts come from report.json,
   // read natively — the reporter flushes every ~1 s.
@@ -256,21 +121,21 @@ try {
 } catch (e) {
   failed = true;
   console.error("\n[harness] FAILED:", e.message ?? e);
-  for (const { name, tail } of children) {
+  for (const { name, tail } of rig?.children ?? []) {
     if (tail.length) console.error(`\n--- last output from ${name} ---\n${tail.join("\n")}`);
   }
 } finally {
   failed ||= checks.some((c) => !c.ok);
   console.log(`\n[harness] ${failed ? "FAIL" : "PASS"} — ${checks.filter((c) => c.ok).length}/${checks.length} checks`);
   if (KEEP) {
-    log(`--keep: leaving host, web server, and browser running; shared dir ${dir}`);
+    log(`--keep: leaving host, web server, and browser running; shared dir ${rig?.dir}`);
   } else {
-    await teardown();
-    if (failed) log(`kept for forensics: ${dir} (reports under ${path.join(dir, ".fsio/client")}/*/report.json)`);
-    else {
+    await rig?.teardown();
+    if (failed) log(`kept for forensics: ${rig?.dir} (reports under ${rig ? path.join(rig.dir, ".fsio/client") : "?"}/*/report.json)`);
+    else if (rig) {
       await sleep(500); // let the host finish dying before we sweep its dir
       try {
-        fs.rmSync(run, { recursive: true, force: true });
+        fs.rmSync(rig.run, { recursive: true, force: true });
       } catch {
         // a straggler write recreated something — a leftover run dir is harmless
       }

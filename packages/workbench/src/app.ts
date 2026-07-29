@@ -226,6 +226,7 @@ async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
   $in("run-observer-lab").disabled = false;
   $in("run-throughput-lab").disabled = false;
   $in("run-conformance").disabled = false;
+  $in("run-bg-lab").disabled = false;
   $in("open-term").disabled = false;
   log(`connected to ${root.name}/.fsio`);
 }
@@ -1038,6 +1039,102 @@ $("run-conformance").onclick = guard(async () => {
     }
     btn.disabled = false;
   }
+});
+
+// ---------------------------------------------------------------- background lab (#42/#43)
+// The page is a dumb recorder; the native driver
+// (scripts/background-lab.mjs) owns the scenario. A pty-less /bin/sh runs
+// a 1 Hz python timestamp emitter; every delivered line yields
+// {t: host-side stamp, at: page receipt, vis} — same machine, same clock,
+// so at−t IS the delivery latency. Samples are buffered and ride the
+// reporter, whose own 1 s flush timer is throttled exactly like the
+// client's notifier timers when the tab is backgrounded — buffered
+// samples land when a (throttled) flush eventually fires or the tab
+// foregrounds. That deferred arrival is part of the measurement, not a
+// defect. Mode/pollMs come from the advanced-settings controls, so the
+// driver can compare notifier modes (does the observer survive
+// backgrounding? — the F6/#42 question). Button toggles start/stop.
+
+let bgSession: FsioSession | null = null;
+let bgCleanup: (() => void) | null = null;
+
+$("run-bg-lab").onclick = guard(async () => {
+  const btn = $in("run-bg-lab");
+  if (bgSession) {
+    // toggle: stop, flush what's buffered, restore the button
+    bgCleanup?.();
+    bgCleanup = null;
+    const s = bgSession;
+    bgSession = null;
+    btn.textContent = "Background lab";
+    await s.close().catch(() => {});
+    reporter.event("bg-lab-stopped", { at: now() });
+    log("background lab stopped");
+    return;
+  }
+
+  step("background lab: preflight");
+  const host = await refreshHostCheck();
+  if (!host.alive) {
+    fail("The helper doesn't seem to be running in this folder.", "Start it with the command from step 1 and try again.");
+  }
+  if (!host.info?.allowShell) {
+    fail("The background lab needs a shell for its timestamp stream.", "Restart the helper with --allow-shell.");
+  }
+
+  const mode = $in("b-mode").value as NotifierMode;
+  const pollMs = Number($in("b-poll").value) || 5;
+  step("background lab: starting the timestamp stream");
+  const s = client!.createSession({ kind: "shell", cmd: "/bin/sh", pty: false, client: "bg-lab" }, { mode, pollMs });
+  bgSession = s;
+  let buf = "";
+  let samples: { t: number; at: number; atW: number; vis: string }[] = [];
+  const flushSamples = () => {
+    if (samples.length === 0) return;
+    reporter.event("bg-samples", { samples });
+    samples = [];
+  };
+  s.on("data", (b) => {
+    buf += new TextDecoder().decode(b);
+    const lines = buf.split("\n");
+    buf = lines.pop()!;
+    // Both clocks per sample: atW (Date.now) is wall time, comparable to
+    // the host-side stamp even across a system sleep; at (now(), i.e.
+    // performance-based) stops during sleep on macOS — the divergence
+    // between them IS the sleep/wake instrument (#42's family-at-the-limit;
+    // run 1 caught a 17 s nap as "negative latency" before this existed).
+    const at = now();
+    const atW = Date.now();
+    for (const line of lines) {
+      const t = Number(line.trim());
+      if (!Number.isFinite(t) || t < 1e12) continue; // shell noise, not a stamp
+      samples.push({ t, at, atW, vis: document.visibilityState });
+    }
+    if (samples.length >= 20) flushSamples();
+  });
+  s.on("note", (m) => log("bg-lab note:", m));
+  s.on("error", (e) => log("bg-lab send failed:", e.message));
+  const onVis = () => reporter.event("bg-visibility", { state: document.visibilityState, at: now(), atW: Date.now() });
+  document.addEventListener("visibilitychange", onVis);
+  bgCleanup = () => {
+    document.removeEventListener("visibilitychange", onVis);
+    flushSamples();
+  };
+  try {
+    await Promise.race([s.ready, sleep(8000).then(() => Promise.reject(new Error("spawn timeout (8 s)")))]);
+  } catch (e) {
+    bgCleanup();
+    bgCleanup = null;
+    bgSession = null;
+    await s.close().catch(() => {});
+    throw e;
+  }
+  // One python process, stamping once a second; -u + flush so lines never
+  // sit in a stdio buffer masquerading as throttling.
+  s.sendData("exec python3 -u -c 'import time\nwhile 1: print(int(time.time()*1000), flush=True); time.sleep(1)'\n");
+  reporter.event("bg-lab-started", { at: now(), mode: s.mode, pollMs, vis: document.visibilityState });
+  btn.textContent = "Stop background lab";
+  log(`background lab streaming (mode ${s.mode}, pollMs ${pollMs}) — click again to stop`);
 });
 
 // ---------------------------------------------------------------- terminal

@@ -85,7 +85,20 @@ terminal budget). Pure always-on polling (constant background cost while
 idle). Tuning event sources (libuv's 50 ms and Chrome's 300 ms are not
 configurable from user code).
 
-**Findings.** F2, F3, F6.
+**Measured cost (2026-07-29,
+[F17](FINDINGS.md#f17--the-5-ms-hot-poll-costs-52-of-a-core-across-three-processes-the-fsa-brokering-burn-lands-in-the-browser-process)).**
+The hot poll's active-state burn is ~38% browser-process + ~13.5%
+renderer CPU while a stream flows (observer-only: ~4.5% + 1.9% at
+~350 ms latency) — the "zero idle cost" claim is about the *gated* state
+and remains unmeasured
+([#43](https://github.com/dglazkov/fsio/issues/43)). The observer
+sentinel also turns out to be the background-tab survival mechanism:
+Chrome does not throttle FileSystemObserver in hidden tabs
+([F16](FINDINGS.md#f16--filesystemobserver-is-not-throttled-in-hidden-tabs-adaptive-mode-degrades-to-observer-cadence-in-the-background-and-recovers-instantly)),
+so backgrounded adaptive degrades to observer cadence instead of
+stalling.
+
+**Findings.** F2, F3, F6, F16, F17.
 
 ## D5 — dirname fast lane for small uplink batches
 

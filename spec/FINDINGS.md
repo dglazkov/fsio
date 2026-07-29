@@ -260,6 +260,79 @@ which the agent drives unattended — the basis for the one-click harness
 job [#22](https://github.com/dglazkov/fsio/issues/22) can't run on
 ephemeral CI.
 
+### F16 — FileSystemObserver is not throttled in hidden tabs; adaptive mode degrades to observer cadence in the background and recovers instantly
+
+Background lab (`npm run bg-lab`, 2026-07-29, CfT 151.0.7922.34, Safe
+Browsing off, macOS): 1 Hz host-stamped stream through a pty-less shell;
+tab hidden for 8 min (crossing Chrome's 5-min intensive-throttling
+boundary); delivery latency = page receipt − host stamp, same machine.
+Backgrounding verified per sample via `document.visibilityState` (100%
+hidden).
+
+Delivery latency (ms), mode=adaptive (observer sentinel + 5 ms hot poll):
+
+| regime | n | p50 | p95 | max |
+|---|---|---|---|---|
+| foreground | 31 | 3 | 7 | 7 |
+| bg 0–60 s | 60 | 376 | 662 | 702 |
+| bg 60 s–5 min | 239 | 354 | 674 | 702 |
+| bg >5 min | 179 | 354 | 676 | 703 |
+| recovery | 31 | 4 | 7 | 216 |
+
+Observer-only mode measured the same background distribution (p50
+351–353 ms) — i.e. **backgrounded adaptive IS observer mode**: the hot
+poll's timers get clamped, but observer callbacks keep firing at the F6
+~300 ms cadence through the entire intensive-throttling regime. The
+predicted stall shape (1 s clamp → 1/min collapse, ack starvation, pty
+pause) never materialized at this stream rate; recovery after refocus was
+first-delivery-in-329 ms with zero backlog. **No mitigation needed for
+tab backgrounding** — D4's observer-as-idle-sentinel is also the
+background-survival mechanism, for free.
+
+Caveats: 1 Hz is a light stream — a flood in the background (budget
+exhaustion, tab freezing, 4 MB ack window) is unmeasured; sleep/wake is
+the remaining cooperative leg
+([#42](https://github.com/dglazkov/fsio/issues/42)). Method note for
+future agent-driven runs: an attached Playwright/CDP automation session
+force-emulates focus (covered tabs stay `visible`, timers unthrottled),
+and Playwright's default switches include
+`--disable-background-timer-throttling` — background measurements are
+only valid from a manually-spawned stock Chrome, driven via
+`connectOverCDP`, with the connection **dropped** during measurement
+phases (scripts/harness-rig.mjs `detachable`).
+→ F6, [D4](DECISIONS.md#d4--hybrid--adaptive-notification),
+[#42](https://github.com/dglazkov/fsio/issues/42)
+
+### F17 — the 5 ms hot poll costs ~52% of a core across three processes; the FSA brokering burn lands in the browser process
+
+Same rig and runs as F16, native `ps` sampling of the full Chrome process
+tree every 5 s (a DevTools profile of the tab undercounts by
+construction — the broker does not run in the renderer). Streaming 1
+line/s, %CPU mean over each 30 s+ phase:
+
+| mode / phase | browser | renderer | gpu | fsio-host |
+|---|---|---|---|---|
+| adaptive, foreground | 38.0 | 13.5 | 0.9 | 3.0 |
+| adaptive, hidden (throttled) | 2.7 | 1.0 | 0.1 | 6.8 |
+| observer-only, foreground | 4.5 | 1.9 | 1.8 | 5.2 |
+
+- The hot-poll burn is real and mostly *outside* the renderer: ~38%
+  browser-process CPU for ~200 wakeups/s × ≥2 FSA reads each. The
+  storage-service utility process stayed at ~0% — on macOS the FSA
+  brokering cost lands in the **browser process** itself.
+- Observer-only delivers ~350 ms latency (F6) at roughly **10× less
+  browser-process CPU** — the latency/burn trade D4 buys with the 2 s
+  activity gate, now with numbers on both axes.
+- Chrome's own background throttling cuts the adaptive stack to
+  2.7%/1.0% — what a visibility-aware cadence would save is bounded by
+  the same numbers.
+- D4's "zero idle cost" claim remains unmeasured on this axis: these are
+  *streaming* numbers; the idle ×N-session matrix and `pollMs` sweep are
+  [#43](https://github.com/dglazkov/fsio/issues/43)'s remaining half.
+→ [D4](DECISIONS.md#d4--hybrid--adaptive-notification),
+[#43](https://github.com/dglazkov/fsio/issues/43),
+[#42](https://github.com/dglazkov/fsio/issues/42)
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
@@ -281,4 +354,5 @@ npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
 # browser: scripts/dev.sh → http://localhost:8765/ → pick ~/fsio-demo
 # (not /tmp for observer tests — see F9)
 node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
+npm run bg-lab   # F16/F17 (one grant click; ~18 min; raw JSON beside ~/.fsio-harness)
 ```
