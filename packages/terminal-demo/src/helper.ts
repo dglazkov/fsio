@@ -86,7 +86,9 @@ const server = new HostServer({
   logger: log,
 });
 
-await server.start();
+// The live-host refusal (#40 — e.g. a second helper on the same folder)
+// is an operator message, not a crash: no stack, just the reason.
+await server.start().catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
 
 // The profile lands inside .fsio AFTER start() (fresh wipes it) and BEFORE
 // any session can spawn (scan hasn't run a shell yet — spawns need a

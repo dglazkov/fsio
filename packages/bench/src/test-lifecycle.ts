@@ -192,6 +192,70 @@ test("adoption GCs exited sessions older than the grace period, keeps fresh ones
   }
 });
 
+// ------------------------------------------- host mutual exclusion (#40)
+
+test("start() refuses over a live host.json; the seat frees when the incumbent closes", async () => {
+  // spec "Session lifecycle": one live host per .fsio — a second host
+  // would double-spawn adopted sessions and violate one-writer (F8/D6).
+  const root = tmpRoot();
+  const first = new HostServer({ root, timings: { heartbeatMs: 50 } });
+  await first.start();
+  const second = new HostServer({ root, timings: { heartbeatMs: 50 } });
+  await assert.rejects(() => second.start(), /looks live/, "second start() must refuse while the first heartbeats");
+  assert.ok(fs.existsSync(path.join(root, ".fsio", "host.json")), "refusal must not disturb the incumbent");
+  await first.close();
+  await second.start(); // close() retracted host.json — the seat is free
+  await second.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a stale host.json (crashed host) does not block start()", async () => {
+  // Liveness = mtime < 3 beats: a corpse past the window is adoptable,
+  // exactly as clients would already have judged it gone.
+  const root = tmpRoot();
+  const fsioDir = path.join(root, ".fsio");
+  fs.mkdirSync(fsioDir, { recursive: true });
+  const hostJson = path.join(fsioDir, "host.json");
+  fs.writeFileSync(hostJson, JSON.stringify({ pid: 99999, t: now() - 60_000 }));
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(hostJson, old, old);
+  const server = new HostServer({ root, timings: { heartbeatMs: 50 } });
+  await server.start();
+  await server.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("takeover: true starts over a live-looking host.json", async () => {
+  // The escape hatch for a SIGKILLed host whose last beat hasn't gone
+  // stale: mtime is the only signal, so a fresh corpse looks live.
+  const root = tmpRoot();
+  const fsioDir = path.join(root, ".fsio");
+  fs.mkdirSync(fsioDir, { recursive: true });
+  fs.writeFileSync(path.join(fsioDir, "host.json"), JSON.stringify({ pid: 99999, t: now() }));
+  const blocked = new HostServer({ root, timings: { heartbeatMs: 60_000 } });
+  await assert.rejects(() => blocked.start(), /looks live/, "a fresh corpse must refuse without takeover");
+  const seizing = new HostServer({ root, takeover: true, timings: { heartbeatMs: 60_000 } });
+  await seizing.start();
+  await seizing.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("fresh: true refuses over a live host and leaves its .fsio intact", async () => {
+  // #40: --fresh would otherwise rmSync a *live* host's .fsio out from
+  // under it — the refusal must come before any mutation.
+  const root = tmpRoot();
+  const first = new HostServer({ root, timings: { heartbeatMs: 50 } });
+  await first.start();
+  const dir = makeSession(root, "survivor", { kind: "echo" });
+  await waitFor(() => status(dir)?.state === "running", "echo session running");
+  const wiper = new HostServer({ root, fresh: true, timings: { heartbeatMs: 50 } });
+  await assert.rejects(() => wiper.start(), /looks live/, "fresh: true must refuse like any other start");
+  assert.ok(fs.existsSync(dir), "fresh: true must not wipe a live host's sessions");
+  assert.equal(status(dir)?.state, "running");
+  await first.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 // ------------------------------------------------------------- close()
 
 test("close() retracts host.json and stops the heartbeat", async () => {

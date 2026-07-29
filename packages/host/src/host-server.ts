@@ -207,8 +207,13 @@ export interface HostServerOptions {
   allowShell?: boolean;
   /** spawn policy hook (D12); overrides `allowShell`. */
   onSpawnRequest?: SpawnPolicy;
-  /** wipe .fsio on startup. Default false. */
+  /** wipe .fsio on startup. Default false. Refused while another host is
+   *  live on the directory (#40) — takeover applies here too. */
   fresh?: boolean;
+  /** skip the live-host refusal (#40): seize a directory whose host.json
+   *  still looks live — for a killed host whose last heartbeat hasn't gone
+   *  stale yet. Default false. */
+  takeover?: boolean;
   /** use fs.watch wakeups. Default true. */
   watch?: boolean;
   /** hot-poll interval while sessions are active (default 5, 0 = off; F2). */
@@ -551,6 +556,7 @@ export class HostServer {
   ptyAvailable = false;
 
   private fresh: boolean;
+  private readonly takeover: boolean;
   private readonly ptyOpt: PtyModule | false | undefined;
   private ptyMod: PtyModule | null = null;
   private sessions = new Map<string, Session>();
@@ -576,6 +582,7 @@ export class HostServer {
     this.allowShell = opts.allowShell ?? false;
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
     this.fresh = opts.fresh ?? false;
+    this.takeover = opts.takeover ?? false;
     this.watchEnabled = opts.watch ?? true;
     this.hotPollMs = opts.hotPollMs ?? 5;
     this.pollMs = opts.pollMs ?? 0;
@@ -635,6 +642,7 @@ export class HostServer {
    *  heartbeat is on disk (host.json presence = readiness, per spec). */
   async start(): Promise<this> {
     if (this.running) throw new Error("HostServer already started");
+    this.refuseLiveHost(); // before ANY .fsio mutation — fresh included (#40)
     this.running = true;
     this.startedAt = now();
 
@@ -740,6 +748,35 @@ export class HostServer {
   }
 
   // ------------------------------------------------------------- internals
+
+  // Mutual exclusion (#40): two live hosts on one .fsio would each spawn
+  // every adopted session (double execution), both append out segments and
+  // rewrite host-owned files (F8/D6: one writer per file), each consume
+  // uplink chunks the other then sees as gaps — and both grant attach
+  // requests (D18: dueling epoch bumps). Liveness is the same rule clients
+  // use (spec: host.json mtime < 3 beats). A seatbelt, not a lock: two
+  // hosts starting within one heartbeat can still collide (spec: Session
+  // lifecycle), and `takeover` skips the refusal for a killed host whose
+  // last beat hasn't gone stale yet.
+  private refuseLiveHost(): void {
+    const hostJson = path.join(this.fsioDir, "host.json");
+    let ageMs: number;
+    try {
+      ageMs = Date.now() - fs.statSync(hostJson).mtimeMs;
+    } catch {
+      return; // no host.json — no incumbent
+    }
+    if (ageMs >= 3 * this.timings.heartbeatMs) return; // stale corpse; adoptable
+    const pid = readJson<HostInfo>(hostJson)?.pid ?? "unknown";
+    if (this.takeover) {
+      this.log.warn(`taking over ${this.fsioDir} from a live-looking host (pid ${pid}, last heartbeat ${Math.round(ageMs)}ms ago)`);
+      return;
+    }
+    throw new Error(
+      `another fsio host looks live on ${this.fsioDir} (pid ${pid}, last heartbeat ${Math.round(ageMs)}ms ago). ` +
+        `Stop it first, or pass takeover (--takeover) if it is a stale corpse.`
+    );
+  }
 
   private watchDir(p: string, cb: () => void): fs.FSWatcher | null {
     if (!this.watchEnabled) return null;
