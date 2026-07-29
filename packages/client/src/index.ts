@@ -27,6 +27,7 @@ import {
   DIR_CHUNK_MAX_BYTES,
   RpcEndpoint,
   RpcError,
+  RpcErrors,
   rpcRequest,
   SPAWN_REQUEST_ID,
   type Frame,
@@ -39,7 +40,10 @@ import {
 } from "@fsio/common";
 import type { FsDirectory, FsFile, FsSnapshot, FsWritable } from "./fs.js";
 
-export { FrameType, jsonFrame, decodeJson, now, RpcError };
+// RpcErrors rides along with RpcError: D10 makes coded errors part of the
+// client-facing contract, so consumers need the codes without a second
+// dependency on @fsio/common.
+export { FrameType, jsonFrame, decodeJson, now, RpcError, RpcErrors };
 export type { Frame, HostInfo, SessionStatus, SpawnResult, SpawnSpec, PingResult };
 export type { FsDirectory, FsFile, FsSnapshot, FsWritable };
 

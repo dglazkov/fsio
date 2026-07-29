@@ -7,6 +7,8 @@ import {
   now,
   hasObserver,
   op,
+  RpcError,
+  RpcErrors,
   type NotifierMode,
   type UplinkMode,
   type PingResult,
@@ -223,6 +225,7 @@ async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
   $in("run-commit").disabled = false;
   $in("run-observer-lab").disabled = false;
   $in("run-throughput-lab").disabled = false;
+  $in("run-conformance").disabled = false;
   $in("open-term").disabled = false;
   log(`connected to ${root.name}/.fsio`);
 }
@@ -847,6 +850,192 @@ $("run-observer-lab").onclick = guard(async () => {
     say(`\ndone — full data in .fsio/client/${reporter.clientId}/report.json`);
     reporter.event("observer-lab", { ...results });
   } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- conformance battery (B4)
+// #35: the B1 battery (bench/src/test-client.ts) re-run where the platform
+// allows — real FSA handles, real Chrome, real host. What the node shim
+// deliberately can't emulate (F7 after-write scans, F11 stale snapshots) is
+// exercised here for free. Each check lands as {name, ok, detail} inside a
+// single `conformance` event in report.json, read natively by the human
+// cooperative loop or the harness (#21) — same button, both loops.
+
+$("run-conformance").onclick = guard(async () => {
+  const btn = $in("run-conformance");
+  btn.disabled = true;
+  $("verdict").hidden = true;
+  const out = $("bench-out");
+  $("bench-details").hidden = false;
+  out.textContent = "conformance battery running…";
+  const checks: { name: string; ok: boolean; detail: string }[] = [];
+  const lines: string[] = [];
+  const record = (name: string, ok: boolean, detail = "") => {
+    checks.push({ name, ok, detail });
+    lines.push(`${ok ? "✅" : "❌"} ${name}${detail ? " — " + detail : ""}`);
+    out.textContent = lines.join("\n");
+    log(`conformance ${ok ? "PASS" : "FAIL"}: ${name}${detail ? " — " + detail : ""}`);
+  };
+  const detailOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  const readyOrTimeout = (s: FsioSession, timeoutMs = 5000) =>
+    Promise.race([s.ready, sleep(timeoutMs).then(() => Promise.reject(new Error(`spawn timeout (${timeoutMs / 1000} s)`)))]);
+  const waitUntil = async (fn: () => boolean | Promise<boolean>, what: string, timeoutMs = 5000) => {
+    const t0 = performance.now();
+    while (!(await fn())) {
+      if (performance.now() - t0 > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+      await sleep(50);
+    }
+  };
+  const sessionDirGone = async (id: string) => {
+    try {
+      const sessions = await fsioDir!.getDirectoryHandle("sessions");
+      await sessions.getDirectoryHandle(id);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  try {
+    step("conformance: preflight");
+    const host = await refreshHostCheck();
+    // spec Discovery: the heartbeat is itself the first check.
+    record(
+      "host.json heartbeat is live (Discovery)",
+      host.alive,
+      host.info ? `pid ${host.info.pid}, age ${host.ageMs} ms` : `age ${host.ageMs} ms`
+    );
+    if (!host.alive) {
+      fail("The helper doesn't seem to be running in this folder.", "Start it with the command from step 1 and try again.");
+    }
+
+    // --- echo session: control plane (D10), events (D11), lanes (F10), cleanup (D6)
+    step("conformance: echo session battery");
+    {
+      const s = client!.createSession({ kind: "echo", client: "b4-conformance" }, { pollMs: 5, uplink: "auto" });
+      // D11: construction is synchronous — these listeners exist before any
+      // I/O can complete, so the FIRST status must be observed.
+      const states: string[] = [];
+      s.on("status", (st) => states.push(st.state));
+      s.on("note", (m) => log("conformance note:", m));
+      let sub = "spawn";
+      try {
+        const info = await readyOrTimeout(s);
+        record("ready resolves with the spawn result (D10)", info.kind === "echo", `kind ${String(info.kind)}`);
+        sub = "ping";
+        const t0 = now();
+        const { result, rx } = await s.request<PingResult>("ping", { t0 }, { timeoutMs: 5000 });
+        record("ping round-trips with host timestamps (D10)", result.t1 > 0 && result.t2 >= result.t1, `rtt ${ms(rx - t0)} ms`);
+        record("post-construction listener saw the first status (D11)", states.includes("running"), `saw: ${states.join(",") || "none"}`);
+        record("small batch rode the dirname lane (F10)", s.stats.dirChunks >= 1, `${s.stats.dirChunks} dirname / ${s.stats.fileChunks} file chunks`);
+        sub = "oversized ping";
+        const before = s.stats.fileChunks;
+        await s.request<PingResult>("ping", { t0: now(), filler: "x".repeat(400) }, { timeoutMs: 5000 }); // > DIR_CHUNK_MAX_BYTES
+        record("oversized batch fell back to a file chunk (F10)", s.stats.fileChunks > before, `${s.stats.fileChunks - before} new file chunk(s)`);
+        sub = "backlog probe";
+        const backlog = await s.uplinkBacklog();
+        record("in/ backlog drained once requests are answered", backlog === 0, `${backlog} chunk(s) left`);
+      } catch (e) {
+        record(`echo battery (${sub})`, false, detailOf(e));
+      } finally {
+        await s.close().catch(() => {});
+      }
+      step("conformance: waiting for host-owned cleanup");
+      try {
+        // Cleanup is HOST-owned (D6): the dir must disappear without any
+        // client delete. The real host's closeDelay is 500 ms; 10 s is
+        // regression headroom, not expectation.
+        await waitUntil(() => sessionDirGone(s.id), "the host to remove the closed session dir", 10000);
+        record("host removed the closed session dir (D6)", true, s.id);
+      } catch (e) {
+        record("host removed the closed session dir (D6)", false, detailOf(e));
+      }
+    }
+
+    // --- uplink "file" pins the slow lane (F10)
+    step("conformance: forced file uplink");
+    {
+      const s = client!.createSession({ kind: "echo", client: "b4-file" }, { pollMs: 5, uplink: "file" });
+      try {
+        await readyOrTimeout(s);
+        await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+        record(
+          "uplink 'file' forces file chunks (F10)",
+          s.stats.dirChunks === 0 && s.stats.fileChunks >= 1,
+          `${s.stats.dirChunks} dirname / ${s.stats.fileChunks} file chunks`
+        );
+      } catch (e) {
+        record("uplink 'file' forces file chunks (F10)", false, detailOf(e));
+      } finally {
+        await s.close().catch(() => {});
+      }
+    }
+
+    // --- spawn refusal arrives as a coded error, not a hang (D10)
+    step("conformance: unknown-kind refusal");
+    {
+      const s = client!.createSession({ kind: "b4-no-such-kind" }, { pollMs: 5 });
+      try {
+        await readyOrTimeout(s);
+        record("unknown kind is refused with a coded error (D10)", false, "spawn was accepted");
+      } catch (e) {
+        const ok = e instanceof RpcError && e.code === RpcErrors.UNKNOWN_KIND;
+        record(
+          "unknown kind is refused with a coded error (D10)",
+          ok,
+          e instanceof RpcError ? `code ${e.code}: ${e.message}` : detailOf(e)
+        );
+      } finally {
+        await s.close().catch(() => {});
+      }
+    }
+
+    // --- DATA delivery + listener disposal need a data sink; the echo kind
+    // has none (host-server.ts registry), so this leg rides a pty-less cat —
+    // exactly B1's shape. Skipped, not failed, when shells are disabled.
+    if (!host.info?.allowShell) {
+      record("data events deliver end to end (D11)", true, "skipped — helper runs without --allow-shell");
+      record("unsubscribed listener stops receiving (D11)", true, "skipped — helper runs without --allow-shell");
+    } else {
+      step("conformance: data delivery over /bin/cat");
+      const s = client!.createSession({ kind: "shell", cmd: "/bin/cat", pty: false, client: "b4-data" }, { pollMs: 5 });
+      let text = "";
+      let counted = 0;
+      const offCount = s.on("data", () => counted++);
+      s.on("data", (b) => (text += new TextDecoder().decode(b)));
+      try {
+        await readyOrTimeout(s);
+        s.sendData("b4 delivery\n");
+        await waitUntil(() => text.includes("b4 delivery"), "cat to echo the first line");
+        record("data events deliver end to end (D11)", counted >= 1, `${counted} data event(s)`);
+        offCount(); // disposal is the returned function (D11)
+        const seen = counted;
+        s.sendData("b4 disposal\n");
+        await waitUntil(() => text.includes("b4 disposal"), "cat to echo the second line");
+        record("unsubscribed listener stops receiving (D11)", counted === seen, `${seen} event(s) before, ${counted} after`);
+      } catch (e) {
+        record("data delivery over /bin/cat (D11)", false, detailOf(e));
+      } finally {
+        await s.close().catch(() => {});
+      }
+    }
+  } finally {
+    // Partial batteries still report: a failure mid-run is exactly what the
+    // native side needs to see.
+    if (checks.length > 0) {
+      const passed = checks.filter((c) => c.ok).length;
+      const failed = checks.length - passed;
+      $("verdict").innerHTML =
+        failed === 0
+          ? `🧪 <span class="big">${passed}/${checks.length}</span> conformance checks passed`
+          : `🧪 <span class="big">${failed}</span> of ${checks.length} conformance checks <strong>failed</strong> — details below`;
+      $("verdict").hidden = false;
+      lines.push(`\ndone — verdicts in .fsio/client/${reporter.clientId}/report.json`);
+      out.textContent = lines.join("\n");
+      reporter.event("conformance", { passed, failed, checks });
+      log(`conformance battery: ${passed}/${checks.length} passed`);
+    }
     btn.disabled = false;
   }
 });

@@ -18,6 +18,7 @@ and in CI (wireit graph; see README). One command, no surprises.
 | smoke | one full happy path per uplink lane + flow control, with a *generous* latency ceiling (100 ms p50 — catches the F1/F2 wakeup-regression class, never runner jitter) | `packages/bench/src/test-smoke.ts` | per push |
 | labs | platform measurement, not pass/fail: benches, observer lab, write microbench. Results feed [spec/FINDINGS.md](spec/FINDINGS.md), never CI verdicts | `packages/bench`, workbench | when investigating |
 | browser harness (B3) | the real workbench in headed Chrome against a real host, one human click per run (F15) — bench in both uplink lanes at the smoke's 100 ms ceiling + a typed shell echo read back natively | `npm run harness` (`scripts/browser-harness.mjs`) | on demand: after a Chrome update, before a release, when a browser-touching change lands |
+| conformance battery (B4) | the B1 battery re-run on the real platform via one in-page button; structured `{name, ok, detail}` verdicts land in a `conformance` event in `report.json` for the native side | workbench "Conformance battery" button ([#35](https://github.com/dglazkov/fsio/issues/35)) | cooperative loop on demand; every harness run clicks it |
 | sandbox posture | the terminal-demo Seatbelt profile, layer by layer (ROOT allow, `.fsio` deny via SBPL last-match-wins, outside-ROOT deny, fail-closed pty wrapper) — macOS-only, skips elsewhere (same posture as the F-findings being macOS-measured) | `packages/terminal-demo/src/test-sandbox.ts` | per push |
 
 Conventions:
@@ -78,9 +79,14 @@ Browser coverage is tiered by what each tier can actually prove:
   only: the click-per-run cost is Chrome's design, which is also why the
   *scheduled* uplink drift job stays blocked
   ([#22](https://github.com/dglazkov/fsio/issues/22)).
-- **B4 — cooperative loop, formalized
-  ([#35](https://github.com/dglazkov/fsio/issues/35)).** One in-page
-  button runs a client conformance battery and writes structured pass/fail
-  into `report.json` for the native side to read. Covers what automation
+- **B4 — cooperative loop, formalized (LANDED as the workbench's
+  conformance battery, [#35](https://github.com/dglazkov/fsio/issues/35)).**
+  One in-page button ("Conformance battery") re-runs the B1 battery where
+  the platform allows — discovery, D10 spawn/ping/coded refusal, D11
+  first-status + listener disposal, F10 lane selection, D6 host-owned
+  cleanup — and writes each check as `{name, ok, detail}` in a
+  `conformance` event in `report.json` for the native side to read. The
+  DATA-delivery leg needs a pty-less `/bin/cat` (the echo kind has no data
+  sink) and self-skips without `--allow-shell`. Covers what automation
   never will: the real picker, Safe Browsing toggles (#11), new Chrome
-  builds — and the harness clicks the same button once it exists.
+  builds — and the harness clicks the same button (B3 step 4).
