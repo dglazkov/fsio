@@ -6,7 +6,7 @@
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { FsioClient, FsioSession, hasObserver } from "@fsio/client";
+import { FsioClient, FsioSession, hasObserver, type SessionSummary } from "@fsio/client";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
@@ -131,6 +131,73 @@ if (!navigator.platform.startsWith("Mac")) {
 $("copy-cmd").onclick = () => void navigator.clipboard.writeText($("helper-cmd").textContent ?? "");
 $("copy-log").onclick = () => void navigator.clipboard.writeText(logEl.textContent ?? "");
 
+// ---------------------------------------------------- persisted handle (#58)
+// The revisit story: the FileSystemDirectoryHandle survives in IndexedDB;
+// what Chrome does with the *grant* across visits is the measured quantity
+// (the reporter records the permission state seen at every load — findings
+// fodder for whether "Allow on every visit" spans browser restarts).
+
+const IDB_NAME = "fsio-terminal-demo";
+const IDB_KEY = "root";
+
+function idbReq<T>(r: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+
+async function idbStore(mode: IDBTransactionMode): Promise<IDBObjectStore> {
+  const open = indexedDB.open(IDB_NAME, 1);
+  open.onupgradeneeded = () => open.result.createObjectStore("handles");
+  const db = await idbReq(open);
+  return db.transaction("handles", mode).objectStore("handles");
+}
+
+const savedHandle = async (): Promise<FileSystemDirectoryHandle | null> =>
+  ((await idbReq((await idbStore("readonly")).get(IDB_KEY))) as FileSystemDirectoryHandle | undefined) ?? null;
+const saveHandle = async (h: FileSystemDirectoryHandle): Promise<unknown> => idbReq((await idbStore("readwrite")).put(h, IDB_KEY));
+const forgetHandle = async (): Promise<unknown> => idbReq((await idbStore("readwrite")).delete(IDB_KEY));
+
+// On load: a remembered handle skips the picker. "granted" connects with
+// zero clicks; "prompt" needs one (requestPermission requires a user
+// activation, F15) — the reconnect button; "denied" forgets and falls back.
+async function revisit(): Promise<void> {
+  if (typeof showDirectoryPicker !== "function") return; // non-Chrome gate already spoke
+  let saved: FileSystemDirectoryHandle | null = null;
+  try {
+    saved = await savedHandle();
+  } catch {} // IndexedDB unavailable (private mode etc.) — picker path works
+  if (!saved) return;
+  let perm: FsaPermissionState;
+  try {
+    perm = await saved.queryPermission({ mode: "readwrite" });
+  } catch {
+    return;
+  }
+  reporter.event("revisit", { folder: saved.name, permission: perm });
+  log(`remembered folder ${saved.name}/ — permission on load: ${perm}`);
+  if (perm === "granted") {
+    await connectTo(saved, "restored");
+  } else if (perm === "prompt") {
+    const h = saved;
+    const btn = $("reconnect") as HTMLButtonElement;
+    btn.textContent = `Reconnect to ${h.name}/`;
+    btn.hidden = false;
+    btn.onclick = () =>
+      void (async () => {
+        step("asking Chrome to re-grant the folder");
+        const res = await h.requestPermission({ mode: "readwrite" });
+        reporter.event("regrant", { folder: h.name, result: res });
+        if (res !== "granted") return;
+        btn.hidden = true;
+        await connectTo(h, "regranted");
+      })();
+  } else {
+    await forgetHandle().catch(() => {});
+  }
+}
+
 // ---------------------------------------------------------------- connect
 
 let client: FsioClient | null = null;
@@ -161,8 +228,12 @@ async function pick(): Promise<void> {
   } catch {
     return; // user cancelled — not an error
   }
+  await connectTo(root, "picked");
+}
+
+async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "restored" | "regranted"): Promise<void> {
   step(`connecting to ${root.name}/`);
-  $("pick-name").textContent = `${root.name}/`;
+  $("pick-name").textContent = `${root.name}/${via === "picked" ? "" : " (remembered from last visit)"}`;
   clearInterval(hostTimer);
   // Probe for .fsio WITHOUT creating it: connect() would `create: true` a
   // .fsio into whatever folder was picked — in the wrong-folder case that
@@ -185,12 +256,16 @@ async function pick(): Promise<void> {
     client = new FsioClient(root);
     await client.connect();
     await reporter.attach(fsioDir);
-    reporter.event("connected", { folder: root.name });
+    reporter.event("connected", { folder: root.name, via });
   } catch (e) {
     setHelperStatus("bad", `could not open ${root.name}/.fsio`, e instanceof Error ? e.message : String(e));
     reporter.event("connect-failed", { folder: root.name, error: e instanceof Error ? e.message : String(e) });
     return;
   }
+  // Remember the handle only once a helper folder connected — a mispick
+  // must not become next visit's auto-connect target.
+  void saveHandle(root).catch(() => {});
+  $("reconnect").hidden = true;
   helperWasAlive = false;
   await refreshHelper();
   hostTimer = setInterval(() => void refreshHelper(), 2000);
@@ -206,9 +281,10 @@ async function refreshHelper(): Promise<void> {
     if (!helperWasAlive) {
       helperWasAlive = true;
       reporter.event("helper-alive", { info: host.info ?? null });
-      // The payoff frame: folder picked + helper alive = open the shell.
-      // One path, no third click (#16 storyboard).
-      void openTerminal();
+      // The payoff frame: folder + helper = shell. With running shells
+      // already in the folder the picker intercepts (#58, revisit story);
+      // otherwise the original no-third-click path (#16 storyboard).
+      void arrive();
     }
   } else {
     helperWasAlive = false;
@@ -220,6 +296,85 @@ async function refreshHelper(): Promise<void> {
   }
 }
 
+// ------------------------------------------------------- session picker (#58)
+// listSessions() is the picker's whole data source: kind, client tag,
+// origin, status.detached (orphans), status.writer (who holds the uplink).
+
+async function listResumable(): Promise<SessionSummary[]> {
+  if (!client) return [];
+  try {
+    return (await client.listSessions()).filter((s) => s.kind === "shell" && s.status?.state === "running");
+  } catch {
+    return []; // a torn scan (host GC mid-list) reads as empty; next refresh corrects
+  }
+}
+
+async function arrive(): Promise<void> {
+  if (!client || session) return;
+  const rows = await listResumable();
+  reporter.event("sessions-listed", { resumable: rows.length, detached: rows.filter((r) => r.status?.detached).length });
+  if (rows.length === 0) return void openTerminal();
+  step("offering the session picker");
+  showPicker(rows);
+}
+
+let pickerTimer: ReturnType<typeof setInterval> | undefined;
+
+function showPicker(rows: SessionSummary[]): void {
+  $("step3").hidden = true;
+  $("picker").hidden = false;
+  renderPicker(rows);
+  clearInterval(pickerTimer);
+  pickerTimer = setInterval(() => void refreshPicker(), 2000);
+}
+
+function hidePicker(): void {
+  $("picker").hidden = true;
+  clearInterval(pickerTimer);
+}
+
+async function refreshPicker(): Promise<void> {
+  if (session) return hidePicker();
+  renderPicker(await listResumable());
+}
+
+function renderPicker(rows: SessionSummary[]): void {
+  const list = $("session-list");
+  list.textContent = "";
+  if (rows.length === 0) {
+    const p = document.createElement("p");
+    p.className = "fineprint";
+    p.textContent = "no running shells right now — start a new one below.";
+    list.append(p);
+    return;
+  }
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "sess";
+    const info = document.createElement("div");
+    info.className = "sess-info";
+    const id = document.createElement("code");
+    id.textContent = r.id;
+    const hint = document.createElement("span");
+    hint.className = "hint";
+    // Takeover is deliberate (D18): resuming a held session fences the
+    // holder instantly — that's what makes plain refresh work with no
+    // 3-minute detach window. Say so instead of hiding it.
+    hint.textContent = r.status?.detached
+      ? "detached — no tab is holding it, safe to resume"
+      : `held by ${r.client ?? "another client"}${r.origin ? ` at ${r.origin}` : ""} — resuming takes it over (that tab keeps watching, read-only)`;
+    info.append(id, hint);
+    const btn = document.createElement("button");
+    btn.className = "small";
+    btn.textContent = "resume";
+    btn.onclick = () => void openTerminal(r.id);
+    row.append(info, btn);
+    list.append(row);
+  }
+}
+
+$("new-shell").onclick = () => void openTerminal();
+
 // ---------------------------------------------------------------- terminal
 
 let term: Terminal | null = null;
@@ -228,55 +383,132 @@ let session: FsioSession | null = null;
 
 $("restart").onclick = () => void openTerminal();
 
-async function openTerminal(): Promise<void> {
+async function openTerminal(resumeId?: string): Promise<void> {
   if (!client || session) return;
+  hidePicker();
+  clearNotice();
   $("step3").hidden = false;
   $("restart").hidden = true;
+  $("detach").hidden = true;
+  $("superseded").hidden = true;
   if (!term) {
     term = new Terminal({ fontSize: 13, theme: { background: "#14161a" } });
     fit = new FitAddon();
     term.loadAddon(fit);
     term.open($("term"));
-    term.onData((d) => session?.sendData(d));
+    term.onData((d) => {
+      try {
+        session?.sendData(d);
+      } catch {} // superseded fence poisons send(); the banner tells the story
+    });
     new ResizeObserver(() => {
       fit!.fit();
-      session?.notify("resize", { cols: term!.cols, rows: term!.rows });
+      try {
+        session?.notify("resize", { cols: term!.cols, rows: term!.rows });
+      } catch {}
     }).observe($("term"));
   }
   fit!.fit();
   term.reset();
-  $("term-status").textContent = "starting your shell…";
+  $("term-status").textContent = resumeId ? "reattaching…" : "starting your shell…";
 
-  step("starting the shell");
-  const s = (session = client.createSession({ kind: "shell", cols: term.cols, rows: term.rows, client: "terminal-demo" }));
+  step(resumeId ? `reattaching to ${resumeId}` : "starting the shell");
+  const s = (session = resumeId
+    ? client.attachSession(resumeId, { replay: true, client: "terminal-demo" })
+    : client.createSession({ kind: "shell", cols: term.cols, rows: term.rows, client: "terminal-demo" }));
   s.on("error", (e) => notice("Sending to the shell failed.", e.message));
   s.on("note", (m) => log("note:", m));
   s.on("data", (b) => term!.write(b));
   s.on("status", (st) => {
-    reporter.event("terminal-status", { ...st });
+    reporter.event("terminal-status", { id: s.id, ...st });
     if (st.state === "exited") {
       $("term-status").textContent = `shell exited${st.exitCode != null ? ` (code ${st.exitCode})` : ""}`;
       $("restart").hidden = false;
-      session = null;
+      $("detach").hidden = true;
+      if (s === session) session = null;
+    }
+    // Supersede fence (D18): a higher writer epoch means another tab took
+    // the uplink over. Reads continue (the terminal becomes a live
+    // read-only view of the other tab's shell); sends are poisoned. A
+    // first-class `superseded` event is #41 layer 1 — until then the
+    // status stream is the classifier.
+    if (st.writer && st.writer.epoch > s.epoch && s === session) {
+      reporter.event("superseded", { id: s.id, byEpoch: st.writer.epoch });
+      $("superseded").hidden = false;
+      $("detach").hidden = true;
+      $("term-status").textContent = "another tab took this shell over — watching read-only";
     }
   });
   try {
     const info = await Promise.race([
       s.ready,
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("the helper never answered the spawn request (waited 8 s)")), 8000)),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`the helper never answered the ${resumeId ? "attach" : "spawn"} request (waited 8 s)`)), 8000)),
     ]);
-    reporter.event("shell-ready", { ...info });
-    $("term-status").textContent = "connected — this is your machine";
+    reporter.event(resumeId ? "shell-reattached" : "shell-ready", { id: s.id, ...info });
+    $("term-status").textContent = resumeId ? "reattached — scrollback replayed, shell is live" : "connected — this is your machine";
+    $("detach").hidden = false;
+    if (resumeId) {
+      // The pty still has the previous tab's geometry; ours may differ.
+      try {
+        s.notify("resize", { cols: term.cols, rows: term.rows });
+      } catch {}
+    }
     term.focus();
-    log(`shell session ${s.id} (pid ${info.pid}, pty ${info.pty})`);
+    log(`shell session ${s.id} (pid ${info.pid}${resumeId ? `, writer epoch ${s.epoch}` : `, pty ${info.pty}`})`);
   } catch (e) {
-    reporter.event("shell-failed", { error: e instanceof Error ? e.message : String(e) });
-    notice("The helper refused to start a shell.", e instanceof Error ? e.message : String(e));
-    $("term-status").textContent = "shell failed to start";
-    $("restart").hidden = false;
+    reporter.event(resumeId ? "reattach-failed" : "shell-failed", { id: s.id, error: e instanceof Error ? e.message : String(e) });
+    notice(resumeId ? "Couldn't reattach to that shell." : "The helper refused to start a shell.", e instanceof Error ? e.message : String(e));
+    $("term-status").textContent = resumeId ? "reattach failed" : "shell failed to start";
     await s.close().catch(() => {});
-    session = null;
+    if (s === session) session = null;
+    if (resumeId) {
+      $("step3").hidden = true;
+      void arrive(); // back to the picker (it may have exited out from under us)
+    } else {
+      $("restart").hidden = false;
+    }
   }
 }
 
+// Deliberate walk-away (#58/D18): mark the session detached NOW, so the
+// next visit's picker shows it as unambiguously resumable — no waiting out
+// the heartbeat-silence window (D17, 3 min default). The shell keeps running.
+$("detach").onclick = () =>
+  void (async () => {
+    const s = session;
+    if (!s) return;
+    session = null;
+    reporter.event("detach", { id: s.id });
+    await s.detach().catch(() => {});
+    $("step3").hidden = true;
+    log(`detached ${s.id} — the shell keeps running; resume it from the picker`);
+    void arrive();
+  })();
+
+// Re-take a superseded session (#58): locally release the fenced session
+// (detach() can't reach the host — the uplink is gone — but tears down
+// timers/listeners), then attach anew, bumping the epoch back our way.
+$("retake").onclick = () =>
+  void (async () => {
+    const s = session;
+    if (!s) return;
+    session = null;
+    $("superseded").hidden = true;
+    reporter.event("retake", { id: s.id });
+    await s.detach().catch(() => {});
+    void openTerminal(s.id);
+  })();
+
+// Tab-close detach (best-effort): the detach notification rides a dirname-
+// lane commit (~3 ms, F10), which usually beats teardown; when it loses,
+// the heartbeat-silence GC (D17) marks the session detached a few minutes
+// later — same end state, just slower.
+window.addEventListener("pagehide", () => void session?.detach().catch(() => {}));
+// bfcache restore would revive a page whose session was just torn down —
+// reload instead so the revisit path (picker) runs fresh.
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) location.reload();
+});
+
 step("waiting for a folder");
+void revisit();
