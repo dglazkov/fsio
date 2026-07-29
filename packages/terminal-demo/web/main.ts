@@ -416,6 +416,17 @@ async function openTerminal(resumeId?: string): Promise<void> {
   const s = (session = resumeId
     ? client.attachSession(resumeId, { replay: true, client: "terminal-demo" })
     : client.createSession({ kind: "shell", cols: term.cols, rows: term.rows, client: "terminal-demo" }));
+  // Supersede detection must wait for `ready`: while our own attach is in
+  // flight, status.json already shows OUR grant's epoch, but s.epoch is
+  // still 0 — checking early misreads the grant as a takeover (caught by
+  // the first cooperative run: a bogus banner on every reattach).
+  let settled = false;
+  const showSuperseded = (epoch: number): void => {
+    reporter.event("superseded", { id: s.id, byEpoch: epoch });
+    $("superseded").hidden = false;
+    $("detach").hidden = true;
+    $("term-status").textContent = "another tab took this shell over — watching read-only";
+  };
   s.on("error", (e) => notice("Sending to the shell failed.", e.message));
   s.on("note", (m) => log("note:", m));
   s.on("data", (b) => term!.write(b));
@@ -432,12 +443,7 @@ async function openTerminal(resumeId?: string): Promise<void> {
     // read-only view of the other tab's shell); sends are poisoned. A
     // first-class `superseded` event is #41 layer 1 — until then the
     // status stream is the classifier.
-    if (st.writer && st.writer.epoch > s.epoch && s === session) {
-      reporter.event("superseded", { id: s.id, byEpoch: st.writer.epoch });
-      $("superseded").hidden = false;
-      $("detach").hidden = true;
-      $("term-status").textContent = "another tab took this shell over — watching read-only";
-    }
+    if (settled && st.writer && st.writer.epoch > s.epoch && s === session) showSuperseded(st.writer.epoch);
   });
   try {
     const info = await Promise.race([
@@ -447,6 +453,11 @@ async function openTerminal(resumeId?: string): Promise<void> {
     reporter.event(resumeId ? "shell-reattached" : "shell-ready", { id: s.id, ...info });
     $("term-status").textContent = resumeId ? "reattached — scrollback replayed, shell is live" : "connected — this is your machine";
     $("detach").hidden = false;
+    settled = true;
+    // A takeover that raced our attach window surfaces here (the status
+    // dedup means it won't re-emit on its own).
+    const st = s.status;
+    if (st?.writer && st.writer.epoch > s.epoch && s === session) showSuperseded(st.writer.epoch);
     if (resumeId) {
       // The pty still has the previous tab's geometry; ours may differ.
       try {
