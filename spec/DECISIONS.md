@@ -150,7 +150,12 @@ System Access API).
 ## D7 — observer failure downgrades to polling
 
 **Decision.** Observer/watch startup failure MUST downgrade the peer to
-polling; it is never fatal.
+polling; it is never fatal. Failure includes *stalling*: startup that
+has not settled within a bounded window is treated as failed
+(2026-07-29, after
+[F19](FINDINGS.md#f19--observe-can-stall-for-tens-of-seconds-without-rejecting-a-stall-is-not-a-refusal):
+`observe()` stalled ~49 s without rejecting, gating everything behind
+session init).
 
 **Context.** Chrome's `observe()` fails with `InvalidModificationError`
 for directories under `/tmp` on macOS (the `/tmp → /private/tmp` symlink,
@@ -159,9 +164,11 @@ Since D1 guarantees the protocol works under pure polling, degradation is
 free.
 
 **Alternatives rejected.** Treating observer failure as an error (breaks
-on legitimate directories for platform-specific reasons).
+on legitimate directories for platform-specific reasons). Awaiting
+startup unboundedly (F19: a silent stall then poisons `ready` while the
+host's answers sit on disk).
 
-**Findings.** F9. Depends on D1.
+**Findings.** F9, F19. Depends on D1.
 
 ## D8 — snapshot-read failures are transient
 

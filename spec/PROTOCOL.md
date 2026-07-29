@@ -308,7 +308,17 @@ Only filler-padded pings and DATA batches spill to the file lane.
   clears `detached`. The host MUST consume only the current epoch's
   uplink dir. A client observing a writer epoch above its own has been
   superseded: it MUST stop committing chunks (one writer per file,
-  F8/D6) but MAY keep reading. Attaching to an exited session gets
+  F8/D6) but MAY keep reading. A client whose own attach is pending has
+  no epoch to compare yet: it MUST NOT treat a writer record observed in
+  that window as a fence — the record may be its own grant landing, or a
+  predecessor's stale record (every previously-attached session carries
+  one) — and MUST judge the fence once, against the granted epoch, when
+  the grant settles; a deduped status stream will not re-emit the record
+  (the [#58](https://github.com/dglazkov/fsio/issues/58) loop found the
+  reference client fencing itself on both variants — resumed sessions
+  accepted keystrokes and silently dropped them). Nothing can be
+  committed in that window regardless: the attacher's uplink dir does
+  not exist before the grant. Attaching to an exited session gets
   `1005`. Scrollback replay is client-local (the reference client re-reads
   the retained head segment; full multi-segment replay is
   [#57](https://github.com/dglazkov/fsio/issues/57)). Replayed RPC frames

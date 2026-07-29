@@ -52,6 +52,19 @@
     .status.bad::before { content: "❌ "; }
     .status .hint { color: #9aa5b8; font-size: 0.85rem; display: block; margin-top: 0.15rem; }
     .row { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+    .sess {
+      display: flex; align-items: center; gap: 0.7rem; background: #14161a;
+      border-radius: 6px; padding: 0.5rem 0.8rem; margin: 0.4rem 0;
+    }
+    .sess-info { flex: 1; min-width: 0; }
+    .sess-info code { font-size: 0.85rem; }
+    .sess-info .hint { color: #9aa5b8; font-size: 0.82rem; display: block; margin-top: 0.1rem; }
+    #superseded {
+      background: #3b3226; border: 1px solid #d0a05a; border-radius: 6px;
+      padding: 0.6rem 0.8rem; margin-top: 0.6rem; font-size: 0.9rem;
+      display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+    }
+    #superseded span { flex: 1; }
     #notice {
       background: #3b2326; border: 1px solid #bf616a; border-radius: 10px;
       padding: 1rem 1.2rem; margin-bottom: 1.2rem;
@@ -104,12 +117,25 @@
     <p class="explain">
       Chrome will ask twice — once to view, once to save. That's the point:
       <em>you</em> are granting this page the folder, and nothing else.
+      the page remembers the folder — next visit reconnects with one click,
+      or none if you chose “allow on every visit”.
     </p>
     <div class="row">
       <button id="pick" class="primary">Choose folder…</button>
+      <button id="reconnect" class="primary" hidden></button>
       <span id="pick-name" class="fineprint"></span>
     </div>
     <div id="chk-helper" class="status" hidden></div>
+  </section>
+
+  <section id="picker" hidden>
+    <h2><span class="stepnum">3</span>Your shells are still here</h2>
+    <p class="explain">
+      shells live in the helper, not the tab — closing the page doesn't end
+      them. resume one (scrollback included), or start fresh.
+    </p>
+    <div id="session-list"></div>
+    <div class="row"><button id="new-shell">Start a new shell</button></div>
   </section>
 
   <section id="step3" hidden>
@@ -117,6 +143,11 @@
     <div class="row">
       <span id="term-status"></span>
       <button id="restart" class="small" hidden>restart shell</button>
+      <button id="detach" class="small" hidden>detach — keep it running</button>
+    </div>
+    <div id="superseded" hidden>
+      <span>another tab (or window) took this shell over — you're watching read-only now.</span>
+      <button id="retake" class="small">take it back</button>
     </div>
     <div id="term"></div>
     <p class="fineprint">

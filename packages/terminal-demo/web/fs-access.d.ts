@@ -12,6 +12,13 @@ declare class FileSystemObserver {
   disconnect(): void;
 }
 
+type FsaPermissionState = "granted" | "denied" | "prompt";
+
+interface FileSystemHandle {
+  queryPermission(opts?: { mode?: "read" | "readwrite" }): Promise<FsaPermissionState>;
+  requestPermission(opts?: { mode?: "read" | "readwrite" }): Promise<FsaPermissionState>;
+}
+
 declare function showDirectoryPicker(opts?: {
   mode?: "read" | "readwrite";
   id?: string;

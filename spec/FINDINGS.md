@@ -395,6 +395,64 @@ observed jank to chase).
 [#43](https://github.com/dglazkov/fsio/issues/43),
 [#34](https://github.com/dglazkov/fsio/issues/34)
 
+### F19 — `observe()` can stall for tens of seconds without rejecting; a stall is not a refusal
+
+First observed 2026-07-29 (stock Chrome 150.0.0.0, macOS, terminal-demo
+cooperative run — the #58 loop's first click), and **recurring**: the
+same run's later passes tripped the 2 s guard on every reattach in one
+tab (three downgrades in 15 s of clicking) while other tabs' observers
+settled fine — so the stall is common enough that observer startup can
+never sit on the session-init path. Original timeline: on the
+first session after a fresh picker grant, `FileSystemObserver.observe()`
+on the just-created session dir neither resolved nor rejected for
+**~49 s**, then resolved. Timeline pinned by three independent clocks:
+spawn.json committed and answered at 20:04:37 (host log; the response
+and the shell's prompt bytes on disk in `out.00000000.log`), the page's
+8 s ready-timeout fired at 20:04:45, and the `close` notification —
+queued behind the same await — reached the host at 20:05:26. Everything
+gated on the stalled await (`ready`, the uplink pump, heartbeats);
+everything not gated on it worked the whole time (status reads, and
+frame delivery via the hot-poll that a queued resize had armed). The
+same page spawned a second session 4 s after the stall broke:
+`observe()` settled instantly. Not a blanket Chrome-150 regression —
+the cost lab (F18, CfT 151, one day earlier) ran 8 adaptive sessions
+with working observers.
+
+Unmeasured: reproduction rate, the trigger (first-observe-after-grant?
+concurrent native writes during setup? profile state?), and whether the
+49 s is a fixed internal timeout. Worth a targeted probe page if it
+recurs (the F9 repro-page pattern).
+
+Consequence shipped with the observation: observer startup no longer
+gates session init at all — timers start first, the observer is adopted
+when (if) `observe()` settles, and a rejection or a stall past
+`observeSettleMs` (default 2 s) downgrades to polling exactly as a
+refusal would, disconnecting the straggler if it ever settles. D7's
+rule gains the stall case: *an observer that won't start — loudly or
+silently — is a downgrade, never fatal.*
+→ [D7](DECISIONS.md#d7--observer-failure-downgrades-to-polling), F6, F9,
+[#58](https://github.com/dglazkov/fsio/issues/58)
+
+### F20 — a persisted handle with "Allow on every visit" spans browser restarts; revisit is zero-gesture
+
+Measured 2026-07-29 (stock Chrome 150, macOS, the #58 cooperative loop):
+the terminal-demo page stashes the picked `FileSystemDirectoryHandle` in
+IndexedDB and calls `queryPermission({mode: "readwrite"})` on every
+load. Across ~16 page loads in ~90 minutes — including the first load
+after a full Chrome quit-and-relaunch — every single load read
+`"granted"` and reconnected with **zero clicks and zero prompts**. The
+one-click `requestPermission` fallback (needs a user activation, F15)
+never had to fire on this profile after the user chose "Allow on every
+visit" at the original picker grant. Revisit UX consequence: the wizard
+is a first-run-only artifact; after that the folder grant behaves like
+an installed capability.
+
+Unmeasured: what plain "Allow" (not every-visit) yields across
+restarts; whether Chrome's usage-based permission expiry eventually
+decays the grant (worth a check-in weeks, not days); profile-to-profile
+variance.
+→ F15, [#58](https://github.com/dglazkov/fsio/issues/58)
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured

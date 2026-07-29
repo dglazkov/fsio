@@ -154,6 +154,45 @@ test("heartbeatMs: 0 disables the beacon", async () => {
   });
 });
 
+// --------------------------------- notifier: stalled observe() guard (F19)
+
+test("a stalled FileSystemObserver.observe() downgrades to polling; ready still resolves", async () => {
+  // Node has no FileSystemObserver (the B1 tier forces the poll path), so
+  // inject a stalling fake: observe() never settles — the failure mode F19
+  // measured in Chrome (~49 s stall, no rejection, so the D7 refusal path
+  // never fires). The guard must bound it and keep the session alive.
+  class StallingObserver {
+    constructor(_cb: (records: unknown[]) => void) {}
+    observe(): Promise<void> {
+      return new Promise(() => {}); // never settles
+    }
+    disconnect(): void {}
+  }
+  (globalThis as Record<string, unknown>).FileSystemObserver = StallingObserver;
+  try {
+    await withHost({}, async (client) => {
+      const s = client.createSession({ kind: "echo", client: "b1-f19" }, { mode: "adaptive", pollMs: 5, observeSettleMs: 100 });
+      const notes: string[] = [];
+      s.on("note", (n) => notes.push(n));
+      try {
+        const t0 = Date.now();
+        const info = await s.ready; // the stall must not gate this (F19)
+        assert.equal(info.kind, "echo");
+        assert.ok(Date.now() - t0 < 5000, "ready must not wait out the stalled observer");
+        // The downgrade happens concurrently, at the observeSettleMs bound.
+        await waitFor(() => s.mode === "poll", "the downgrade to polling");
+        assert.ok(notes.some((n) => n.includes("F19")), `expected the F19 downgrade note (saw: ${notes.join(" | ") || "none"})`);
+        const { result } = await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+        assert.ok(result.t1 > 0, "session must be fully usable after the downgrade");
+      } finally {
+        await s.close();
+      }
+    });
+  } finally {
+    delete (globalThis as Record<string, unknown>).FileSystemObserver;
+  }
+});
+
 // ------------------------------------------------ attach / detach (D18, #3)
 
 const readStatus = (sessionDir: string): SessionStatus | null => {
@@ -201,6 +240,43 @@ test("attach takeover: replayed scrollback, working uplink on the new epoch, sup
       await a.close();
     }
   });
+});
+
+test("re-attach to a previously-attached session: the stale writer record must not fence the new attacher", async () => {
+  // The #58 dead-terminal bug (cooperative loop, second pass): once a
+  // session has been attached, status.json permanently names a writer.
+  // A NEW attacher reads that record while its own epoch is still 0 —
+  // before its grant response is even on disk — and fenced itself:
+  // ready resolved, replay played, and every keystroke silently failed.
+  // The async policy delay pins the ordering: C polls status (writer
+  // epoch 1 from B's grant) for 250 ms before its own grant can land.
+  await withHost(
+    { onSpawnRequest: async (_spec, info) => { if (info.attach) await sleep(250); return true; } },
+    async (client, root) => {
+      const s = client.createSession({ kind: "echo" }, { pollMs: 5, safetyMs: 50 });
+      await s.ready;
+      const clientB = new FsioClient(new ShimDirectory(root));
+      await clientB.connect();
+      const b = clientB.attachSession(s.id, { pollMs: 5, safetyMs: 50 });
+      await b.ready; // writer {epoch: 1} now durable in status.json
+      await b.detach();
+      const clientC = new FsioClient(new ShimDirectory(root));
+      await clientC.connect();
+      const c = clientC.attachSession(s.id, { pollMs: 5, safetyMs: 50 });
+      const cNotes: string[] = [];
+      c.on("note", (n) => cNotes.push(n));
+      try {
+        const grant = await c.ready;
+        assert.equal(grant.epoch, 2);
+        assert.ok(!cNotes.some((n) => n.includes("superseded")), `C fenced itself on the stale record: ${cNotes.join(" | ")}`);
+        const { result } = await c.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+        assert.ok(result.t1 > 0, "the resumed session must serve the new writer");
+      } finally {
+        await c.close();
+        await s.close();
+      }
+    }
+  );
 });
 
 test("attach to an exited session rejects with ATTACH_FAILED (1005)", async () => {
