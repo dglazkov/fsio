@@ -43,8 +43,9 @@ Conventions:
 ## Not tested (deliberately)
 
 - **Workbench UI** — owned by the cooperative manual loop: a human drives
-  the page, the page self-reports into `.fsio/client/report.json`, the
-  native side (human or agent) reads the verdicts.
+  the page, the page self-reports into `.fsio/client/<clientId>/report.json`
+  (one dir per page load — #39; read the newest), the native side (human or
+  agent) reads the verdicts.
 - **Chrome platform behavior** — you cannot unit-test the ~300 ms observer
   cadence (F6) or the after-write scan (F7). That's what the findings
   notebook is for.

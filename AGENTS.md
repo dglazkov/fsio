@@ -62,7 +62,8 @@ style.
 ## Cooperative verification (browser work)
 
 Two loops, both ending in the agent reading verdicts from the native side
-of `<shared-dir>/.fsio/client/{log.txt,report.json}`:
+of `<shared-dir>/.fsio/client/<clientId>/{log.txt,report.json}` — one dir
+per page load (#39); pick the newest (`ls -t`):
 
 - **One-click harness** (`npm run harness`, TESTING.md B3): agent drives
   the real workbench in headed Chrome; the human's entire job is one

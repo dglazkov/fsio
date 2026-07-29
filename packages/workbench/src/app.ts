@@ -28,10 +28,16 @@ function log(...a: unknown[]): void {
 
 // ------------------------------------------------------------------
 // Reporter: mirrors everything the page knows — log lines, errors, bench
-// results — into <folder>/.fsio/client/ so whoever is on the native side
-// (a human, or an agent debugging this very page) can read it without
-// copy-paste. The shared directory is the communication channel; use it.
+// results — into <folder>/.fsio/client/<clientId>/ so whoever is on the
+// native side (a human, or an agent debugging this very page) can read it
+// without copy-paste. The shared directory is the communication channel;
+// use it. The per-page dir (#39) keeps two pages on one shared dir from
+// fighting over the same files (one writer per file, F8) — consumers scan
+// client/*/report.json and pick by recency.
 class Reporter {
+  // Same shape as session ids; minted per page load, so a refresh gets a
+  // fresh dir and the previous page's dying report survives for forensics.
+  readonly clientId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   lines: string[] = [];
   events: Record<string, unknown>[] = [];
   dirty = false;
@@ -41,7 +47,8 @@ class Reporter {
   timer: ReturnType<typeof setInterval> | undefined;
 
   async attach(fsioDir: FileSystemDirectoryHandle): Promise<void> {
-    this.dir = await fsioDir.getDirectoryHandle("client", { create: true });
+    const clientRoot = await fsioDir.getDirectoryHandle("client", { create: true });
+    this.dir = await clientRoot.getDirectoryHandle(this.clientId, { create: true });
     clearInterval(this.timer);
     this.timer = setInterval(() => this.flush(), 1000);
     this.dirty = true;
@@ -73,6 +80,9 @@ class Reporter {
         JSON.stringify(
           {
             updated: new Date().toISOString(),
+            clientId: this.clientId,
+            page: "workbench",
+            origin: location.origin,
             userAgent: navigator.userAgent,
             hasObserver,
             currentStep: lastStep,
@@ -517,7 +527,7 @@ $("run-commit").onclick = guard(async () => {
 //      msgs/s, the lane split, and the in/ backlog the host must drain.
 //   C. paste — 5 pings with 4 KB filler: always file-lane; the per-commit
 //      floor for bulk uplink.
-// Results go to the page, the nerd log, and .fsio/client/report.json.
+// Results go to the page, the nerd log, and .fsio/client/<clientId>/report.json.
 
 $("run-throughput-lab").onclick = guard(async () => {
   const btn = $in("run-throughput-lab");
@@ -641,7 +651,7 @@ $("run-throughput-lab").onclick = guard(async () => {
       reporter.event("throughput-paste", { pings: 5, payload: 4096, rtt: s });
     }
 
-    say("\ndone — full data in .fsio/client/report.json");
+    say(`\ndone — full data in .fsio/client/${reporter.clientId}/report.json`);
   } finally {
     btn.disabled = false;
     await session?.close().catch(() => {});
@@ -658,7 +668,7 @@ $("run-throughput-lab").onclick = guard(async () => {
 //      in 100ms get delivered?)
 //   D. host→browser echo RTT via observer ONLY, with pings spaced out
 //      (isolated-event latency through the whole protocol)
-// Results go to the page, the nerd log, and .fsio/client/report.json.
+// Results go to the page, the nerd log, and .fsio/client/<clientId>/report.json.
 
 interface LabResults {
   support: boolean;
@@ -834,7 +844,7 @@ $("run-observer-lab").onclick = guard(async () => {
       }
     }
 
-    say("\ndone — full data in .fsio/client/report.json");
+    say(`\ndone — full data in .fsio/client/${reporter.clientId}/report.json`);
     reporter.event("observer-lab", { ...results });
   } finally {
     btn.disabled = false;

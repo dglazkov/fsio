@@ -63,9 +63,13 @@ runtimes (atomicity, append semantics, event coalescing).
 <shared-dir>/.fsio/
   fsio.json                 # { protocol: 0 }
   host.json                 # host heartbeat; rewritten (atomically) every 2s
-  client/                   # client-owned diagnostics (not protocol): the web
-    log.txt                 # workbench mirrors its log, errors, and bench
-    report.json             # results here so the native side can read them
+  client/                   # client-owned diagnostics (not protocol): pages
+    <client-id>/            # mirror logs, errors, and results here so the
+      log.txt               # native side can read them. One dir per page
+      report.json           # load, id = c-<ts36>-<rand> — two pages on one
+                            # dir must not share files (one writer per
+                            # file). Consumers pick by recency; the host
+                            # sweeps stale dirs beyond a small cap (D6)
   sessions/
     <session-id>/           # created by client; id = s-<ts36>-<rand>
       spawn.json            # JSON-RPC spawn request; written LAST by
