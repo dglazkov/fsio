@@ -5,9 +5,9 @@ Platform File System API. Changes to this document track protocol versions.
 
 Companions (non-normative):
 
-- [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F18) behind
+- [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F20) behind
   the rules here. Rules that exist because of a finding cite it.
-- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D18): why the protocol
+- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D19): why the protocol
   is shaped this way, with alternatives rejected.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in

@@ -5,7 +5,7 @@ alternatives rejected, and the findings that forced it. Numbers (D1, D2, …)
 are stable and never reused; superseded decisions get a note, not an edit.
 
 Companions: [PROTOCOL.md](PROTOCOL.md) (the normative spec),
-[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F15).
+[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F20).
 
 ## D1 — events are wakeups, not messages
 
@@ -586,3 +586,89 @@ works for both live and dead predecessors).
 **Findings.** F8 (one writer per file), F16 (why the refresh case can't
 wait out the silence window), F13 (serialized commits bound the fenced
 client's stranded chunks to a handful).
+
+## D19 — the hub pivot: one transport folder as a socket, workspaces as resources
+
+**Decision.** fsio's deployment model pivots from folder-as-connection
+(one host launched per project folder) to a **hub singleton**: a
+long-lived daemon (`fsiod`,
+[#71](https://github.com/dglazkov/fsio/issues/71)) serves exactly one
+well-known directory (working name `~/fsio`). A page grants that one
+directory **once per origin, ever**
+([F20](FINDINGS.md#f20--a-persisted-handle-with-allow-on-every-visit-spans-browser-restarts-revisit-is-zero-gesture))
+— the folder stops being the thing you work on and becomes a socket that
+happens to be a directory. Working folders demote from transport *medium*
+to session *parameters*: `{workspace: name}` in the spawn spec, resolved
+by a daemon-side workspace registry (`fsio share .`), judged by the
+[D12](#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)
+policy, sandboxed per registry profile
+([#46](https://github.com/dglazkov/fsio/issues/46)). The one-folder mode
+remains supported as the degenerate case (hub = workspace, registry of
+one): the library stays folder-agnostic, the daemon is an embedder
+([D13](#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry)/[D14](#d14--host-embedder-surface-introspection-leveled-log-lines-awaited-close-injected-pty)),
+and the existing CLI keeps working. Sequencing is gated — labs before
+spec before code: multi-origin behavior
+([#67](https://github.com/dglazkov/fsio/issues/67)), hub-scale host cost
+([#68](https://github.com/dglazkov/fsio/issues/68)), picker navigation
+([#69](https://github.com/dglazkov/fsio/issues/69)) → the hub spec
+chapter ([#70](https://github.com/dglazkov/fsio/issues/70), producing
+D20+) → fsiod ([#71](https://github.com/dglazkov/fsio/issues/71)) → the
+demo port with a measured gesture-count verdict
+([#72](https://github.com/dglazkov/fsio/issues/72)). This entry records
+direction; the hub's normative rules land with #70's decisions.
+
+**Context.** The per-folder flow taxes every connection with a
+three-artifact rendezvous — create a folder, launch a host on it, grant
+it in the page — because the folder conflates *transport* (where `.fsio/`
+lives) with *subject* (what the shell works on and is sandboxed to). The
+grant gesture cannot be automated
+([F15](FINDINGS.md#f15--browser-write-access-is-gated-per-session-and-cannot-be-automated-one-gesture-unlocks-the-whole-session),
+by Chrome's design), so gesture *count* is the only ergonomic lever — and
+F20 measured the grant as durable across browser restarts ("Allow on
+every visit" + persisted handle = zero-gesture revisits), which makes
+one-grant-per-origin-ever feel like an installed capability. The
+decisive platform wall: **a page cannot reveal the absolute path of a
+picked folder**, so a daemon can never be told which arbitrary folder to
+adopt — discovery of page-picked transport folders is unsolvable, while
+a hub the daemon owns and natively watches has no discovery problem at
+all. Independently,
+[F18](FINDINGS.md#f18--idle-sessions-cost-075session-in-chrome-linear-to-8-and-more-in-the-host-the-pollms-curve-the-wake-loop-self-saturates-at-pollms--wake-duration)
+indicted the host's per-session idle burn (~2–5% of a core per session)
+and deferred the scan-loop redesign the daemon now requires (#68). The
+pivot promotes parked issues to core: #46 (consent/profiles become the
+security spine), [#6](https://github.com/dglazkov/fsio/issues/6)
+(ship-prerequisite: a daemon serving every registered workspace cannot
+keep the v0 thin posture),
+[#8](https://github.com/dglazkov/fsio/issues/8) (an installed daemon
+meeting evolving pages makes version skew real),
+[#7](https://github.com/dglazkov/fsio/issues/7) (the daemon is the
+packaging story). Known risks, each with a lab or an escape hatch:
+multi-origin contention on one hub (#67; fallback — origin-scoped hub
+subdirs cost zero extra gestures, since grants are per-(origin, folder));
+the picker-navigation wart on first grant (#69; `startIn` accepts only
+well-known directories); security blast radius concentrating in daemon
+policy (#6/#46 before anything ships).
+
+**Alternatives rejected.** Status quo per-folder (the rendezvous tax
+scales with folders; fine for a measurement workbench, hostile as a
+product). A daemon multiplexing arbitrary page-picked folders — the
+idea's first form (dies on the no-absolute-path wall: neither side can
+tell the daemon where a picked folder lives, and every workaround is a
+registry hack on both sides; the hub dissolves the discovery problem
+instead of solving it). A localhost WebSocket server — the obvious rival
+(no picker, no 180 B dirname budget — but ambient authority: any page or
+local process can knock, auth must be homegrown, and an open port brings
+CORS/DNS-rebinding surface; the hub delegates its entire auth model to
+the browser's permission system — per-origin, user-visible, revocable in
+chrome://settings, gated by F15's unautomatable gesture — plus 0700 file
+permissions beat localhost's any-local-user reachability, and sessions
+are durable files: scrollback, reattach,
+[D17](#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill)/[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client)
+for free). A big-bang rewrite (D1–D11 are folder-agnostic and carry over
+untouched; staged slices keep main green and the one-folder mode alive
+as the fallback if a hub assumption cracks late).
+
+**Findings.** F15, F18, F20 (motivating); F8/[D6](#d6--one-writer-per-file-one-cleanup-owner)
+(the namespacing question #67 prices). Depends on D12 (policy), D13/D14
+(embedder surface). Feeds #67–#72; promotes #46, #6, #8, #7; supersedes
+[#65](https://github.com/dglazkov/fsio/issues/65) (closed → #72).
