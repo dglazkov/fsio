@@ -23,7 +23,8 @@
     "harness": "node scripts/browser-harness.mjs",
     "bg-lab": "node scripts/background-lab.mjs",
     "cost-lab": "node scripts/cost-lab.mjs",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
+    "check-anchors": "wireit"
   },
   "wireit": {
     "build": {
@@ -40,8 +41,20 @@
       "dependencies": [
         "./packages/common:test",
         "./packages/bench:test",
-        "./packages/terminal-demo:test"
+        "./packages/terminal-demo:test",
+        "check-anchors"
       ]
+    },
+    "check-anchors": {
+      "command": "node scripts/check-anchors.mjs",
+      "files": [
+        "scripts/check-anchors.mjs",
+        "spec/*.md",
+        "TESTING.md",
+        "README.md",
+        "AGENTS.md"
+      ],
+      "output": []
     }
   },
   "devDependencies": {
