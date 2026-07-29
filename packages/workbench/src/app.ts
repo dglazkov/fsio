@@ -227,6 +227,7 @@ async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
   $in("run-throughput-lab").disabled = false;
   $in("run-conformance").disabled = false;
   $in("run-bg-lab").disabled = false;
+  $in("run-cost-lab").disabled = false;
   $in("open-term").disabled = false;
   log(`connected to ${root.name}/.fsio`);
 }
@@ -1068,7 +1069,9 @@ $("run-bg-lab").onclick = guard(async () => {
     bgSession = null;
     btn.textContent = "Background lab";
     await s.close().catch(() => {});
-    reporter.event("bg-lab-stopped", { at: now() });
+    // stats ride along for the cost lab (#43): wakeups turn CPU-time
+    // deltas into a per-wake cost, the machine-portable number.
+    reporter.event("bg-lab-stopped", { at: now(), stats: { ...s.stats } });
     log("background lab stopped");
     return;
   }
@@ -1135,6 +1138,72 @@ $("run-bg-lab").onclick = guard(async () => {
   reporter.event("bg-lab-started", { at: now(), mode: s.mode, pollMs, vis: document.visibilityState });
   btn.textContent = "Stop background lab";
   log(`background lab streaming (mode ${s.mode}, pollMs ${pollMs}) — click again to stop`);
+});
+
+// ---------------------------------------------------------------- cost lab (#43)
+// The idle half of the cost matrix: open N echo sessions that do NOTHING —
+// no stream, no pings — so the native driver (scripts/cost-lab.mjs) can
+// measure what the session *machinery* costs (observer watch + safety
+// poll ≈ 8–12 brokered FSA ops/s per session) as a CPU-time delta against
+// a zero-session baseline. Mode/pollMs come from the advanced settings;
+// the session count from c-count (capped — a fat-fingered 200 would spawn
+// 200 sessions). Stats are reported on stop: wakeups are the denominator
+// that turns CPU seconds into the machine-portable per-wake cost. Button
+// toggles start/stop. Sessions stay well under the host's 5-min idle-echo
+// reap (#3) for any sane cell length.
+
+let costSessions: FsioSession[] | null = null;
+let costCleanup: (() => void) | null = null;
+
+$("run-cost-lab").onclick = guard(async () => {
+  const btn = $in("run-cost-lab");
+  if (costSessions) {
+    const sessions = costSessions;
+    costSessions = null;
+    costCleanup?.();
+    costCleanup = null;
+    btn.textContent = "Cost lab";
+    const stats = sessions.map((s) => ({ id: s.id, ...s.stats }));
+    await Promise.all(sessions.map((s) => s.close().catch(() => {})));
+    reporter.event("cost-lab-stopped", { at: now(), sessions: stats });
+    log(`cost lab stopped (${stats.length} session(s))`);
+    return;
+  }
+
+  step("cost lab: preflight");
+  const host = await refreshHostCheck();
+  if (!host.alive) {
+    fail("The helper doesn't seem to be running in this folder.", "Start it with the command from step 1 and try again.");
+  }
+  const n = Math.max(1, Math.min(32, Number($in("c-count").value) || 1));
+  const mode = $in("b-mode").value as NotifierMode;
+  const pollMs = Number($in("b-poll").value) || 5;
+  step(`cost lab: opening ${n} idle session(s)`);
+  const sessions: FsioSession[] = [];
+  for (let i = 0; i < n; i++) {
+    const s = client!.createSession({ kind: "echo", client: `cost-lab-${i}` }, { mode, pollMs });
+    s.on("note", (m) => log("cost-lab note:", m));
+    s.on("error", (e) => log("cost-lab error:", e.message));
+    sessions.push(s);
+  }
+  costSessions = sessions;
+  const onVis = () => reporter.event("cost-visibility", { state: document.visibilityState, at: now(), atW: Date.now() });
+  document.addEventListener("visibilitychange", onVis);
+  costCleanup = () => document.removeEventListener("visibilitychange", onVis);
+  try {
+    await Promise.all(
+      sessions.map((s) => Promise.race([s.ready, sleep(8000).then(() => Promise.reject(new Error("spawn timeout (8 s)")))]))
+    );
+  } catch (e) {
+    costCleanup();
+    costCleanup = null;
+    costSessions = null;
+    await Promise.all(sessions.map((s) => s.close().catch(() => {})));
+    throw e;
+  }
+  reporter.event("cost-lab-started", { at: now(), n, mode: sessions[0]!.mode, pollMs, vis: document.visibilityState });
+  btn.textContent = "Stop cost lab";
+  log(`cost lab: ${n} idle session(s) settled (mode ${sessions[0]!.mode}, pollMs ${pollMs}) — click again to stop`);
 });
 
 // ---------------------------------------------------------------- terminal

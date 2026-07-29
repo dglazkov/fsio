@@ -223,6 +223,74 @@ export async function startRig({
 }
 
 /**
+ * A cover tab in the SAME window as the workbench, switchable via CDP
+ * (window.open is popup-blocked in stock Chrome; Playwright's newPage()
+ * opens a separate window that never hides the workbench). Sessions are
+ * minted per call because detach() kills them. Remember: with any CDP
+ * client attached the workbench stays visibilityState=visible regardless
+ * of the active tab (F16 method note) — activate, then detach.
+ */
+export async function coverTab(rig, port) {
+  const cdp = await rig.context.newCDPSession(rig.page);
+  const blank = (await cdp.send("Target.createTarget", { url: "about:blank", background: true })).targetId;
+  const workbench = (await cdp.send("Target.getTargets")).targetInfos.find(
+    (t) => t.type === "page" && t.url.includes(`localhost:${port}`)
+  )?.targetId;
+  if (!workbench) throw new Error("could not find the workbench tab target");
+  return {
+    activate: async (which) => {
+      const s = await rig.context.newCDPSession(rig.page);
+      await s.send("Target.activateTarget", { targetId: which === "blank" ? blank : workbench });
+    },
+  };
+}
+
+function parseCputime(s) {
+  // ps cputime: [[dd-]hh:]mm:ss.cc
+  const m = s.trim().match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  return (Number(m[1] ?? 0) * 24 + Number(m[2] ?? 0)) * 3600 + Number(m[3]) * 60 + Number(m[4]);
+}
+
+/**
+ * Exact cumulative CPU seconds per Chrome process (+ the host process).
+ * For small-magnitude cells (#43's idle matrix) the decayed `ps %cpu`
+ * average smears phase boundaries; snapshotting cputime at a cell's start
+ * and end and dividing the delta by wall time is exact. Same tree walk as
+ * sampleChromeProcesses.
+ */
+export function sampleCpuTimes(profile, hostPid) {
+  const out = spawnSync("ps", ["-axo", "pid=,ppid=,cputime=,rss=,command="], { encoding: "utf8" });
+  if (out.status !== 0) return { at: Date.now(), procs: [], host: null };
+  const rows = out.stdout
+    .split("\n")
+    .map((l) => l.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\d+)\s+(.*)$/))
+    .filter(Boolean)
+    .map((m) => ({ pid: +m[1], ppid: +m[2], cpuSec: parseCputime(m[3]), rssMb: +m[4] / 1024, command: m[5] }))
+    .filter((r) => r.cpuSec != null);
+  const main = rows.find((r) => r.command.includes(`--user-data-dir=${profile}`));
+  const procs = [];
+  if (main) {
+    const keep = new Map([[main.pid, { ...main, type: "browser" }]]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const r of rows) {
+        if (keep.has(r.pid) || !keep.has(r.ppid)) continue;
+        const m = r.command.match(/--type=(\S+)/);
+        let type = m ? m[1] : "helper";
+        const sub = r.command.match(/--utility-sub-type=(\S+)/);
+        if (type === "utility" && sub) type = `utility:${sub[1].split(".").pop()}`;
+        keep.set(r.pid, { ...r, type });
+        grew = true;
+      }
+    }
+    for (const { pid, type, cpuSec, rssMb } of keep.values()) procs.push({ pid, type, cpuSec, rssMb });
+  }
+  const host = rows.find((r) => r.pid === hostPid);
+  return { at: Date.now(), procs, host: host ? { cpuSec: host.cpuSec, rssMb: host.rssMb } : null };
+}
+
+/**
  * Sample every Chrome process of this rig (#43: the cost lands in three
  * processes; a DevTools profile of the tab undercounts by construction).
  * The main process is found by its --user-data-dir=<profile> argument;

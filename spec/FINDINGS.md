@@ -333,6 +333,68 @@ line/s, %CPU mean over each 30 s+ phase:
 [#43](https://github.com/dglazkov/fsio/issues/43),
 [#42](https://github.com/dglazkov/fsio/issues/42)
 
+### F18 — idle sessions cost ~0.75%/session in Chrome (linear to ×8) and more in the host; the pollMs curve; the wake loop self-saturates at pollMs ≈ wake duration
+
+Cost lab (`npm run cost-lab`, 2026-07-29, CfT 151.0.7922.34, Safe
+Browsing off, macOS/arm64). Method: one knob per cell, cost = CPU-*time*
+delta over a 60 s cell (macOS `ps %cpu` is a decaying average, too
+smeared for idle magnitudes), reported relative to a zero-session
+baseline (page connected, reporter running: browser 1.30%, renderer
+0.72%).
+
+**Idle matrix** (echo sessions, adaptive 5 ms, no traffic; Δ = minus
+baseline, %CPU):
+
+| cell | Δbrowser | Δrenderer | host |
+|---|---|---|---|
+| idle ×1 | 0.63 | 0.12 | 5.61 |
+| idle ×8 | 4.63 | 1.52 | 16.54 |
+| idle ×8 hidden | 2.36 | 0.30 | 18.47 |
+
+- D4's "zero idle cost": measured ≈ **0.75% of a core per idle session**
+  browser-side (observer watch + 2 safety wakes/s × ~6 brokered ops),
+  and it is **exactly linear** (×1: 0.75, ×8: 0.77%/session) — #34's
+  8-tab wall costs ~6% visible, ~2.7% hidden (the 1 s background clamp
+  on the safety poll, F16).
+- The *host* is the bigger idle burner: ~2–5% native CPU per session
+  (its own per-session polling). Worth its own pass if idle N grows.
+
+**pollMs sweep** (1 Hz stream held constant; latency from a 100-ping
+bench in the same config):
+
+| config | browser | renderer | wakes/s | µs CPU/wake | rtt p50 | p95 (ms) |
+|---|---|---|---|---|---|---|
+| adaptive 5 ms | 42.65 | 15.39 | 204 | 2838 | 5.20 | 10.70 |
+| adaptive 15 ms | 25.00 | 9.18 | 72 | 4758 | 14.80 | 19.40 |
+| adaptive 50 ms | 12.74 | 4.51 | 25 | 6884 | 49.90 | 53.10 |
+| poll-pinned 5 ms | 42.73 | 15.39 | 202 | 2883 | 5.50 | 10.80 |
+| saturation probe 1 ms | 47.76 | 17.24 | 254 | 2556 | 6.80 | 9.20 |
+
+- RTT p50 ≈ pollMs across the sweep; 15 ms nearly halves the burn
+  (58% → 34% Chrome-side) for +10 ms RTT — still under one display
+  frame. The default (5 ms, chosen on the latency axis alone, F2) sits
+  at this machine's saturation edge.
+- **Self-saturation, confirmed:** at pollMs 1 the client reaches only
+  254 wakes/s — the wake itself takes ~4 ms, and the `#wake`
+  re-entrancy guard degrades by *skipping wakes*, so RTT rises (6.8 ms)
+  instead of CPU running away. Structural consequence for slow machines:
+  the RTT floor is the wake *duration*, CPU pegs near one core's worth
+  of wake work, and sub-wake-duration pollMs values buy nothing.
+- Adaptive ≡ poll-pinned under a continuous stream (42.65 vs 42.73%):
+  the observer's ~10× saving (F17) is entirely an idle-state effect.
+- **Portable constant:** ~2.8 ms CPU per wake at full rate ≈ **~0.5 ms
+  CPU per brokered FSA op** (idle cells cross-check: 12 ops/s ≈ 0.75% ≈
+  0.6 ms/op). Burn on another machine ≈ our wake rate × *its* per-op
+  cost; the rate is workload, only the constant is hardware.
+
+Unmeasured, deliberately deferred: package power (`powermetrics`, needs
+sudo — the cooperative leg kept open in
+[#43](https://github.com/dglazkov/fsio/issues/43)); GC/heap churn (no
+observed jank to chase).
+→ [D4](DECISIONS.md#d4--hybrid--adaptive-notification), F16, F17,
+[#43](https://github.com/dglazkov/fsio/issues/43),
+[#34](https://github.com/dglazkov/fsio/issues/34)
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured

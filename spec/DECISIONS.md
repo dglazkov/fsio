@@ -89,16 +89,21 @@ configurable from user code).
 [F17](FINDINGS.md#f17--the-5-ms-hot-poll-costs-52-of-a-core-across-three-processes-the-fsa-brokering-burn-lands-in-the-browser-process)).**
 The hot poll's active-state burn is ~38% browser-process + ~13.5%
 renderer CPU while a stream flows (observer-only: ~4.5% + 1.9% at
-~350 ms latency) — the "zero idle cost" claim is about the *gated* state
-and remains unmeasured
-([#43](https://github.com/dglazkov/fsio/issues/43)). The observer
+~350 ms latency). The gated idle state measures ≈ **0.75% of a core per
+session** browser-side, linear to ×8, plus ~2–5% native in the host —
+small, not zero
+([F18](FINDINGS.md#f18--idle-sessions-cost-075session-in-chrome-linear-to-8-and-more-in-the-host-the-pollms-curve-the-wake-loop-self-saturates-at-pollms--wake-duration)).
+F18's sweep also bounds the knob: RTT p50 ≈ pollMs, 15 ms halves the
+streaming burn, and the wake loop self-saturates when pollMs falls
+below the wake duration (~4 ms here) — on slower machines the RTT floor
+is the wake duration, not the configured poll. The observer
 sentinel also turns out to be the background-tab survival mechanism:
 Chrome does not throttle FileSystemObserver in hidden tabs
 ([F16](FINDINGS.md#f16--filesystemobserver-is-not-throttled-in-hidden-tabs-adaptive-mode-degrades-to-observer-cadence-in-the-background-and-recovers-instantly)),
 so backgrounded adaptive degrades to observer cadence instead of
 stalling.
 
-**Findings.** F2, F3, F6, F16, F17.
+**Findings.** F2, F3, F6, F16, F17, F18.
 
 ## D5 — dirname fast lane for small uplink batches
 
