@@ -56,6 +56,31 @@ export const hasObserver = "FileSystemObserver" in globalThis;
 // are exhausted the failure surfaces as a transport error.
 const COMMIT_RETRY_MS = [10, 50, 250, 1000];
 
+// Dirname-lane self-defense (#4): the fast lane exploits a non-contractual
+// Chrome asymmetry (F10: directory creation skips the after-write scan
+// that costs a file close() ~65-80 ms, F7). Real traffic doubles as the
+// probe — every commit is timed, spawn.json/attach.json seed the file-lane
+// baseline before any chunk flows — and in auto mode the lane is abandoned
+// when it stops earning its keep:
+//   slow (reversible): DIR_LANE_SLOW_STREAK consecutive dir commits above
+//     DIR_LANE_SLOW_MS *and* no longer meaningfully faster than the file
+//     baseline (the comparative guard keeps a uniformly slow filesystem —
+//     where the lane still wins — from tripping it). Re-probed with one
+//     real small batch after DIR_LANE_REPROBE_MS.
+//   broken (for the session): a dir commit failed where the same bytes
+//     then landed as a file chunk (name-length limits, filesystem quirks) —
+//     DIR_LANE_BROKEN_STRIKES such fallbacks latch it off.
+const DIR_LANE_SLOW_MS = 25;
+const DIR_LANE_SLOW_STREAK = 3;
+const DIR_LANE_REPROBE_MS = 60_000;
+const DIR_LANE_BROKEN_STRIKES = 2;
+const LANE_EWMA_ALPHA = 0.3;
+
+type DirLaneState = "on" | "slow" | "broken";
+
+const ewma = (prev: number | undefined, sample: number): number =>
+  prev === undefined ? sample : prev * (1 - LANE_EWMA_ALPHA) + sample * LANE_EWMA_ALPHA;
+
 const errName = (e: unknown) => (e instanceof DOMException || e instanceof Error ? e.name : "Error");
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -95,6 +120,9 @@ export interface SessionOptions {
    *  clamp timers to 1/min (F16), and the host's detach window (3 min
    *  default) tolerates that. 0 disables (labs, legacy behavior). */
   heartbeatMs?: number;
+  /** Dirname-lane probe tuning (#4) — injectable so tests run the latch
+   *  logic at short timescales. Defaults are the shipped thresholds. */
+  uplinkLane?: { slowMs?: number; reprobeMs?: number };
 }
 
 export interface SessionEventMap {
@@ -225,6 +253,15 @@ export class FsioSession {
     staleReads?: number;
     /** uplink commits that failed transiently and were retried (#37) */
     commitRetries?: number;
+    /** #4 lane probe: commit-latency EWMAs (ms) per lane. File is seeded
+     *  by the spawn.json/attach.json commit, so the baseline exists
+     *  before the first chunk. */
+    dirCommitMs?: number;
+    fileCommitMs?: number;
+    /** dirname lane health (auto mode): on | slow (re-probed) | broken */
+    dirLane?: DirLaneState;
+    /** dir-lane commits that had to re-land as file chunks (#4) */
+    laneFallbacks?: number;
   } = {
     chunksWritten: 0,
     dirChunks: 0,
@@ -272,6 +309,13 @@ export class FsioSession {
   #lastAckTotal = 0;
   #lastAckAt = 0;
   #outSeq = 1; // next chunk number to write
+  // Dirname-lane health (#4; auto mode only — forced lanes are for labs).
+  #dirLane: DirLaneState = "on";
+  #dirLaneSlowMs: number;
+  #dirLaneReprobeMs: number;
+  #dirLaneSince = 0; // when "slow" latched; gates the re-probe
+  #dirSlowStreak = 0;
+  #dirLaneStrikes = 0;
   #queue: Uint8Array[] = []; // encoded frames awaiting commit
   #pumping = false;
   #reading = false;
@@ -291,7 +335,9 @@ export class FsioSession {
   #wakeFn!: () => void;
 
   constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec | null, opts: SessionOptions = {}, attach?: { replay: boolean; client?: string | undefined }) {
-    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500, heartbeatMs = 20_000 } = opts;
+    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500, heartbeatMs = 20_000, uplinkLane = {} } = opts;
+    this.#dirLaneSlowMs = uplinkLane.slowMs ?? DIR_LANE_SLOW_MS;
+    this.#dirLaneReprobeMs = uplinkLane.reprobeMs ?? DIR_LANE_REPROBE_MS;
     // D15: a web-page client reports its origin — stamped HERE, overriding
     // caller-supplied values, so a page cannot claim a foreign origin
     // through this API. (It can still write spawn.json by hand: the field
@@ -306,8 +352,9 @@ export class FsioSession {
     // uplink "auto": small frame batches ride the dirname fast lane (≤80ms
     // → ~3ms measured, spec/FINDINGS.md F10 — directory creation skips
     // Chrome's after-write scan); big batches fall back to file chunks.
-    // "file" forces file chunks.
+    // "file" forces file chunks. Auto also probes lane health (#4).
     this.uplink = uplink;
+    if (uplink === "auto") this.stats.dirLane = "on";
     // Notifier modes (spec/FINDINGS.md F6, refined by the observer lab):
     //   adaptive (default) — observer as idle sentinel (Chrome delivers on a
     //     ~300ms cadence: fine for waking up, useless for streams) + hot poll
@@ -453,10 +500,14 @@ export class FsioSession {
 
   async #writeFile(name: string, bytes: Uint8Array, dir: FsDirectory = this.#dir): Promise<void> {
     return op(`committing ${name}`, async () => {
+      const t0 = performance.now();
       const fh = await dir.getFileHandle(name, { create: true });
       const w = await fh.createWritable();
       await w.write(bytes as Uint8Array<ArrayBuffer>);
       await w.close(); // atomic commit point
+      // Every file commit (spawn.json, attach.json, chunks) samples the
+      // file-lane baseline (#4) — the comparative guard's denominator.
+      this.stats.fileCommitMs = ewma(this.stats.fileCommitMs, performance.now() - t0);
     });
   }
 
@@ -544,26 +595,110 @@ export class FsioSession {
   //     consumption point, inert until session cleanup (D6).
   async #commitChunk(batch: Uint8Array): Promise<void> {
     const seq = this.#outSeq;
-    const useDirLane = this.uplink !== "file" && batch.length <= DIR_CHUNK_MAX_BYTES;
+    // Lane choice (#4): forced modes bypass the health machinery (labs
+    // measure raw lanes); auto prefers dirname while it earns its keep.
+    let dirLane = this.uplink === "dirname" || (this.uplink === "auto" && batch.length <= DIR_CHUNK_MAX_BYTES && this.#dirLaneEligible());
+    let fellBack = false;
     for (let attempt = 0; ; attempt++) {
       try {
-        if (useDirLane) {
+        if (dirLane) {
           // payload rides the directory *name*; no content write, no close()
           const name = dirChunkName(seq, batch);
+          const t0 = performance.now();
           await op(`committing ${name.slice(0, 12)}…/`, () => this.#inDir.getDirectoryHandle(name, { create: true }));
           this.stats.dirChunks++;
+          if (this.uplink === "auto") this.#dirLaneSample(performance.now() - t0);
         } else {
           await this.#writeFile(chunkName(seq), batch, this.#inDir);
           this.stats.fileChunks++;
+          // The dir lane failed but the same bytes landed as a file: the
+          // failure was lane-specific (name limits, filesystem quirks) —
+          // strike it; enough strikes latch it off for the session (#4).
+          if (fellBack) this.#dirLaneStrike();
         }
         this.#outSeq = seq + 1;
         return;
       } catch (e) {
+        if (dirLane && this.uplink === "auto") {
+          // #4 failure fallback: re-land THIS batch as a file chunk (same
+          // seq — idempotent, see above) instead of burning retries on a
+          // lane that may be structurally broken. Whether it was transient
+          // is judged by the file attempt's outcome, not guessed here.
+          dirLane = false;
+          fellBack = true;
+          this.stats.laneFallbacks = (this.stats.laneFallbacks ?? 0) + 1;
+          this.#emit("note", `chunk ${seq} dirname commit failed (${errMsg(e)}) — falling back to a file chunk`);
+          continue; // the file lane is a different mechanism; no backoff owed
+        }
         if (attempt >= COMMIT_RETRY_MS.length || this.#closed) throw e;
         this.stats.commitRetries = (this.stats.commitRetries ?? 0) + 1;
         this.#emit("note", `chunk ${seq} commit failed (${errMsg(e)}) — retrying in ${COMMIT_RETRY_MS[attempt]}ms`);
         await new Promise((r) => setTimeout(r, COMMIT_RETRY_MS[attempt]));
       }
+    }
+  }
+
+  // ---- dirname-lane health (#4; auto mode only)
+
+  /** May this small batch ride the dirname lane? "slow" earns one real
+   *  batch as a re-probe once per reprobe window (the periodic re-probe:
+   *  no synthetic traffic, the next chunk is the experiment). */
+  #dirLaneEligible(): boolean {
+    if (this.#dirLane === "on") return true;
+    if (this.#dirLane === "broken") return false;
+    if (Date.now() - this.#dirLaneSince >= this.#dirLaneReprobeMs) {
+      this.#dirLaneSince = Date.now(); // one probe per window, even if it fails
+      return true;
+    }
+    return false;
+  }
+
+  #dirLaneStrike(): void {
+    if (this.#dirLane === "broken") return;
+    if (++this.#dirLaneStrikes >= DIR_LANE_BROKEN_STRIKES) {
+      this.#dirLane = "broken";
+      this.stats.dirLane = "broken";
+      this.#emit("note", `dirname lane disabled for this session (${this.#dirLaneStrikes} commits failed where file chunks worked)`);
+    }
+  }
+
+  #dirLaneSample(ms: number): void {
+    this.stats.dirCommitMs = ewma(this.stats.dirCommitMs, ms);
+    this.stats.dirLane = this.#dirLane;
+    // Hidden tabs get throttled through no fault of the lane (F16) — don't
+    // judge it on junk timings. (Node embedders have no document: judged.)
+    const vis = (globalThis as { document?: { visibilityState?: string } }).document?.visibilityState;
+    if (this.#dirLane === "broken" || vis === "hidden") return;
+    const file = this.stats.fileCommitMs;
+    // Slow = over the absolute floor AND no longer meaningfully beating
+    // the file baseline. The second clause keeps a uniformly slow
+    // filesystem (dir 50 ms, file 200 ms — the lane still wins) honest.
+    const slow = ms > this.#dirLaneSlowMs && (file === undefined || ms > file * 0.75);
+    if (this.#dirLane === "on") {
+      this.#dirSlowStreak = slow ? this.#dirSlowStreak + 1 : 0;
+      // A streak, not one sample: a single GC pause or scan hiccup must
+      // not park the fast lane (F10's 2.8 ms vs F7's ~70 ms is the gap
+      // being probed — the asymmetry closing shows up as EVERY commit
+      // landing at the scan floor, not one outlier).
+      if (this.#dirSlowStreak >= DIR_LANE_SLOW_STREAK) {
+        this.#dirLane = "slow";
+        this.stats.dirLane = "slow";
+        this.#dirLaneSince = Date.now();
+        this.#emit(
+          "note",
+          `dirname lane slow (${this.#dirSlowStreak}× > ${this.#dirLaneSlowMs}ms, EWMA ${this.stats.dirCommitMs!.toFixed(1)}ms) — preferring file chunks, will re-probe`
+        );
+      }
+    } else if (!slow) {
+      // The re-probe came back fast: restore, and let the EWMA restart
+      // from this sample so stale slow readings don't linger in stats.
+      this.#dirLane = "on";
+      this.stats.dirLane = "on";
+      this.stats.dirCommitMs = ms;
+      this.#dirSlowStreak = 0;
+      this.#emit("note", `dirname lane recovered (${ms.toFixed(1)}ms) — fast lane restored`);
+    } else {
+      this.#dirLaneSince = Date.now(); // still slow; next probe next window
     }
   }
 

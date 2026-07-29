@@ -206,6 +206,29 @@ Only filler-padded pings and DATA batches spill to the file lane.
   directory creation skips the browser's expensive after-write scan.
   Larger batches use file chunks (`NNNNNNNN.f`). Ordering across lanes is
   preserved by the shared sequence numbers.
+- **File chunks are the always-works lane; the dirname lane is an
+  optimization** ([#4](https://github.com/dglazkov/fsio/issues/4)): the
+  fast lane exploits a non-contractual Chrome asymmetry (F10, confirmed
+  Safe Browsing by F13/#11) that any release could close, and encodes
+  payload in names, which filesystems constrain (length limits, character
+  rules). A consumer MUST accept every chunk sequence as file chunks; a
+  client MUST be able to fall back to the file lane at any point
+  mid-session and MUST abandon a dirname commit that fails where a file
+  commit succeeds. A failed-then-retried seq MAY re-land on the other
+  lane; if both commits become visible, the host consumes whichever it
+  maps last and the twin is inert below the consumption point (removed
+  with the session dir, D6). A client SHOULD also monitor the lane's
+  latency advantage (its sole reason to exist) and prefer file chunks
+  when it is gone — the reference client times real commits, parks the
+  lane after a streak of scan-floor-priced dir commits, and re-probes it
+  with one live batch per cooldown window.
+- Case-folding filesystems (APFS, NTFS, exFAT are case-insensitive but
+  case-PRESERVING) cannot collide dirname chunks: distinct chunks always
+  differ in the decimal seq prefix, and a same-seq retry re-creates the
+  byte-identical name. Case-DESTROYING filesystems (bare FAT16) would
+  corrupt payloads and are out of scope
+  ([#4](https://github.com/dglazkov/fsio/issues/4) audit; the
+  failure-fallback above is the net).
 - The host deletes a chunk after consuming it; deletion **is** the ack.
   Client-side backpressure = cap on outstanding (not-yet-deleted) chunks.
   (Not yet implemented; see open questions.)
@@ -387,12 +410,16 @@ renumbered.
    assumptions explicitly.
    → [#5](https://github.com/dglazkov/fsio/issues/5)
 8. **Uplink floor workarounds.** ~~Resolved by F10~~: the dirname fast lane
-   sidesteps the `close()` scan entirely (69 ms → 2.8 ms). Remaining
-   sub-questions: is the trick durable (could Chrome start
-   scanning/blocking high-rate directory creation? name-length limits on
-   other filesystems?), and should bulk file-chunk traffic get local-echo
-   masking anyway for the paste-heavy case.
-   → [#4](https://github.com/dglazkov/fsio/issues/4) (lane durability),
+   sidesteps the `close()` scan entirely (69 ms → 2.8 ms). ~~Is the trick
+   durable?~~ Hardened by
+   [#4](https://github.com/dglazkov/fsio/issues/4): file chunks are the
+   normative always-works lane (see Uplink); the client falls back on
+   dirname failure, parks the lane when its latency advantage disappears
+   (the scan-asymmetry regression), and re-probes it periodically. Drift
+   in the underlying numbers is
+   [#22](https://github.com/dglazkov/fsio/issues/22)'s job. Remaining:
+   should bulk file-chunk traffic get local-echo masking for the
+   paste-heavy case →
    [#10](https://github.com/dglazkov/fsio/issues/10) (local echo)
 9. **Cleanup ownership.** ~~Who deletes finished session dirs?~~ Resolved
    by F8/D6: the host, on CTL `close` and via stale-session GC.
