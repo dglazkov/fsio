@@ -76,6 +76,13 @@ const DIR_LANE_REPROBE_MS = 60_000;
 const DIR_LANE_BROKEN_STRIKES = 2;
 const LANE_EWMA_ALPHA = 0.3;
 
+// Bound on FileSystemObserver.observe() settling (F19): a first-use
+// observe() was measured stalling ~49 s (Chrome 150, first session after a
+// fresh grant) — no rejection, so the D7 refusal path never fired, and the
+// stall gated `ready` (and the uplink behind it) while the host's spawn
+// answer sat on disk. Past this bound the notifier downgrades to polling.
+const OBSERVE_SETTLE_MS = 2000;
+
 type DirLaneState = "on" | "slow" | "broken";
 
 const ewma = (prev: number | undefined, sample: number): number =>
@@ -123,6 +130,10 @@ export interface SessionOptions {
   /** Dirname-lane probe tuning (#4) — injectable so tests run the latch
    *  logic at short timescales. Defaults are the shipped thresholds. */
   uplinkLane?: { slowMs?: number; reprobeMs?: number };
+  /** Bound on observer startup settling before the notifier downgrades to
+   *  polling (F19: a stalled observe() must not gate `ready`). Default
+   *  2000; injectable so tests run the guard at short timescales. */
+  observeSettleMs?: number;
 }
 
 export interface SessionEventMap {
@@ -326,6 +337,7 @@ export class FsioSession {
   // session owns id correlation; responses are consumed in #drainSegment.
   #rpc: RpcEndpoint;
 
+  #observeSettleMs: number;
   #observer: FileSystemObserver | null = null;
   #pollTimer: ReturnType<typeof setInterval> | undefined;
   #hotTimer: ReturnType<typeof setInterval> | null = null;
@@ -335,9 +347,10 @@ export class FsioSession {
   #wakeFn!: () => void;
 
   constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec | null, opts: SessionOptions = {}, attach?: { replay: boolean; client?: string | undefined }) {
-    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500, heartbeatMs = 20_000, uplinkLane = {} } = opts;
+    const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500, heartbeatMs = 20_000, uplinkLane = {}, observeSettleMs = OBSERVE_SETTLE_MS } = opts;
     this.#dirLaneSlowMs = uplinkLane.slowMs ?? DIR_LANE_SLOW_MS;
     this.#dirLaneReprobeMs = uplinkLane.reprobeMs ?? DIR_LANE_REPROBE_MS;
+    this.#observeSettleMs = observeSettleMs;
     // D15: a web-page client reports its origin — stamped HERE, overriding
     // caller-supplied values, so a page cannot claim a foreign origin
     // through this API. (It can still write spawn.json by hand: the field
@@ -712,8 +725,24 @@ export class FsioSession {
     this.#wakeFn = wake;
     if (this.#mode === "observer" || this.#mode === "hybrid" || this.#mode === "adaptive") {
       try {
-        this.#observer = new FileSystemObserver(wake);
-        await this.#observer.observe(this.#dir, { recursive: true });
+        const obs = new FileSystemObserver(wake);
+        // observe() can STALL, not just refuse (F19: ~49 s on the first
+        // session after a fresh grant, Chrome 150) — and this await gates
+        // `ready` and the uplink. Bound it; a stall is the same downgrade
+        // as a refusal (D7), and the straggler is disconnected if it ever
+        // settles (by then the poll owns wakes).
+        const started = obs.observe(this.#dir, { recursive: true });
+        const timedOut = await Promise.race([
+          started.then(() => false),
+          new Promise<boolean>((r) => setTimeout(() => r(true), this.#observeSettleMs)),
+        ]);
+        if (timedOut) {
+          started.then(() => obs.disconnect()).catch(() => {});
+          this.#emit("note", `FileSystemObserver.observe() did not settle within ${this.#observeSettleMs}ms (F19) — falling back to polling`);
+          this.#mode = "poll";
+        } else {
+          this.#observer = obs;
+        }
       } catch (e) {
         // An observer that won't start is a downgrade, not a failure (D7).
         // (Known trigger: directories under /tmp on macOS — spec/FINDINGS.md F9.)

@@ -154,6 +154,42 @@ test("heartbeatMs: 0 disables the beacon", async () => {
   });
 });
 
+// --------------------------------- notifier: stalled observe() guard (F19)
+
+test("a stalled FileSystemObserver.observe() downgrades to polling; ready still resolves", async () => {
+  // Node has no FileSystemObserver (the B1 tier forces the poll path), so
+  // inject a stalling fake: observe() never settles — the failure mode F19
+  // measured in Chrome (~49 s stall, no rejection, so the D7 refusal path
+  // never fires). The guard must bound it and keep the session alive.
+  class StallingObserver {
+    constructor(_cb: (records: unknown[]) => void) {}
+    observe(): Promise<void> {
+      return new Promise(() => {}); // never settles
+    }
+    disconnect(): void {}
+  }
+  (globalThis as Record<string, unknown>).FileSystemObserver = StallingObserver;
+  try {
+    await withHost({}, async (client) => {
+      const s = client.createSession({ kind: "echo", client: "b1-f19" }, { mode: "adaptive", pollMs: 5, observeSettleMs: 100 });
+      const notes: string[] = [];
+      s.on("note", (n) => notes.push(n));
+      try {
+        const info = await s.ready; // the stall must not gate this (F19)
+        assert.equal(info.kind, "echo");
+        assert.equal(s.mode, "poll", "expected the downgrade to polling");
+        assert.ok(notes.some((n) => n.includes("F19")), `expected the F19 downgrade note (saw: ${notes.join(" | ") || "none"})`);
+        const { result } = await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+        assert.ok(result.t1 > 0, "session must be fully usable after the downgrade");
+      } finally {
+        await s.close();
+      }
+    });
+  } finally {
+    delete (globalThis as Record<string, unknown>).FileSystemObserver;
+  }
+});
+
 // ------------------------------------------------ attach / detach (D18, #3)
 
 const readStatus = (sessionDir: string): SessionStatus | null => {

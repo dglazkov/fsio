@@ -395,6 +395,39 @@ observed jank to chase).
 [#43](https://github.com/dglazkov/fsio/issues/43),
 [#34](https://github.com/dglazkov/fsio/issues/34)
 
+### F19 — `observe()` can stall for tens of seconds without rejecting; a stall is not a refusal
+
+Single observation so far (2026-07-29, stock Chrome 150.0.0.0, macOS,
+terminal-demo cooperative run — the #58 loop's first click): on the
+first session after a fresh picker grant, `FileSystemObserver.observe()`
+on the just-created session dir neither resolved nor rejected for
+**~49 s**, then resolved. Timeline pinned by three independent clocks:
+spawn.json committed and answered at 20:04:37 (host log; the response
+and the shell's prompt bytes on disk in `out.00000000.log`), the page's
+8 s ready-timeout fired at 20:04:45, and the `close` notification —
+queued behind the same await — reached the host at 20:05:26. Everything
+gated on the stalled await (`ready`, the uplink pump, heartbeats);
+everything not gated on it worked the whole time (status reads, and
+frame delivery via the hot-poll that a queued resize had armed). The
+same page spawned a second session 4 s after the stall broke:
+`observe()` settled instantly. Not a blanket Chrome-150 regression —
+the cost lab (F18, CfT 151, one day earlier) ran 8 adaptive sessions
+with working observers.
+
+Unmeasured: reproduction rate, the trigger (first-observe-after-grant?
+concurrent native writes during setup? profile state?), and whether the
+49 s is a fixed internal timeout. Worth a targeted probe page if it
+recurs (the F9 repro-page pattern).
+
+Consequence shipped with the observation: `observe()` settling is now
+bounded (`observeSettleMs`, default 2 s) — past it the client downgrades
+to polling exactly as it would on a refusal, and disconnects the
+straggler if it ever settles. D7's rule gains the stall case: *an
+observer that won't start — loudly or silently — is a downgrade, never
+fatal.*
+→ [D7](DECISIONS.md#d7--observer-failure-downgrades-to-polling), F6, F9,
+[#58](https://github.com/dglazkov/fsio/issues/58)
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
