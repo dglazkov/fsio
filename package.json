@@ -21,6 +21,7 @@
     "bench": "node packages/bench/dist/node-client.js",
     "dev": "scripts/dev.sh",
     "harness": "node scripts/browser-harness.mjs",
+    "bg-lab": "node scripts/background-lab.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "wireit": {
