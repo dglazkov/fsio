@@ -1,6 +1,6 @@
 // terminal-demo page (#16 S4): one path — run helper, pick folder, get a
 // sandboxed shell. Deliberately small; the measurement workbench keeps all
-// the labs. Self-reports into <folder>/.fsio/client/{log.txt,report.json}
+// the labs. Self-reports into <folder>/.fsio/client/<clientId>/{log.txt,report.json}
 // for the cooperative verification loop (TESTING.md: the page reports, the
 // native side reads verdicts).
 import { Terminal } from "@xterm/xterm";
@@ -15,6 +15,9 @@ const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
 let lastStep = "loading";
 class Reporter {
+  // Per-page dir (#39): two pages on one shared dir must not fight over the
+  // same report files (one writer per file, F8). Same id shape as sessions.
+  readonly clientId = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   lines: string[] = [];
   events: Record<string, unknown>[] = [];
   dirty = false;
@@ -24,7 +27,8 @@ class Reporter {
   timer: ReturnType<typeof setInterval> | undefined;
 
   async attach(fsioDir: FileSystemDirectoryHandle): Promise<void> {
-    this.dir = await fsioDir.getDirectoryHandle("client", { create: true });
+    const clientRoot = await fsioDir.getDirectoryHandle("client", { create: true });
+    this.dir = await clientRoot.getDirectoryHandle(this.clientId, { create: true });
     clearInterval(this.timer);
     this.timer = setInterval(() => void this.flush(), 1000);
     this.dirty = true;
@@ -56,6 +60,7 @@ class Reporter {
         JSON.stringify(
           {
             updated: new Date().toISOString(),
+            clientId: this.clientId,
             page: "terminal-demo",
             origin: location.origin,
             userAgent: navigator.userAgent,

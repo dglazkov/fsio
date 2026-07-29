@@ -225,6 +225,11 @@ const DEFAULT_LIMITS: Required<HostLimits> = {
   ackResume: 2 * 1024 * 1024,
 };
 
+// Reporter dirs (#39): pages self-report under .fsio/client/<clientId>/, one
+// dir per page load. Enough history for forensics; beyond this, stale dirs
+// are swept (host owns .fsio cleanup — D6).
+const CLIENT_DIR_CAP = 8;
+
 // ---------------------------------------------------------------- helpers
 
 function writeFileAtomic(file: string, data: string | Uint8Array): void {
@@ -708,6 +713,45 @@ export class HostServer {
         s.close();
         this.removeSessionDir(s, "idle");
       }
+    }
+    this.sweepClientDirs();
+  }
+
+  // Per-page reporter dirs (#39) accumulate one per page load in a
+  // long-lived shared dir; the host owns .fsio cleanup (D6). Keep the
+  // newest CLIENT_DIR_CAP; beyond that, remove only dirs untouched for
+  // staleGraceMs — a live reporter flushes at least every 5 s, so a live
+  // page's dir never looks stale.
+  private sweepClientDirs(): void {
+    const root = path.join(this.fsioDir, "client");
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      return; // no reporter has attached yet
+    }
+    const dirs: { name: string; mtime: number }[] = [];
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      try {
+        const p = path.join(root, e.name);
+        // Recency = the dir or its report, whichever moved last (the swap-
+        // file commit bumps the dir too, but don't depend on that detail).
+        let mtime = fs.statSync(p).mtimeMs;
+        try {
+          mtime = Math.max(mtime, fs.statSync(path.join(p, "report.json")).mtimeMs);
+        } catch {}
+        dirs.push({ name: e.name, mtime });
+      } catch {}
+    }
+    if (dirs.length <= CLIENT_DIR_CAP) return;
+    dirs.sort((a, b) => b.mtime - a.mtime);
+    for (const d of dirs.slice(CLIENT_DIR_CAP)) {
+      if (Date.now() - d.mtime < this.timings.staleGraceMs) continue;
+      try {
+        fs.rmSync(path.join(root, d.name), { recursive: true, force: true });
+        this.log.info(`client dir ${d.name}: over cap (${CLIENT_DIR_CAP}) and stale, removed`);
+      } catch {}
     }
   }
 

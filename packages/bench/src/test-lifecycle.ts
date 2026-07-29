@@ -79,6 +79,34 @@ test("idle shell sessions are NOT reaped (they may hold real user processes)", a
   });
 });
 
+// ------------------------------------------- reporter client-dir sweep (#39)
+
+test("idle sweep caps .fsio/client/* dirs: newest kept, stale overflow removed, fresh never touched", async () => {
+  // #39: one reporter dir per page load; the host owns .fsio cleanup (D6).
+  // Cap is 8 (CLIENT_DIR_CAP): beyond-cap dirs older than staleGraceMs go;
+  // fresh dirs survive even beyond the cap (a live reporter flushes ≥ every
+  // 5 s, so live pages always look fresh).
+  await withServer({ timings: { idleSweepMs: 25, staleGraceMs: 500 } }, async (_server, root) => {
+    const clientRoot = path.join(root, ".fsio", "client");
+    // 10 stale dirs (mtimes increasing with i) + 2 fresh ones = 12.
+    for (let i = 0; i < 10; i++) {
+      const d = path.join(clientRoot, `c-stale-${i}`);
+      fs.mkdirSync(d, { recursive: true });
+      const old = new Date(Date.now() - 60_000 + i * 1000);
+      fs.utimesSync(d, old, old);
+    }
+    fs.mkdirSync(path.join(clientRoot, "c-fresh-a"), { recursive: true });
+    fs.mkdirSync(path.join(clientRoot, "c-fresh-b"), { recursive: true });
+    // Newest 8 = 2 fresh + c-stale-9..c-stale-4; c-stale-3..0 are over cap
+    // and stale → removed.
+    await waitFor(() => fs.readdirSync(clientRoot).length === 8, "over-cap stale client dirs removed");
+    const left = fs.readdirSync(clientRoot).sort();
+    assert.deepEqual(left, ["c-fresh-a", "c-fresh-b", "c-stale-4", "c-stale-5", "c-stale-6", "c-stale-7", "c-stale-8", "c-stale-9"]);
+    await sleep(100); // several more sweeps
+    assert.equal(fs.readdirSync(clientRoot).length, 8, "sweep must not remove fresh or within-cap dirs");
+  });
+});
+
 // ------------------------------------- stale-session GC (spec: Session lifecycle)
 
 test("adoption GCs exited sessions older than the grace period, keeps fresh ones", async () => {

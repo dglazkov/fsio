@@ -21,7 +21,7 @@
 //      then types into the real terminal: `echo <nonce> > harness-echo.txt`
 //      — keystrokes ride the uplink, the shell writes the file, and this
 //      script reads the nonce back from the native side. No self-grading.
-//   5. asserts on <dir>/.fsio/client/report.json with the same generous
+//   5. asserts on <dir>/.fsio/client/<clientId>/report.json with the same generous
 //      ceiling as the node smoke (100 ms p50 — regression class, not jitter)
 //
 // Reports survive teardown: raw fsio-host wipes .fsio only on *startup*
@@ -63,10 +63,32 @@ async function waitFor(what, fn, timeoutMs, everyMs = 250) {
   }
 }
 
-/** report.json can be torn mid-write (F11-class): parse failures are retries, not errors. */
+/** Per-client report dirs (#39): each page load writes its own
+ *  client/<clientId>/report.json — scan and take the newest by mtime. The
+ *  harness's page is the only live writer here, but a mid-run reload would
+ *  leave an older sibling behind; recency picks the live one. If the newest
+ *  is torn mid-write (F11-class), that's a retry, not an error — and never
+ *  a reason to fall back to a stale sibling. */
 function readReport(dir) {
+  const root = path.join(dir, ".fsio", "client");
+  let entries;
   try {
-    return JSON.parse(fs.readFileSync(path.join(dir, ".fsio", "client", "report.json"), "utf8"));
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  let newest = null;
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const p = path.join(root, e.name, "report.json");
+    try {
+      const mtime = fs.statSync(p).mtimeMs;
+      if (!newest || mtime > newest.mtime) newest = { p, mtime };
+    } catch {}
+  }
+  if (!newest) return null;
+  try {
+    return JSON.parse(fs.readFileSync(newest.p, "utf8"));
   } catch {
     return null;
   }
@@ -229,7 +251,7 @@ try {
     log(`--keep: leaving host, web server, and browser running; shared dir ${dir}`);
   } else {
     await teardown();
-    if (failed) log(`kept for forensics: ${dir} (report at ${path.join(dir, ".fsio/client/report.json")})`);
+    if (failed) log(`kept for forensics: ${dir} (reports under ${path.join(dir, ".fsio/client")}/*/report.json)`);
     else {
       await sleep(500); // let the host finish dying before we sweep its dir
       try {
