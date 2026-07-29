@@ -32,7 +32,13 @@ style.
    `Closes #N` → push → **watch the CI run to conclusion** → verify the
    issue closed. Backlog items discovered mid-work become new issues, not
    scope creep.
-2. Session-end triage: every new issue gets a `p1`/`p2`/`p3` label; when
+2. Issues also carry `track: *` labels — named sequences with an internal
+   order (demo, verification, robustness, security; the order and its
+   why live in issue comments, membership in the label). Pick up work
+   track-first: finish or advance a sequence before hopping. Untracked
+   p3s are parked/cross-cutting — they join a track when something pulls
+   them, not by default.
+3. Session-end triage: every new issue gets a `p1`/`p2`/`p3` label; when
    closing an issue, re-check whether it unblocks a `p3` (promote it).
    Titles state *remaining* work, not history — when scope shifts,
    retitle (#9 sat as "Investigate… (report upstream?)" long after the
@@ -45,9 +51,9 @@ style.
    masquerading as priority (once put a crbug-filing errand at p1 —
    effort is orthogonal; genuinely-free tasks are done opportunistically,
    not ranked first).
-3. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
+4. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
    prefer a short-lived branch + PR so CI gates the merge.
-4. Commit messages explain *why*, cite F/D/issue numbers, and record
+5. Commit messages explain *why*, cite F/D/issue numbers, and record
    measured results when behavior was verified (numbers, not adjectives).
    Write multi-line commit/PR/comment bodies to a temp file and pass
    `-F`/`--body-file` — heredocs inside `"$(cat <<'EOF' …)"` get mangled
