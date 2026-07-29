@@ -533,3 +533,49 @@ ride, so tolerate the clamp instead). Kill-after-grace for shells
 (rejected in #3 from the start: they may hold real user processes).
 
 **Findings.** F10, F16, F18.
+
+## D18 — attach is takeover: writer epochs fence the old client
+
+**Decision.** Reattach (tmux-lite, #3 phase 2) is a *takeover*, arbitrated
+by the host with **writer epochs**. The attacher commits
+`attach.<aid>.json` — a JSON-RPC `attach` request in a bootstrap file,
+same trick as spawn.json, because a would-be writer cannot ask on an
+uplink it doesn't own; the unique `aid` in the file name keeps concurrent
+attachers off each other's files (F8/D6). The host consults the spawn
+policy (same hook, `attach: true`, the attacher's identity — taking over
+a shell is judged like spawning one), then grants: epoch++, uplink moves
+to `in.<epoch>/` with a fresh sequence space, `status.json` records
+`writer: {epoch, aid}` (durable — a restarted host resumes the right
+lane) and clears `detached`. The grant answer rides the out stream, which
+is naturally multi-reader. The superseded client's fence is that same
+status record: on observing a higher epoch it stops committing (send()
+poisons, heartbeats stop), while reads may continue. Scrollback replay is
+client-local — the attacher re-reads the retained head segment and
+re-emits DATA frames only; replayed RPC frames are never re-correlated
+(the predecessor's response ids would collide with live requests). The
+`detach` notification is the deliberate walk-away: detached marking now,
+no D17 silence window. Attaching to an exited session is error `1005`.
+
+**Why takeover, not detached-only attach:** the driving case is a page
+refresh — the old client is gone but its silence hasn't reached the D17
+window yet, so an attach gated on `detached: true` would make the user
+wait ~3 minutes to get their shell back. Takeover with a clean, observable
+fence makes the wrong-guess cost one status flip (the losing tab shows
+"superseded" and can re-attach), not a wedged uplink.
+
+**Why epoch dirs, not epoch-prefixed chunk names:** the sequence-gap rule
+(a gap stalls consumption forever) makes any shared namespace between two
+writers a wedge hazard the moment ordering is ambiguous; a fresh dir per
+epoch resets the sequence space atomically with the grant, and stale-epoch
+dirs are swept with the session dir (D6) like any other consumed debris.
+
+**Alternatives rejected.** Single `attach.json` (last-writer-wins on one
+file = exactly the F8 violation this protocol is built to avoid).
+Attach-on-uplink (circular: no lane before the grant). Detached-only
+grants (see above). Host-killed old clients (there is no channel to a
+vanished tab — fencing via observable state is the only mechanism that
+works for both live and dead predecessors).
+
+**Findings.** F8 (one writer per file), F16 (why the refresh case can't
+wait out the silence window), F13 (serialized commits bound the fenced
+client's stranded chunks to a handful).

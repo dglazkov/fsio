@@ -37,6 +37,8 @@ import {
   type SessionStatus,
   type SpawnResult,
   type SpawnSpec,
+  type AttachParams,
+  type AttachResult,
   type PingResult,
 } from "@fsio/common";
 import type { FsDirectory, FsFile, FsSnapshot, FsWritable } from "./fs.js";
@@ -45,7 +47,7 @@ import type { FsDirectory, FsFile, FsSnapshot, FsWritable } from "./fs.js";
 // client-facing contract, so consumers need the codes without a second
 // dependency on @fsio/common.
 export { FrameType, jsonFrame, decodeJson, now, RpcError, RpcErrors };
-export type { Frame, HostInfo, SessionStatus, SpawnResult, SpawnSpec, PingResult };
+export type { Frame, HostInfo, SessionStatus, SpawnResult, SpawnSpec, AttachResult, PingResult };
 export type { FsDirectory, FsFile, FsSnapshot, FsWritable };
 
 export const hasObserver = "FileSystemObserver" in globalThis;
@@ -147,6 +149,59 @@ export class FsioClient {
     const id = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     return new FsioSession(id, this.sessionsDir, spec, opts);
   }
+
+  /** Enumerate sessions in the shared dir (D18 discovery) — read-only, the
+   *  reattach picker's data source. `status.detached` marks orphans;
+   *  `status.writer` names the current uplink owner. */
+  async listSessions(): Promise<SessionSummary[]> {
+    if (!this.sessionsDir) throw new Error("listSessions before connect()");
+    const out: SessionSummary[] = [];
+    for await (const name of this.sessionsDir.keys()) {
+      if (!name.startsWith("s-")) continue;
+      try {
+        const dir = await this.sessionsDir.getDirectoryHandle(name);
+        const readJson = async (f: string): Promise<unknown> => JSON.parse(await (await (await dir.getFileHandle(f)).getFile()).text());
+        const entry: SessionSummary = { id: name, kind: null, status: null };
+        try {
+          // spawn.json carries the JSON-RPC spawn request; legacy bare specs
+          // have the fields at the top level.
+          const spawn = (await readJson("spawn.json")) as { params?: Record<string, unknown> } & Record<string, unknown>;
+          const p = (spawn.params ?? spawn) as { kind?: string; client?: string; origin?: string };
+          entry.kind = p.kind ?? "echo";
+          entry.client = p.client;
+          entry.origin = p.origin;
+        } catch {}
+        try {
+          entry.status = (await readJson("status.json")) as SessionStatus;
+        } catch {}
+        out.push(entry);
+      } catch {} // dir vanished mid-scan (host GC) — skip
+    }
+    return out;
+  }
+
+  /** Attach to an existing session (D18). Semantics: TAKEOVER — the grant
+   *  bumps the writer epoch, moves the uplink to `in.<epoch>/`, and fences
+   *  the previous client (it observes `writer` in status.json and stops
+   *  sending). `replay: true` re-emits the head segment's DATA frames
+   *  (scrollback) before live output. `ready` resolves with the
+   *  AttachResult (kind, pid, epoch, …) or rejects with a coded RpcError
+   *  (1005 exited, 1001/1004 policy denial). */
+  attachSession(sessionId: string, opts: SessionOptions & { replay?: boolean; client?: string } = {}): FsioSession {
+    if (!this.sessionsDir) throw new Error("attachSession before connect()");
+    return new FsioSession(sessionId, this.sessionsDir, null, opts, { replay: opts.replay ?? false, client: opts.client });
+  }
+}
+
+/** One row of `FsioClient.listSessions()` (D18 discovery). */
+export interface SessionSummary {
+  id: string;
+  /** null when spawn.json was unreadable (session mid-creation or corrupt). */
+  kind: string | null;
+  client?: string | undefined;
+  origin?: string | undefined;
+  /** null before the host has recorded an outcome. */
+  status: SessionStatus | null;
 }
 
 export class FsioSession {
@@ -189,12 +244,26 @@ export class FsioSession {
   get closed(): boolean {
     return this.#closed;
   }
+  /** Writer epoch this client owns (D18): 0 = spawning client; attachers
+   *  get theirs from the grant. A higher epoch in status.json means this
+   *  client has been superseded. */
+  get epoch(): number {
+    return this.#epoch;
+  }
 
   #mode: NotifierMode;
   #status: SessionStatus | null = null;
   #dir!: FsDirectory;
   #inDir!: FsDirectory;
   #initDone: Promise<void>;
+  /** gates #pump: init for spawned sessions; the full grant + setup for
+   *  attached ones (no uplink lane exists before the epoch is known). */
+  #uplinkReady: Promise<void>;
+  #epoch = 0;
+  #attach: { replay: boolean; aid: string; params: AttachParams; replayTo: { gen: number; end: number } | null } | null = null;
+  /** non-null while attaching: live frames buffered until grant + replay
+   *  have run, so replayed scrollback precedes them. */
+  #hold: [Frame, number][] | null = null;
   #listeners = new Map<keyof SessionEventMap, Set<Listener>>();
 
   #gen = 0; // current out segment being read
@@ -221,7 +290,7 @@ export class FsioSession {
   #lastActivity = 0;
   #wakeFn!: () => void;
 
-  constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec, opts: SessionOptions = {}) {
+  constructor(id: string, sessionsDir: FsDirectory, spec: SpawnSpec | null, opts: SessionOptions = {}, attach?: { replay: boolean; client?: string | undefined }) {
     const { mode = "auto", pollMs = 15, uplink = "auto", safetyMs = 500, heartbeatMs = 20_000 } = opts;
     // D15: a web-page client reports its origin — stamped HERE, overriding
     // caller-supplied values, so a page cannot claim a foreign origin
@@ -229,7 +298,7 @@ export class FsioSession {
     // stays advisory and hosts must treat it as display-only — spec
     // "Session kinds".) Node embedders have no `location`; absent = absent.
     const webOrigin = (globalThis as { location?: { origin?: unknown } }).location?.origin;
-    if (typeof webOrigin === "string") spec = { ...spec, origin: webOrigin };
+    if (spec && typeof webOrigin === "string") spec = { ...spec, origin: webOrigin };
     this.id = id;
     this.pollMs = pollMs;
     this.safetyMs = safetyMs;
@@ -248,12 +317,37 @@ export class FsioSession {
     //   observer — observer only (for science).
     this.#mode = mode === "auto" ? (hasObserver ? "adaptive" : "poll") : mode;
     this.#rpc = new RpcEndpoint((msg) => this.sendJson(FrameType.RPC, msg));
-    // Register the pending spawn id before spawn.json exists so the host's
-    // answer can't race us; park it until init has committed the request.
-    const spawned = this.#rpc.expect<SpawnResult>(SPAWN_REQUEST_ID);
-    spawned.catch(() => {}); // settled via `ready`; never an unhandled rejection
-    this.#initDone = this.#init(sessionsDir, spec);
-    this.ready = this.#initDone.then(() => spawned).then(({ result }) => result);
+    if (attach) {
+      // Attach mode (D18): the request rides attach.<aid>.json (bootstrap
+      // file, like spawn.json); the grant arrives on the out stream we are
+      // already reading. Only after the grant is there an uplink lane.
+      const aid = `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const params: AttachParams = { aid };
+      if (attach.client !== undefined) params.client = attach.client;
+      if (typeof webOrigin === "string") params.origin = webOrigin; // D15, same stamping rule
+      this.#attach = { replay: attach.replay, aid, params, replayTo: null };
+      const granted = this.#rpc.expect<AttachResult>(`attach:${aid}`);
+      granted.catch(() => {});
+      this.#initDone = this.#initAttach(sessionsDir);
+      this.ready = this.#initDone
+        .then(() => granted)
+        .then(async ({ result }) => {
+          await this.#completeAttach(result);
+          return result;
+        });
+      this.#uplinkReady = this.ready.then(() => {});
+      this.#uplinkReady.catch(() => {});
+    } else {
+      // Register the pending spawn id before spawn.json exists so the host's
+      // answer can't race us; park it until init has committed the request.
+      const spawned = this.#rpc.expect<SpawnResult>(SPAWN_REQUEST_ID);
+      spawned.catch(() => {}); // settled via `ready`; never an unhandled rejection
+      this.#initDone = this.#init(sessionsDir, spec!);
+      this.ready = this.#initDone.then(() => spawned).then(({ result }) => result);
+      // Sends may flow before `ready` (they queue in in/ and drain on
+      // approval — spec: spawn bootstrap), so the uplink gates on init only.
+      this.#uplinkReady = this.#initDone;
+    }
     this.ready.catch(() => {}); // surfacing is the awaiter's job, not the console's
   }
 
@@ -298,6 +392,65 @@ export class FsioSession {
     await this.#startNotifier();
   }
 
+  async #initAttach(sessionsDir: FsDirectory): Promise<void> {
+    const a = this.#attach!;
+    // create: false semantics — attaching to a session that is gone must
+    // reject `ready`, not conjure an empty dir the host would adopt.
+    this.#dir = await op(`opening session ${this.id}`, () => sessionsDir.getDirectoryHandle(this.id));
+    // Position at the current head: everything before it is the previous
+    // client's history (optionally replayed, below, once the grant lands).
+    try {
+      const fh = await this.#dir.getFileHandle("out.sig");
+      const sig = JSON.parse(await (await fh.getFile()).text()) as OutSig;
+      this.#gen = sig.gen;
+      this.#offset = sig.size;
+      this.#cumConsumed = sig.total;
+      this.#lastAckTotal = sig.total;
+      if (a.replay) a.replayTo = { gen: sig.gen, end: sig.size };
+    } catch {} // no out.sig yet: brand-new stream, position 0/0
+    this.#hold = []; // buffer live frames so replayed scrollback precedes them
+    await this.#writeFile(`attach.${a.aid}.json`, new TextEncoder().encode(JSON.stringify(rpcRequest(`attach:${a.aid}`, "attach", a.params))));
+    await this.#startNotifier();
+  }
+
+  async #completeAttach(result: AttachResult): Promise<void> {
+    this.#epoch = result.epoch;
+    this.#inDir = await op(`creating session ${this.id}/in.${result.epoch}/`, () => this.#dir.getDirectoryHandle(`in.${result.epoch}`, { create: true }));
+    const a = this.#attach!;
+    if (a.replayTo) await this.#replayHead(a.replayTo.gen, a.replayTo.end);
+    const held = this.#hold ?? [];
+    this.#hold = null;
+    for (const [f, at] of held) {
+      this.#emit("frame", f, at);
+      if (f.type === FrameType.DATA) this.#emit("data", f.payload);
+    }
+  }
+
+  // Scrollback replay (D18): re-read the head segment [0, end) and emit its
+  // DATA frames. Client-local — the host is not involved. RPC frames are
+  // NEVER replayed: they are the previous writer's control traffic, and
+  // its response ids could collide with this endpoint's live requests.
+  async #replayHead(gen: number, end: number): Promise<void> {
+    if (end <= 0) return;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const fh = await this.#dir.getFileHandle(`out.${String(gen).padStart(8, "0")}.log`);
+        const bytes = new Uint8Array(await (await fh.getFile()).slice(0).arrayBuffer()).subarray(0, end);
+        const { frames } = parseFrames(bytes);
+        const at = now();
+        for (const f of frames) {
+          if (f.type !== FrameType.DATA) continue;
+          this.#emit("frame", f, at);
+          this.#emit("data", f.payload);
+        }
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 50)); // F11-transient snapshot
+      }
+    }
+    this.#emit("note", "scrollback replay unavailable (head segment unreadable)");
+  }
+
   async #writeFile(name: string, bytes: Uint8Array, dir: FsDirectory = this.#dir): Promise<void> {
     return op(`committing ${name}`, async () => {
       const fh = await dir.getFileHandle(name, { create: true });
@@ -340,9 +493,9 @@ export class FsioSession {
     this.#rpc.notify(method, params);
   }
 
-  /** Uncommitted uplink chunks in in/ (labs; #4 backlog dynamics). */
+  /** Uncommitted uplink chunks in this writer's in-dir (labs; #4). */
   async uplinkBacklog(): Promise<number> {
-    await this.#initDone;
+    await this.#uplinkReady;
     let n = 0;
     for await (const _ of this.#inDir.keys()) n++;
     return n;
@@ -352,8 +505,18 @@ export class FsioSession {
     if (this.#pumping) return;
     this.#pumping = true;
     try {
-      await this.#initDone; // sends may be queued while init is in flight
-      while (this.#queue.length > 0 && !this.#closed) {
+      // Sends may be queued while init (or an attach grant, D18) is in
+      // flight; a superseded writer must stop committing entirely (F8).
+      try {
+        await this.#uplinkReady;
+      } catch (e) {
+        // A failed attach is already surfaced through `ready` — record it
+        // so send() throws, but don't re-raise it as a transport error.
+        this.#pumpError = e instanceof Error ? e : new Error(String(e));
+        this.#queue.length = 0;
+        return;
+      }
+      while (this.#queue.length > 0 && !this.#closed && !this.#pumpError) {
         const batch = concatBytes(this.#queue.splice(0));
         await this.#commitChunk(batch);
         this.stats.chunksWritten++;
@@ -543,6 +706,12 @@ export class FsioSession {
         // (future host-initiated traffic) falls through to the frame event.
         if (msg && this.#rpc.handleMessage(msg, t3)) continue;
       }
+      if (this.#hold) {
+        // Attaching (D18): park live frames until grant + replay have run
+        // (responses above still settle — the grant itself arrives here).
+        this.#hold.push([f, t3]);
+        continue;
+      }
       this.#emit("frame", f, t3);
       if (f.type === FrameType.DATA) this.#emit("data", f.payload);
     }
@@ -569,6 +738,15 @@ export class FsioSession {
       if (JSON.stringify(status) !== JSON.stringify(this.#status)) {
         this.#status = status;
         this.#emit("status", status);
+        // Supersede fence (D18): a higher writer epoch means another client
+        // took over the uplink. Stop writing — one writer per file is the
+        // law (F8/D6) — but keep reading: the downlink is multi-reader.
+        if (status.writer && status.writer.epoch > this.#epoch && !this.#pumpError) {
+          this.#pumpError = new Error(`superseded: another client attached (writer epoch ${status.writer.epoch})`);
+          clearInterval(this.#heartbeatTimer);
+          this.#queue.length = 0; // never commit these — the lane is gone
+          this.#emit("note", `superseded by writer epoch ${status.writer.epoch}: sends now fail, reads continue`);
+        }
       }
     } catch {}
   }
@@ -608,7 +786,27 @@ export class FsioSession {
     try {
       this.notify("close");
     } catch {}
-    while (this.#pumping) await new Promise((r) => setTimeout(r, 10));
+    await this.#teardown();
+  }
+
+  /** Deliberate walk-away (D18): ask the host to mark the session detached
+   *  NOW (no heartbeat-silence wait), then release local resources WITHOUT
+   *  closing the session — the process keeps running for a later
+   *  `attachSession()`. */
+  async detach(): Promise<void> {
+    if (this.#closed) return;
+    clearInterval(this.#heartbeatTimer);
+    try {
+      this.notify("detach");
+    } catch {}
+    await this.#teardown();
+  }
+
+  async #teardown(): Promise<void> {
+    // Wait for in-flight commits to flush (the close/detach notification
+    // rides them) — except mid-attach, where no uplink lane exists yet and
+    // the pump is parked on a grant that failAll() below will reject.
+    if (this.#hold === null) while (this.#pumping) await new Promise((r) => setTimeout(r, 10));
     this.#closed = true;
     this.#rpc.failAll(new Error("session closed"));
     this.#observer?.disconnect();

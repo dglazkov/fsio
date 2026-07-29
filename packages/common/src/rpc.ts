@@ -26,6 +26,8 @@ export const RpcErrors = {
   UNKNOWN_KIND: 1003,
   /** host spawn policy (onSpawnRequest hook) refused the session (D12). */
   SPAWN_DENIED: 1004,
+  /** attach refused: session exited or not attachable (D18). */
+  ATTACH_FAILED: 1005,
 } as const;
 
 /** Conventional id for the spawn request carried by spawn.json. */

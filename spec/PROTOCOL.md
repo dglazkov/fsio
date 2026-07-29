@@ -7,7 +7,7 @@ Companions (non-normative):
 
 - [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F18) behind
   the rules here. Rules that exist because of a finding cite it.
-- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D17): why the protocol
+- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D18): why the protocol
   is shaped this way, with alternatives rejected.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in
@@ -74,6 +74,9 @@ runtimes (atomicity, append semantics, event coalescing).
     <session-id>/           # created by client; id = s-<ts36>-<rand>
       spawn.json            # JSON-RPC spawn request; written LAST by
                             #   client — presence = session is ready
+      attach.<aid>.json     # attach request (D18): bootstrap file like
+                            #   spawn.json, one per attacher (aid in the
+                            #   name); host deletes it after answering
       status.json           # host-owned: {state: running|exited|error, ...}
       out.00000000.log      # host → client framed stream, segmented: rotated
       out.00000001.log      #   at ~8 MB on frame boundaries; consumed
@@ -84,6 +87,10 @@ runtimes (atomicity, append semantics, event coalescing).
         00000001.f          # client → host chunk file (payload = content)
         00000002-<b64url>/  # …or chunk directory (payload = name; fast lane
                             # for batches ≤180 B, see F10). One sequence space.
+      in.<epoch>/           # uplink of the epoch-<N> writer after an attach
+                            #   takeover (D18): same chunk rules, fresh
+                            #   sequence space; the host consumes ONLY the
+                            #   current epoch's dir
 ```
 
 ## Framing
@@ -134,11 +141,15 @@ Methods (v0, all client → host):
 | `close` | notification | `{}` | — |
 | `ack` | notification | `{total}` | — |
 | `heartbeat` | notification | `{}` | — |
+| `attach` | request (rides `attach.<aid>.json`) | `{aid, client?, origin?}` | spawn-result fields + `{epoch}` |
+| `detach` | notification | `{}` | — |
 
 Application error codes (beyond the JSON-RPC predefined range): `1001`
 shell-not-allowed, `1002` spawn-failed, `1003` unknown-kind, `1004`
 spawn-denied (host policy refused; the message carries the policy's
-reason — [D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)).
+reason — [D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)),
+`1005` attach-failed (session exited or not attachable —
+[D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)).
 
 **Spawn bootstrap.** The `spawn` request cannot ride the uplink (the host
 only consumes `in/` after adopting the session), so its envelope is the
@@ -245,8 +256,29 @@ Only filler-padded pings and DATA batches spill to the file lane.
   `detached: true` in `status.json` (state unchanged) and MAY reap
   stateless sessions (echo). The host MUST NOT kill a session's process
   for heartbeat silence alone. Any subsequently consumed uplink chunk
-  clears the marker. Reattach — a *new* client adopting a detached
-  session — is future work ([#3](https://github.com/dglazkov/fsio/issues/3)).
+  clears the marker. The `detach` notification marks the session detached
+  immediately — the deliberate walk-away needs no silence window.
+- **Attach / takeover**
+  ([D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)):
+  a new client MAY attach to a running session by committing
+  `attach.<aid>.json` — a JSON-RPC `attach` request in a bootstrap file,
+  like spawn.json (a would-be writer cannot ask on an uplink it doesn't
+  own). `aid` MUST be unique per attempt and appears in the file name, so
+  concurrent attachers never share a file. The host answers on the out
+  stream (naturally multi-reader), deletes the file after answering
+  (deletion = consumption), and judges the request with the same policy
+  hook as spawn (`attach: true`, the attacher's identity). A grant bumps
+  the **writer epoch**: the uplink moves to `in.<epoch>/` with a fresh
+  sequence space, and `status.json` records `writer: {epoch, aid}` and
+  clears `detached`. The host MUST consume only the current epoch's
+  uplink dir. A client observing a writer epoch above its own has been
+  superseded: it MUST stop committing chunks (one writer per file,
+  F8/D6) but MAY keep reading. Attaching to an exited session gets
+  `1005`. Scrollback replay is client-local (re-read retained segments;
+  replayed RPC frames MUST NOT be re-correlated — the previous writer's
+  response ids can collide with live ones). The attacher's acks start at
+  the head it attached at, which clears the predecessor's unacked window
+  on first ack — a paused pty resumes.
 
 ## Session kinds (v0)
 
@@ -327,8 +359,14 @@ renumbered.
    Follower role worth speccing?
    → [#10](https://github.com/dglazkov/fsio/issues/10)
 6. **Host restarts.** Currently adopts sessions and resumes echo, but marks
-   shell sessions dead. Should shell sessions be resumable (reattach to a
-   detached pty à la tmux)?
+   shell sessions dead. ~~Should shell sessions be resumable (reattach to
+   a detached pty à la tmux)?~~ Client-side reattach resolved by
+   [D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)
+   (attach/takeover with writer epochs; the epoch is durable in
+   status.json, so a restarted host resumes the right uplink lane).
+   Remaining: the host-side leg — a pty dies with the host process, so
+   surviving a *host* restart needs host-side pty persistence (out of
+   scope for v0).
    → [#3](https://github.com/dglazkov/fsio/issues/3)
 7. **Windows / network filesystems.** rename atomicity, watch semantics,
    and mtime resolution all differ. Out of scope for v0; spec should state
@@ -348,5 +386,9 @@ renumbered.
    `close`~~ — resolved by
    [D17](DECISIONS.md#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill)
    (client heartbeats; vanished stateless sessions reaped, stateful ones
-   marked detached). Remaining: reattach to a detached session (question 6).
+   marked detached). ~~Remaining: reattach to a detached session~~ —
+   resolved by
+   [D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)
+   (attach/takeover; stale-epoch uplink dirs are removed with the session
+   dir, D6).
    → [#3](https://github.com/dglazkov/fsio/issues/3)

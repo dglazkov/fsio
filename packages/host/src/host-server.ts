@@ -33,6 +33,8 @@ import {
   type SessionStatus,
   type ShellSpawn,
   type SpawnResult,
+  type AttachParams,
+  type AttachResult,
   type PingResult,
   type ResizeParams,
   type SignalParams,
@@ -80,6 +82,8 @@ export interface SessionInfo {
   detached: boolean;
   /** ms epoch of the last consumed uplink chunk (presence, D17). */
   lastClientSeenAt: number;
+  /** writer epoch (D18): 0 = spawning client, bumped per attach grant. */
+  epoch: number;
 }
 
 export type SessionPhase = "adopted" | "pending" | "running" | "exited" | "done";
@@ -91,6 +95,10 @@ export interface SpawnRequestInfo {
   sessionId: string;
   /** kind after defaulting ("echo" when the spec names none). */
   kind: string;
+  /** true when this is an ATTACH to a live session (D18), not a spawn:
+   *  the command already runs; what's being judged is the new client
+   *  taking control of it. client/origin are the attacher's. */
+  attach?: boolean;
   /** free-form client identification from the spec (diagnostics only —
    *  anything that can write the folder can claim anything; see #6). */
   client?: string | undefined;
@@ -311,7 +319,6 @@ type RpcInbound = { id?: RpcId; method?: string; params?: unknown };
 class Session {
   id: string;
   dir: string;
-  inDir: string;
   spawn: SpawnParams | null = null; // params from the JSON-RPC request in spawn.json
   spawnId: RpcId | null = null; // request id to answer (null = legacy bare spec)
   spawnAnswered = false;
@@ -340,6 +347,10 @@ class Session {
   lastClientSeen = Date.now();
   heartbeatAware = false;
   detached = false;
+  // Writer epoch (D18): 0 = the spawning client, uplink `in/`. Each attach
+  // grant bumps it and moves the uplink to `in.<epoch>/` — the fence that
+  // keeps one-writer-per-file true across takeovers (F8/D6).
+  epoch = 0;
   private statusBase: Omit<SessionStatus, "t" | "detached"> | null = null;
 
   constructor(
@@ -348,7 +359,12 @@ class Session {
   ) {
     this.id = id;
     this.dir = path.join(host.sessionsDir, id);
-    this.inDir = path.join(this.dir, "in");
+  }
+
+  /** Current writer's uplink dir (D18): `in/` for epoch 0, `in.<epoch>/`
+   *  after an attach takeover. Only this dir is ever consumed. */
+  get inDir(): string {
+    return path.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
   }
 
   get pty(): PtyProcess | null {
@@ -450,6 +466,20 @@ class Session {
     if (this.detached === detached || !this.statusBase) return;
     this.detached = detached;
     this.setStatus(detached ? { ...this.statusBase, detached: true } : this.statusBase);
+  }
+
+  /** Whether a durable status record exists yet (attach needs one: there
+   *  is nothing to attach to before the spawn outcome is known). */
+  get hasStatus(): boolean {
+    return this.statusBase !== null;
+  }
+
+  /** Merge fields into the durable status record and rewrite it,
+   *  preserving the detached marker layer (D18: attach folds `writer` in). */
+  patchStatus(patch: Partial<Omit<SessionStatus, "t" | "detached">>): void {
+    if (!this.statusBase) return;
+    const base = { ...this.statusBase, ...patch };
+    this.setStatus(this.detached ? { ...base, detached: true } : base);
   }
 
   // Answer the spawn request (once) on the out stream. Errors get real
@@ -581,6 +611,7 @@ export class HostServer {
         lastActivityAt: s.lastActivity,
         detached: s.detached,
         lastClientSeenAt: s.lastClientSeen,
+        epoch: s.epoch,
       };
       if (phase === "running") {
         info.pid = s.proc ? ((s.proc as { pid?: number }).pid ?? process.pid) : process.pid;
@@ -844,6 +875,10 @@ export class HostServer {
       // session must not answer pings or accept DATA (D12). Chunks queue in
       // in/ and drain on approval.
       if (s.approved) this.processIncoming(s);
+      // Attach requests (D18) park until the spawn outcome is known — an
+      // attacher asking during a pending policy decision waits, like
+      // everything else about a pending session.
+      if (s.approved || s.exited) this.processAttach(s);
     }
   }
 
@@ -874,6 +909,10 @@ export class HostServer {
     } else {
       s.spawn = raw;
     }
+    // Restart adoption (D18): the writer epoch is durable in status.json —
+    // resume consuming the current writer's uplink, not epoch 0's.
+    const prior = readJson<SessionStatus>(path.join(s.dir, "status.json"));
+    if (prior?.writer) s.epoch = prior.writer.epoch;
     s.started = true;
     s.watchers.push(this.watchDir(s.inDir, () => this.scheduleScan()));
     const kind = s.spawn.kind ?? "echo";
@@ -910,21 +949,28 @@ export class HostServer {
     };
   }
 
+  // Consult the policy hook (or the static default), fail-safe. Shared by
+  // spawn (D12) and attach (D18) — an attach is judged like a spawn of the
+  // same kind, with the attacher's identity and `attach: true` in the info.
+  private async consultPolicy(s: Session, spec: Readonly<Record<string, unknown>>, info: SpawnRequestInfo): Promise<{ allow: boolean; reason?: string; code?: number }> {
+    let decision: SpawnDecision;
+    try {
+      decision = this.onSpawnRequest ? await this.onSpawnRequest(spec, info) : this.defaultPolicy(info);
+    } catch (e) {
+      // Fail safe: a broken policy must never fail open.
+      this.log.error(`session ${s.id}: ${info.attach ? "attach" : "spawn"} policy threw (${errMsg(e)}) — denying`);
+      decision = { allow: false, reason: `${info.attach ? "attach" : "spawn"} policy failed` };
+    }
+    return typeof decision === "boolean" ? { allow: decision } : decision;
+  }
+
   // Consult the spawn policy (D12), then dispatch. Async on purpose: a
   // promise-returning hook is the confirmation mechanism — the session sits
   // unanswered (spawn request pending, no incoming processed) until the
   // policy settles. Sessions that closed while deciding are dropped.
   private async decideAndStart(s: Session, kind: string, info: SpawnRequestInfo): Promise<void> {
-    let decision: SpawnDecision;
-    try {
-      decision = this.onSpawnRequest ? await this.onSpawnRequest(s.spawn as Readonly<Record<string, unknown>>, info) : this.defaultPolicy(info);
-    } catch (e) {
-      // Fail safe: a broken policy must never fail open.
-      this.log.error(`session ${s.id}: spawn policy threw (${errMsg(e)}) — denying`);
-      decision = { allow: false, reason: "spawn policy failed" };
-    }
+    const d = await this.consultPolicy(s, s.spawn as Readonly<Record<string, unknown>>, info);
     if (!this.running || s.done) return; // host or session closed while deciding
-    const d = typeof decision === "boolean" ? { allow: decision } : decision;
     if (!d.allow) {
       const error = d.reason ?? "spawn denied by host policy";
       this.log.info(`session ${s.id}: denied (${error})`);
@@ -1078,6 +1124,103 @@ export class HostServer {
     }
   }
 
+  // Attach requests (D18): `attach.<aid>.json` in the session dir is the
+  // bootstrap transport (like spawn.json — a would-be writer cannot ask on
+  // an uplink it doesn't own yet). Deleting the file is the consumption
+  // ack, done BEFORE deciding: a crash between delete and answer just
+  // times the attacher out, and it retries with a fresh aid.
+  private processAttach(s: Session): void {
+    let names: string[];
+    try {
+      names = fs.readdirSync(s.dir);
+    } catch {
+      return;
+    }
+    for (const name of names.sort()) {
+      if (!/^attach\.[A-Za-z0-9_-]+\.json$/.test(name)) continue;
+      const p = path.join(s.dir, name);
+      const raw = readJson<RpcInbound>(p);
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        continue; // lost a delete race (host restart overlap?) — not ours
+      }
+      if (!raw) {
+        // Commits are atomic (rename / swap-file), so unreadable = garbage,
+        // not torn — drop it rather than rescan it forever.
+        this.log.warn(`session ${s.id}: discarding unparseable ${name}`);
+        continue;
+      }
+      void this.decideAttach(s, raw);
+    }
+  }
+
+  private async decideAttach(s: Session, msg: RpcInbound): Promise<void> {
+    const id = msg.id ?? null;
+    const answer = (resp: RpcResponseMsg) => {
+      if (id !== null && !s.done) s.appendJson(FrameType.RPC, resp);
+    };
+    const params = (msg.params ?? {}) as Partial<AttachParams>;
+    const aid = typeof params.aid === "string" && params.aid.length > 0 ? params.aid : null;
+    // A request id is mandatory: an attacher that can't hear the grant can
+    // never know which epoch (= which uplink dir) it owns.
+    if (msg.method !== "attach" || !aid || id === null) {
+      answer(rpcError(id, RpcErrors.INVALID_REQUEST, "malformed attach request"));
+      return;
+    }
+    if (s.done || s.exited || !s.hasStatus) {
+      answer(rpcError(id, RpcErrors.ATTACH_FAILED, s.exited ? "session exited" : "session not attachable"));
+      return;
+    }
+    const kind = s.spawn?.kind ?? "echo";
+    const info: SpawnRequestInfo = {
+      sessionId: s.id,
+      kind,
+      attach: true,
+      client: params.client,
+      origin: params.origin,
+      ...(kind === "shell" ? this.resolveShell(s.spawn!) : {}),
+    };
+    this.log.info(`session ${s.id}: attach request from ${aid}${info.origin ? ` origin=${info.origin}` : ""}`);
+    const d = await this.consultPolicy(s, (s.spawn ?? {}) as Readonly<Record<string, unknown>>, info);
+    if (!this.running || s.done) return;
+    if (!d.allow) {
+      const reason = d.reason ?? "attach denied by host policy";
+      this.log.info(`session ${s.id}: attach denied (${reason})`);
+      answer(rpcError(id, d.code ?? RpcErrors.SPAWN_DENIED, reason));
+      return;
+    }
+    if (s.exited) {
+      // exited while the policy was deciding
+      answer(rpcError(id, RpcErrors.ATTACH_FAILED, "session exited"));
+      return;
+    }
+    // Grant: bump the writer epoch, open the new uplink lane, record the
+    // writer in status.json — that record is both the durable epoch (host
+    // restarts resume the right lane) and the fence the superseded client
+    // reads. Concurrent attachers serialize here; the last grant's status
+    // write wins and everyone below it fences off.
+    s.epoch += 1;
+    s.nextInSeq = null; // fresh sequence space, rediscovered from the new dir
+    try {
+      fs.mkdirSync(s.inDir, { recursive: true });
+    } catch {}
+    s.watchers.push(this.watchDir(s.inDir, () => this.scheduleScan()));
+    s.lastClientSeen = Date.now();
+    s.detached = false; // an attached client is present by definition
+    s.patchStatus({ writer: { epoch: s.epoch, aid } });
+    const pid = s.proc ? ((s.proc as { pid?: number }).pid ?? process.pid) : process.pid;
+    const result: AttachResult = {
+      kind,
+      pid,
+      epoch: s.epoch,
+      ...(kind === "shell" ? { pty: s.usesPty, cmd: this.resolveShell(s.spawn!).cmd } : {}),
+    };
+    this.log.info(`session ${s.id}: attach granted to ${aid} (epoch ${s.epoch})`);
+    answer(rpcResult(id, result));
+    this.scheduleScan(); // consume anything already committed to the new lane
+  }
+
   // Consume in/ chunks strictly in sequence order. Two kinds share one
   // sequence space: NNNNNNNN.f files (payload = content) and
   // NNNNNNNN-<b64url> directories (payload = name; fast lane, F10).
@@ -1174,11 +1317,11 @@ export class HostServer {
     if (method === undefined) return; // a response; host has no pending requests
     const isRequest = id !== undefined;
     // Registered kinds get first crack at non-reserved methods (D13):
-    // `ack`/`close`/`heartbeat` are host integrity and never dispatched;
-    // anything the kind doesn't define falls through to the builtins
-    // (`ping` works on every kind — it's the transport diagnostic), then
-    // -32601.
-    if (s.kindSession?.methods && method !== "ack" && method !== "close" && method !== "heartbeat") {
+    // `ack`/`close`/`heartbeat`/`detach` are host integrity and never
+    // dispatched; anything the kind doesn't define falls through to the
+    // builtins (`ping` works on every kind — it's the transport
+    // diagnostic), then -32601.
+    if (s.kindSession?.methods && method !== "ack" && method !== "close" && method !== "heartbeat" && method !== "detach") {
       const fn = s.kindSession.methods[method];
       if (fn) {
         Promise.resolve()
@@ -1216,6 +1359,14 @@ export class HostServer {
         // heartbeats" — which opts the session into vanished-client
         // policy. Legacy clients never send it and are never judged.
         s.heartbeatAware = true;
+        break;
+      case "detach":
+        // Deliberate walk-away (D18): mark detached NOW instead of making
+        // the session wait out the heartbeat-silence window. The process
+        // keeps running; a later attach (or the same client's return
+        // traffic) clears the marker.
+        this.log.info(`session ${s.id}: detached by client`);
+        s.setDetached(true);
         break;
       case "signal": {
         const { sig } = params as SignalParams;

@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { HostServer, type HostServerOptions, type SpawnRequestInfo, type PtyModule } from "@fsio/host";
 import { RpcErrors } from "@fsio/common";
-import { FsioClient, RpcError, now, type PingResult } from "@fsio/client";
+import { FsioClient, RpcError, now, type PingResult, type SessionStatus } from "@fsio/client";
 import { ShimDirectory, type ShimFaults } from "./fs-shim.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -152,6 +152,155 @@ test("heartbeatMs: 0 disables the beacon", async () => {
       await s.close();
     }
   });
+});
+
+// ------------------------------------------------ attach / detach (D18, #3)
+
+const readStatus = (sessionDir: string): SessionStatus | null => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(sessionDir, "status.json"), "utf8")) as SessionStatus;
+  } catch {
+    return null;
+  }
+};
+
+test("attach takeover: replayed scrollback, working uplink on the new epoch, superseded spawner fenced", async () => {
+  // D18 end to end: B attaches to A's live shell — the grant bumps the
+  // writer epoch, B's uplink rides in.1/, replay re-emits A's scrollback,
+  // and A fences itself off the moment it observes the writer record
+  // (one writer per file across takeovers, F8/D6).
+  await withHost({ allowShell: true }, async (clientA, root) => {
+    const a = clientA.createSession({ kind: "shell", cmd: "/bin/cat", pty: false }, { pollMs: 5, safetyMs: 50 });
+    const aOut: Buffer[] = [];
+    const aNotes: string[] = [];
+    a.on("data", (x) => aOut.push(Buffer.from(x)));
+    a.on("note", (n) => aNotes.push(n));
+    try {
+      await a.ready;
+      a.sendData("scrollback-line\n");
+      await waitFor(() => Buffer.concat(aOut).toString().includes("scrollback-line"), "cat echo to A");
+
+      const clientB = new FsioClient(new ShimDirectory(root));
+      await clientB.connect();
+      const b = clientB.attachSession(a.id, { pollMs: 5, safetyMs: 50, replay: true });
+      const bOut: Buffer[] = [];
+      b.on("data", (x) => bOut.push(Buffer.from(x)));
+      try {
+        const grant = await b.ready;
+        assert.equal(grant.kind, "shell");
+        assert.equal(b.epoch, 1, "grant must carry the bumped writer epoch");
+        await waitFor(() => Buffer.concat(bOut).toString().includes("scrollback-line"), "replayed scrollback at B");
+        b.sendData("via-epoch-1\n");
+        await waitFor(() => Buffer.concat(bOut).toString().includes("via-epoch-1"), "B's uplink (in.1/) round-trips");
+        await waitFor(() => aNotes.some((n) => n.includes("superseded")), "A observes the fence");
+        assert.throws(() => a.sendData("after-fence\n"), /superseded/, "a fenced writer must refuse to send");
+      } finally {
+        await b.close();
+      }
+    } finally {
+      await a.close();
+    }
+  });
+});
+
+test("attach to an exited session rejects with ATTACH_FAILED (1005)", async () => {
+  await withHost({ allowShell: true }, async (client, root) => {
+    const s = client.createSession({ kind: "shell", cmd: "/bin/sh", args: ["-c", "exit 0"], pty: false }, { pollMs: 5 });
+    await s.ready;
+    await s.waitForStatus((st) => st.state === "exited");
+    const clientB = new FsioClient(new ShimDirectory(root));
+    await clientB.connect();
+    const b = clientB.attachSession(s.id, { pollMs: 5 });
+    try {
+      await assert.rejects(b.ready, (e: unknown) => {
+        assert.ok(e instanceof RpcError, `expected RpcError, got ${e}`);
+        assert.equal(e.code, RpcErrors.ATTACH_FAILED);
+        return true;
+      });
+    } finally {
+      await b.close();
+      await s.close();
+    }
+  });
+});
+
+test("detach() marks the session detached immediately; a later attach clears it and takes over", async () => {
+  // D18: deliberate walk-away must not wait out the D17 silence window,
+  // and the session must survive to be adopted by the next client.
+  await withHost({}, async (client, root) => {
+    const s = client.createSession({ kind: "echo" }, { pollMs: 5, safetyMs: 50 });
+    await s.ready;
+    const dir = path.join(root, ".fsio", "sessions", s.id);
+    await s.detach();
+    await waitFor(() => readStatus(dir)?.detached === true, "detached marker after detach()");
+    const clientB = new FsioClient(new ShimDirectory(root));
+    await clientB.connect();
+    const b = clientB.attachSession(s.id, { pollMs: 5, safetyMs: 50 });
+    try {
+      await b.ready;
+      await waitFor(() => {
+        const st = readStatus(dir);
+        return st?.detached === undefined && st?.writer?.epoch === 1;
+      }, "attach cleared the marker and recorded the writer");
+      const { result } = await b.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      assert.ok(result.t1 > 0, "attached client must get service");
+    } finally {
+      await b.close();
+    }
+  });
+});
+
+test("listSessions() discovers sessions with kind, client tag, and status", async () => {
+  await withHost({}, async (client) => {
+    const s = client.createSession({ kind: "echo", client: "b1-list" }, { pollMs: 5 });
+    try {
+      await s.ready;
+      const rows = await client.listSessions();
+      const row = rows.find((r) => r.id === s.id);
+      assert.ok(row, "spawned session not discovered");
+      assert.equal(row.kind, "echo");
+      assert.equal(row.client, "b1-list");
+      assert.equal(row.status?.state, "running");
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+test("attach consults the policy with attach:true; denial rejects ready with the coded error", async () => {
+  // D18 judges an attach like a spawn of the same kind: the hook sees the
+  // attacher's identity and attach:true, and its denial is fail-safe.
+  const seen: SpawnRequestInfo[] = [];
+  await withHost(
+    {
+      onSpawnRequest: (_spec, info) => {
+        seen.push(info);
+        return info.attach ? { allow: false, reason: "no takeovers" } : true;
+      },
+    },
+    async (client, root) => {
+      const s = client.createSession({ kind: "echo" }, { pollMs: 5 });
+      await s.ready;
+      const clientB = new FsioClient(new ShimDirectory(root));
+      await clientB.connect();
+      const b = clientB.attachSession(s.id, { pollMs: 5 });
+      try {
+        await assert.rejects(b.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError, `expected RpcError, got ${e}`);
+          assert.equal(e.code, RpcErrors.SPAWN_DENIED);
+          assert.match(e.message, /no takeovers/);
+          return true;
+        });
+        assert.ok(
+          seen.some((i) => i.attach === true && i.kind === "echo"),
+          "policy never saw the attach request"
+        );
+      } finally {
+        await b.close();
+        await s.close();
+      }
+    }
+  );
 });
 
 // ------------------------------------------------ uplink lanes (F10, #4)
