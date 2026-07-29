@@ -28,6 +28,9 @@ export interface ShimFaults {
   closeAborts?: number;
   /** next N directory creations throw (dirname lane) */
   dirCreateAborts?: number;
+  /** every directory creation stalls this long (#4: simulates Chrome
+   *  starting to scan directory creation — the F10 asymmetry closing) */
+  dirCreateDelayMs?: number;
 }
 
 const abortError = () => new NamedError("AbortError", "Aborted due to security policy.");
@@ -45,6 +48,7 @@ export class ShimDirectory implements FsDirectory {
         this.faults.dirCreateAborts--;
         throw abortError();
       }
+      if (this.faults.dirCreateDelayMs) await new Promise((r) => setTimeout(r, this.faults.dirCreateDelayMs));
       await fs.mkdir(p, { recursive: true });
     } else {
       const st = await fs.stat(p).catch(() => null);

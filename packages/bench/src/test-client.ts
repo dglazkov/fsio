@@ -364,17 +364,109 @@ test("file-lane commit aborts are retried on the same seq; nothing is lost", asy
   });
 });
 
-test("dirname-lane commit aborts are retried on the same seq", async () => {
+test("a dirname commit abort falls back to a file chunk on the same seq (#4); one abort is no latch", async () => {
+  // #37's same-seq guarantee, #4's lane fallback: the failed dir chunk
+  // re-lands as a FILE chunk under the same number (idempotent — the two
+  // lanes share one sequence space), instead of burning retries on a lane
+  // that may be structurally broken.
   await withHost({}, async (client, _root, faults) => {
     const s = client.createSession({ kind: "echo", client: "b1-retry-dir" }, { pollMs: 5, uplink: "auto" });
+    const notes: string[] = [];
+    s.on("note", (n) => notes.push(n));
     try {
       await s.ready;
       faults.dirCreateAborts = 1;
       const { result } = await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 }); // small → dirname lane
-      assert.ok(result.t1 > 0);
-      assert.ok((s.stats.commitRetries ?? 0) >= 1, `expected ≥1 retry (stats: ${JSON.stringify(s.stats)})`);
-      assert.ok(s.stats.dirChunks >= 1, `retried chunk must still ride the dirname lane (stats: ${JSON.stringify(s.stats)})`);
+      assert.ok(result.t1 > 0, "ping must round-trip despite the aborted dir commit");
+      assert.equal(s.stats.laneFallbacks, 1, `expected exactly one fallback (stats: ${JSON.stringify(s.stats)})`);
+      assert.ok(s.stats.fileChunks >= 1, `fallback chunk must land as a file (stats: ${JSON.stringify(s.stats)})`);
+      assert.ok(
+        notes.some((n) => n.includes("falling back to a file chunk")),
+        `fallback surfaces as a note (notes: ${JSON.stringify(notes)})`
+      );
+      // A single strike must not disable the lane (transient aborts exist,
+      // #37): the next small batch tries dirname again.
+      const dirBefore = s.stats.dirChunks;
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      assert.ok(s.stats.dirChunks > dirBefore, `one strike must not park the lane (stats: ${JSON.stringify(s.stats)})`);
+      assert.notEqual(s.stats.dirLane, "broken");
     } finally {
+      await s.close();
+    }
+  });
+});
+
+// --------------------------- dirname-lane health latches (#4)
+
+test("repeated dirname failures latch the lane off for the session", async () => {
+  // #4 failure-mode fallback: two commits that failed on the dir lane but
+  // landed as files = the lane is structurally broken here (name limits,
+  // filesystem quirks) — stop attempting it, traffic keeps flowing.
+  await withHost({}, async (client, _root, faults) => {
+    const s = client.createSession({ kind: "echo", client: "b1-lane-broken" }, { pollMs: 5, uplink: "auto" });
+    const notes: string[] = [];
+    s.on("note", (n) => notes.push(n));
+    try {
+      await s.ready;
+      faults.dirCreateAborts = 99; // every dir attempt fails, files work
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      await waitFor(() => s.stats.dirLane === "broken", `broken latch (stats: ${JSON.stringify(s.stats)}, notes: ${JSON.stringify(notes)})`);
+      assert.ok(
+        notes.some((n) => n.includes("dirname lane disabled")),
+        `latch surfaces as a note (notes: ${JSON.stringify(notes)})`
+      );
+      // Once broken, small batches go straight to files: no more fallbacks.
+      const fallbacksBefore = s.stats.laneFallbacks;
+      const fileBefore = s.stats.fileChunks;
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      assert.ok(s.stats.fileChunks > fileBefore, "small batch must ride the file lane once broken");
+      assert.equal(s.stats.laneFallbacks, fallbacksBefore, "no dir attempts (hence no fallbacks) after the latch");
+    } finally {
+      faults.dirCreateAborts = 0;
+      await s.close();
+    }
+  });
+});
+
+test("a slow dirname lane is parked after a streak and restored by the periodic re-probe", async () => {
+  // #4 durability probe: if Chrome starts scanning directory creation too
+  // (the F10 asymmetry closing — every dir commit lands at the F7 scan
+  // floor), the lane loses its reason to exist. Simulated with an injected
+  // per-mkdir delay; recovery uses the real re-probe path (one live batch
+  // after the cooldown), not a synthetic probe.
+  await withHost({}, async (client, _root, faults) => {
+    const s = client.createSession(
+      { kind: "echo", client: "b1-lane-slow" },
+      { pollMs: 5, uplink: "auto", uplinkLane: { slowMs: 15, reprobeMs: 200 } }
+    );
+    const notes: string[] = [];
+    s.on("note", (n) => notes.push(n));
+    try {
+      await s.ready;
+      faults.dirCreateDelayMs = 40; // > slowMs and > file baseline: "scanned"
+      for (let i = 0; i < 4 && s.stats.dirLane === "on"; i++) {
+        await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      }
+      await waitFor(() => s.stats.dirLane === "slow", `slow latch (stats: ${JSON.stringify(s.stats)}, notes: ${JSON.stringify(notes)})`);
+      const fileBefore = s.stats.fileChunks;
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      assert.ok(s.stats.fileChunks > fileBefore, "small batches prefer files while the lane is parked");
+      // The asymmetry "reopens": after the cooldown, one real batch
+      // re-probes the lane and restores it.
+      faults.dirCreateDelayMs = 0;
+      await sleep(250); // past reprobeMs
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      await waitFor(() => s.stats.dirLane === "on", `recovery (stats: ${JSON.stringify(s.stats)}, notes: ${JSON.stringify(notes)})`);
+      assert.ok(
+        notes.some((n) => n.includes("dirname lane slow")) && notes.some((n) => n.includes("recovered")),
+        `both transitions surface as notes (notes: ${JSON.stringify(notes)})`
+      );
+      const dirBefore = s.stats.dirChunks;
+      await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      assert.ok(s.stats.dirChunks > dirBefore, "restored lane carries small batches again");
+    } finally {
+      faults.dirCreateDelayMs = 0;
       await s.close();
     }
   });

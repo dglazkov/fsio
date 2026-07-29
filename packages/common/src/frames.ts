@@ -90,6 +90,15 @@ export const CHUNK_RE = /^(\d{8})\.f$/;
 // Dirname uplink (F10): small frame batches encoded into a created
 // directory's *name* — no file content, so no browser after-write checks.
 // Same sequence space as file chunks; consumers process both in seq order.
+//
+// Case-folding audit (#4): b64url is case-sensitive, and common desktop
+// filesystems (APFS, NTFS, exFAT) are case-INSENSITIVE. Safe anyway: any
+// two distinct chunk names differ in the decimal seq prefix — a collision
+// needs equal seq, and equal seq only happens on a same-chunk retry, whose
+// name is byte-identical (create-or-open, spec Uplink). Those filesystems
+// are case-PRESERVING, so the consumer reads back the exact name written.
+// Case-DESTROYING filesystems (bare FAT16) would corrupt the payload and
+// are out of scope; the client's failure/probe fallback (#4) is the net.
 export const DIR_CHUNK_RE = /^(\d{8})-([A-Za-z0-9_-]+)$/;
 
 export function dirChunkName(seq: number, bytes: Uint8Array): string {
