@@ -55,11 +55,19 @@ style.
 
 ## Cooperative verification (browser work)
 
-No browser automation exists yet (#19). The loop: agent implements → human
-drives the workbench → the page self-reports into
-`<shared-dir>/.fsio/client/{log.txt,report.json}` → agent reads verdicts
-from the native side. Ask the human to click; read the report; never claim
-browser code works without one of the two.
+Two loops, both ending in the agent reading verdicts from the native side
+of `<shared-dir>/.fsio/client/{log.txt,report.json}`:
+
+- **One-click harness** (`npm run harness`, TESTING.md B3): agent drives
+  the real workbench in headed Chrome; the human's entire job is one
+  "Allow on every visit" click per run (F15 — unautomatable by Chrome's
+  design). Prefer this for workbench-side changes.
+- **Manual loop**: agent implements → human drives the page → page
+  self-reports. Still the only loop for anything the harness can't reach
+  (the real picker, the terminal-demo page, new-Chrome sanity).
+
+Ask the human to click; read the report; never claim browser code works
+without one of the two.
 
 ## Conventions (each learned the hard way)
 

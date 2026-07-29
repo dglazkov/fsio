@@ -17,6 +17,7 @@ and in CI (wireit graph; see README). One command, no surprises.
 | client conformance (B1) | the real `@fsio/client` over a Node fs shim against an in-process host: event delivery, D11 construction/disposal semantics, uplink lane selection, D6 cleanup ownership, D12 spawn policy, D13 registered kinds, D14 introspection + injected pty | `packages/bench/src/test-client.ts` + `fs-shim.ts` | per push |
 | smoke | one full happy path per uplink lane + flow control, with a *generous* latency ceiling (100 ms p50 — catches the F1/F2 wakeup-regression class, never runner jitter) | `packages/bench/src/test-smoke.ts` | per push |
 | labs | platform measurement, not pass/fail: benches, observer lab, write microbench. Results feed [spec/FINDINGS.md](spec/FINDINGS.md), never CI verdicts | `packages/bench`, workbench | when investigating |
+| browser harness (B3) | the real workbench in headed Chrome against a real host, one human click per run (F15) — bench in both uplink lanes at the smoke's 100 ms ceiling + a typed shell echo read back natively | `npm run harness` (`scripts/browser-harness.mjs`) | on demand: after a Chrome update, before a release, when a browser-touching change lands |
 | sandbox posture | the terminal-demo Seatbelt profile, layer by layer (ROOT allow, `.fsio` deny via SBPL last-match-wins, outside-ROOT deny, fail-closed pty wrapper) — macOS-only, skips elsewhere (same posture as the F-findings being macOS-measured) | `packages/terminal-demo/src/test-sandbox.ts` | per push |
 
 Conventions:
@@ -64,12 +65,21 @@ Browser coverage is tiered by what each tier can actually prove:
   possible — but OPFS is a different backend (no F7 scan, different
   snapshot behavior), so it proves API shape, not platform truth.
   Revisit only if B1 leaves gaps.
-- **B3 — real Chrome, real picked directory (scheduled).** Needs a spike
-  on picker bypass (CDP-synthesized directory drop → `
-  getAsFileSystemHandle()`, or a fake-picker flag). Payoff is
-  **findings-drift detection**: a nightly re-measurement of F7/F10 is
-  #4's durability probe. Tracked in #19.
-- **B4 — cooperative loop, formalized (cheap, next).** One in-page button
-  runs a client conformance battery and writes structured pass/fail into
-  `report.json` for the native side to read. Covers what automation never
-  will: the real picker, Safe Browsing toggles (#11), new Chrome builds.
+- **B3 — real Chrome, real host-visible directory (LANDED as the
+  one-click harness,
+  [#21](https://github.com/dglazkov/fsio/issues/21)).** `npm run harness`:
+  Playwright launches headed Chrome for Testing, a CDP-synthesized
+  directory drop mints a real handle (F14), one human click grants write
+  for the whole browser session (F15), then the agent drives the workbench
+  unattended — bench in both uplink lanes asserted at the smoke's generous
+  100 ms ceiling, plus a shell echo typed into xterm and read back
+  natively from the shared dir (no self-grading by the page). On-demand
+  only: the click-per-run cost is Chrome's design, which is also why the
+  *scheduled* uplink drift job stays blocked
+  ([#22](https://github.com/dglazkov/fsio/issues/22)).
+- **B4 — cooperative loop, formalized
+  ([#35](https://github.com/dglazkov/fsio/issues/35)).** One in-page
+  button runs a client conformance battery and writes structured pass/fail
+  into `report.json` for the native side to read. Covers what automation
+  never will: the real picker, Safe Browsing toggles (#11), new Chrome
+  builds — and the harness clicks the same button once it exists.
