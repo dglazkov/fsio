@@ -189,9 +189,14 @@ let pickedRoot: FileSystemDirectoryHandle | null = null;
 let fsioDir: FileSystemDirectoryHandle | null = null;
 let hostTimer: ReturnType<typeof setInterval> | undefined;
 
-$("pick").onclick = guard(async () => {
-  step("opening the folder picker", { quiet: true });
-  const root = await showDirectoryPicker({ mode: "readwrite" });
+// Machine-readable page state: the browser harness (#21) keys its driver on
+// body[data-fsio-state] instead of scraping prose meant for humans.
+function setState(s: "idle" | "awaiting-grant" | "connected"): void {
+  document.body.dataset.fsioState = s;
+}
+setState("idle");
+
+async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
   step("setting up .fsio in the folder");
   client = new FsioClient(root);
   await client.connect();
@@ -200,6 +205,7 @@ $("pick").onclick = guard(async () => {
   await reporter.attach(fsioDir);
   reporter.event("connected", { folder: root.name });
   setCheck("chk-dir", "ok", `folder chosen: ${root.name}/`);
+  setState("connected");
   await refreshHostCheck();
   clearInterval(hostTimer);
   hostTimer = setInterval(refreshHostCheck, 2000);
@@ -209,6 +215,54 @@ $("pick").onclick = guard(async () => {
   $in("run-throughput-lab").disabled = false;
   $in("open-term").disabled = false;
   log(`connected to ${root.name}/.fsio`);
+}
+
+$("pick").onclick = guard(async () => {
+  step("opening the folder picker", { quiet: true });
+  const root = await showDirectoryPicker({ mode: "readwrite" });
+  await connectTo(root);
+});
+
+// Drop-to-connect. A dropped directory arrives as a real handle but
+// read-only (F14); write needs requestPermission from a user activation
+// (F15) — hence the separate grant button, which is exactly the harness's
+// (#21) one human click. Also a picker-free path for humans: drag the
+// shared folder onto the page.
+let droppedRoot: FileSystemDirectoryHandle | null = null;
+document.body.addEventListener("dragover", (e) => e.preventDefault());
+document.body.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const item = e.dataTransfer?.items[0];
+  if (!item?.getAsFileSystemHandle) return;
+  // Must be called synchronously inside the event — DataTransfer items are
+  // neutered once the handler returns.
+  const pending = item.getAsFileSystemHandle();
+  void guard(async () => {
+    step("reading the dropped folder");
+    const handle = await pending;
+    if (!handle || handle.kind !== "directory") {
+      fail("That drop wasn't a folder.", "Drop the shared folder itself, not a file inside it.");
+    }
+    droppedRoot = handle as FileSystemDirectoryHandle;
+    if ((await droppedRoot.queryPermission({ mode: "readwrite" })) === "granted") {
+      await connectTo(droppedRoot);
+      return;
+    }
+    setCheck("chk-dir", "todo", `folder dropped: ${droppedRoot.name}/ — now grant write access`);
+    $("grant").hidden = false;
+    setState("awaiting-grant");
+    log(`dropped ${droppedRoot.name}/ — awaiting write grant`);
+  })();
+});
+
+$("grant").onclick = guard(async () => {
+  step("requesting write permission");
+  const res = await droppedRoot!.requestPermission({ mode: "readwrite" });
+  if (res !== "granted") {
+    fail("Write permission was not granted.", "Click “Allow on every visit” (or “Allow”) in Chrome's prompt, then press the button again.");
+  }
+  $("grant").hidden = true;
+  await connectTo(droppedRoot!);
 });
 
 async function refreshHostCheck() {
