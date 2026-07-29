@@ -433,6 +433,26 @@ silently — is a downgrade, never fatal.*
 → [D7](DECISIONS.md#d7--observer-failure-downgrades-to-polling), F6, F9,
 [#58](https://github.com/dglazkov/fsio/issues/58)
 
+### F20 — a persisted handle with "Allow on every visit" spans browser restarts; revisit is zero-gesture
+
+Measured 2026-07-29 (stock Chrome 150, macOS, the #58 cooperative loop):
+the terminal-demo page stashes the picked `FileSystemDirectoryHandle` in
+IndexedDB and calls `queryPermission({mode: "readwrite"})` on every
+load. Across ~16 page loads in ~90 minutes — including the first load
+after a full Chrome quit-and-relaunch — every single load read
+`"granted"` and reconnected with **zero clicks and zero prompts**. The
+one-click `requestPermission` fallback (needs a user activation, F15)
+never had to fire on this profile after the user chose "Allow on every
+visit" at the original picker grant. Revisit UX consequence: the wizard
+is a first-run-only artifact; after that the folder grant behaves like
+an installed capability.
+
+Unmeasured: what plain "Allow" (not every-visit) yields across
+restarts; whether Chrome's usage-based permission expiry eventually
+decays the grant (worth a check-in weeks, not days); profile-to-profile
+variance.
+→ F15, [#58](https://github.com/dglazkov/fsio/issues/58)
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
