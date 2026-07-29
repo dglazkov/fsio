@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HostServer, type HostServerOptions } from "@fsio/host";
-import { now, rpcRequest, SPAWN_REQUEST_ID, type SpawnSpec, type SessionStatus } from "@fsio/common";
+import { now, encodeFrame, FrameType, rpcRequest, rpcNotification, SPAWN_REQUEST_ID, type SpawnSpec, type SessionStatus } from "@fsio/common";
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "fsio-life-"));
 
@@ -35,6 +35,18 @@ function makeSession(root: string, id: string, spec: SpawnSpec): string {
   fs.writeFileSync(t, JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spec)));
   fs.renameSync(t, path.join(dir, "spawn.json"));
   return dir;
+}
+
+/** Commit one uplink chunk carrying a single RPC notification, atomically
+ *  (temp+rename, like a native client — spec: Uplink). */
+const chunkSeq = new Map<string, number>();
+function sendNotification(sessionDir: string, method: string): void {
+  const seq = (chunkSeq.get(sessionDir) ?? 1);
+  chunkSeq.set(sessionDir, seq + 1);
+  const bytes = encodeFrame(FrameType.RPC, new TextEncoder().encode(JSON.stringify(rpcNotification(method))));
+  const t = path.join(sessionDir, "in", ".t");
+  fs.writeFileSync(t, bytes);
+  fs.renameSync(t, path.join(sessionDir, "in", `${String(seq).padStart(8, "0")}.f`));
 }
 
 function status(sessionDir: string): SessionStatus | null {
@@ -75,6 +87,54 @@ test("idle shell sessions are NOT reaped (they may hold real user processes)", a
     await waitFor(() => status(dir)?.state === "running", "shell session running");
     await sleep(500); // many idle windows and sweeps
     assert.ok(fs.existsSync(dir), "idle sweep reaped a shell session");
+    assert.equal(status(dir)?.state, "running");
+  });
+});
+
+// ---------------------------------------- vanished clients + detach (D17, #3)
+
+test("heartbeat-aware echo session is reaped once the client goes silent past detachAfterMs", async () => {
+  // D17: a heartbeat opts the session into precise vanished-client GC —
+  // echo is a stateless workbench artifact, so silence means reap, without
+  // waiting out the blunt 5-minute idle window.
+  await withServer({ timings: { detachAfterMs: 200, idleSweepMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "hb-echo", { kind: "echo" });
+    await waitFor(() => status(dir)?.state === "running", "echo session running");
+    sendNotification(dir, "heartbeat");
+    await waitFor(() => !fs.existsSync(dir), "vanished heartbeat-aware echo reaped");
+  });
+});
+
+test("heartbeat-aware shell is marked detached (never killed); a returning client clears it", async () => {
+  // D17: stateful sessions get a detached MARKER, not a kill — a
+  // backgrounded tab's beats clamp to 1/min (F16) and the user will
+  // return. Any uplink traffic (here: the next heartbeat) reattaches.
+  await withServer({ allowShell: true, timings: { detachAfterMs: 200, idleSweepMs: 25 } }, async (server, root) => {
+    const dir = makeSession(root, "hb-shell", { kind: "shell", cmd: "/bin/sleep", args: ["60"], pty: false });
+    const st = await waitFor(() => {
+      const s = status(dir);
+      return s?.state === "running" ? s : null;
+    }, "shell session running");
+    sendNotification(dir, "heartbeat");
+    await waitFor(() => status(dir)?.detached === true, "detached marker in status.json");
+    const detachedStatus = status(dir)!;
+    assert.equal(detachedStatus.state, "running", "detach must not change state");
+    assert.doesNotThrow(() => process.kill(st.pid!, 0), "detach must not kill the child");
+    assert.ok(server.listSessions().find((s) => s.id === "hb-shell")?.detached, "listSessions must surface detached");
+    sendNotification(dir, "heartbeat");
+    await waitFor(() => status(dir)?.detached === undefined, "detached cleared on client return");
+    assert.equal(status(dir)?.state, "running");
+  });
+});
+
+test("legacy clients (no heartbeat) are never marked detached", async () => {
+  // D17: only heartbeat-aware sessions are judged by client presence —
+  // a legacy client that is merely quiet keeps the pre-D17 behavior.
+  await withServer({ allowShell: true, timings: { detachAfterMs: 100, idleSweepMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "legacy-shell", { kind: "shell", cmd: "/bin/sleep", args: ["60"], pty: false });
+    await waitFor(() => status(dir)?.state === "running", "shell session running");
+    await sleep(400); // many detach windows and sweeps
+    assert.equal(status(dir)?.detached, undefined, "legacy session must not be judged by heartbeat silence");
     assert.equal(status(dir)?.state, "running");
   });
 });

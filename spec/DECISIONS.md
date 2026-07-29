@@ -489,3 +489,47 @@ arrive — the per-op constant in F18 is the calibration a future
 auto-tuner would use).
 
 **Findings.** F2, F17, F18.
+
+## D17 — client heartbeats: opt-in, detached marking instead of kill
+
+**Decision.** Clients send a `heartbeat` JSON-RPC notification every 20 s
+(client option `heartbeatMs`, 0 = off). It is a *quiet* send: it rides the
+normal uplink (~44 B framed → always the dirname fast lane) but does not
+re-arm the adaptive hot poll — a beacon must not buy 2 s of hot polling
+per beat (F18's idle economics). On the host, any consumed uplink chunk
+counts as client presence; the first `heartbeat` marks the session
+heartbeat-aware, opting it into vanished-client policy. After
+`detachAfterMs` (default 180 s) of silence from a heartbeat-aware client:
+echo sessions are reaped (stateless workbench artifacts, GC'd precisely
+instead of via the blunt 5-minute idle window); everything else — shells,
+registered kinds — is **marked** `detached: true` in `status.json`, with
+state, process, and stream untouched. Any consumed uplink chunk clears
+the marker. `heartbeat` is host-reserved alongside `ack`/`close` (never
+dispatched to registered kinds). Legacy clients that never beat keep the
+exact pre-D17 behavior.
+
+**Why the window is 180 s** (F16, measured): a hidden tab's timers clamp
+to 1/min under Chrome's intensive throttling, so a healthy backgrounded
+client beats at 60 s cadence — 180 s is three clamped beats of margin. A
+frozen tab (battery saver, unmeasured — #50 territory) will false-detach,
+which is exactly why detach is a marker and not a kill: the cost of a
+wrong verdict is one status flip that self-heals on return, not a dead
+shell. Getting this wrong the other way — GC'ing on a 1-minute window —
+would kill the session out from under every user who switches tabs.
+
+**Why opt-in via first-heartbeat** rather than a capability flag or
+protocol bump: the host cannot distinguish "old client" from "quiet
+client" any other way without a handshake (#8, future), and false
+detachment of legacy clients would be a silent behavior change for every
+existing embedder and test rig.
+
+**Alternatives rejected.** Client-owned heartbeat *file* (mtime-based):
+another file with another writer, and a browser rewrite pays the
+swap-commit cost for no reason when the dirname lane already carries
+40-byte notifications for ~3 ms (F10). Heartbeats riding something
+unthrottled (the FileSystemObserver survives backgrounding, F16 — but it
+is a *read-side* mechanism; there is no unthrottled write-side timer to
+ride, so tolerate the clamp instead). Kill-after-grace for shells
+(rejected in #3 from the start: they may hold real user processes).
+
+**Findings.** F10, F16, F18.
