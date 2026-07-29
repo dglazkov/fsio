@@ -49,6 +49,12 @@ export interface SessionStatus {
    *  is alive but unattended — a reattach candidate, not a corpse. Cleared
    *  when uplink activity resumes. */
   detached?: boolean;
+  /** current uplink writer (D18). Absent = the spawning client (epoch 0,
+   *  uplink `in/`). Each attach grant bumps `epoch` and moves the uplink
+   *  to `in.<epoch>/`; a client observing an epoch above its own has been
+   *  superseded and MUST stop committing chunks (the fence that keeps
+   *  one-writer-per-file true across takeovers, F8/D6). */
+  writer?: { epoch: number; aid: string };
 }
 
 // ---- spawn (the request carried by spawn.json; see spec "Control plane")
@@ -123,4 +129,23 @@ export interface SignalParams {
 
 export interface AckParams {
   total: number;
+}
+
+/** `attach` request params (D18) — rides `attach.<aid>.json`, the same
+ *  file-as-bootstrap-transport trick as spawn.json (the host only consumes
+ *  the current writer's uplink, so a would-be writer cannot ask there). */
+export interface AttachParams {
+  /** attacher id, unique per attach attempt; also embedded in the file
+   *  name so concurrent attachers never share a file (F8/D6). */
+  aid: string;
+  /** free-form client identification, diagnostics only */
+  client?: string;
+  /** web origin of the attaching page (D15) — advisory, display-only. */
+  origin?: string;
+}
+
+/** `attach` result: the spawn-result shape plus the granted writer epoch
+ *  (the attacher's uplink becomes `in.<epoch>/`). */
+export interface AttachResult extends SpawnResult {
+  epoch: number;
 }
