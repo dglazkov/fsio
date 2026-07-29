@@ -14,7 +14,7 @@ import path from "node:path";
 import { HostServer, type HostServerOptions, type SpawnRequestInfo, type PtyModule } from "@fsio/host";
 import { RpcErrors } from "@fsio/common";
 import { FsioClient, RpcError, now, type PingResult } from "@fsio/client";
-import { ShimDirectory } from "./fs-shim.js";
+import { ShimDirectory, type ShimFaults } from "./fs-shim.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,14 +28,18 @@ async function waitFor<T>(fn: () => T | null | undefined | false, what: string, 
   }
 }
 
-async function withHost(opts: Omit<HostServerOptions, "root">, fn: (client: FsioClient, root: string) => Promise<void>): Promise<void> {
+async function withHost(
+  opts: Omit<HostServerOptions, "root">,
+  fn: (client: FsioClient, root: string, faults: ShimFaults) => Promise<void>
+): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
   const server = new HostServer({ root, ...opts });
   await server.start();
-  const client = new FsioClient(new ShimDirectory(root));
+  const faults: ShimFaults = {};
+  const client = new FsioClient(new ShimDirectory(root, faults));
   try {
     await client.connect();
-    await fn(client, root);
+    await fn(client, root, faults);
   } finally {
     server.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -141,6 +145,66 @@ test("uplink 'file' forces file chunks even for small batches", async () => {
       assert.equal(s.stats.dirChunks, 0);
       assert.ok(s.stats.fileChunks >= 1);
     } finally {
+      await s.close();
+    }
+  });
+});
+
+// --------------------- uplink commit retry (#37; spec Uplink "corollary")
+// A failed commit must not abandon its seq — the host consumes in/ strictly
+// in order, so a gap wedges the session's uplink. The shim aborts commits
+// the way CfT's Safe Browsing was observed to; the client must absorb it.
+
+test("file-lane commit aborts are retried on the same seq; nothing is lost", async () => {
+  await withHost({}, async (client, _root, faults) => {
+    const s = client.createSession({ kind: "echo", client: "b1-retry" }, { pollMs: 5, uplink: "file" });
+    const notes: string[] = [];
+    s.on("note", (n) => notes.push(n));
+    try {
+      await s.ready;
+      faults.closeAborts = 2; // first commit + first retry both abort
+      const { result } = await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 });
+      assert.ok(result.t1 > 0, "ping must round-trip despite the aborted commits");
+      assert.ok((s.stats.commitRetries ?? 0) >= 2, `expected ≥2 retries (stats: ${JSON.stringify(s.stats)})`);
+      assert.ok(
+        notes.some((n) => n.includes("commit failed") && n.includes("Aborted due to security policy")),
+        `retries surface as notes, not silence (notes: ${JSON.stringify(notes)})`
+      );
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+test("dirname-lane commit aborts are retried on the same seq", async () => {
+  await withHost({}, async (client, _root, faults) => {
+    const s = client.createSession({ kind: "echo", client: "b1-retry-dir" }, { pollMs: 5, uplink: "auto" });
+    try {
+      await s.ready;
+      faults.dirCreateAborts = 1;
+      const { result } = await s.request<PingResult>("ping", { t0: now() }, { timeoutMs: 5000 }); // small → dirname lane
+      assert.ok(result.t1 > 0);
+      assert.ok((s.stats.commitRetries ?? 0) >= 1, `expected ≥1 retry (stats: ${JSON.stringify(s.stats)})`);
+      assert.ok(s.stats.dirChunks >= 1, `retried chunk must still ride the dirname lane (stats: ${JSON.stringify(s.stats)})`);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+test("retries are bounded: persistent aborts surface as an error and poison send()", async () => {
+  await withHost({}, async (client, _root, faults) => {
+    const s = client.createSession({ kind: "echo", client: "b1-retry-cap" }, { pollMs: 5, uplink: "file" });
+    try {
+      await s.ready;
+      faults.closeAborts = 99; // more than the backoff schedule — never heals
+      const surfaced = new Promise<Error>((resolve) => s.on("error", resolve));
+      s.sendData("doomed");
+      const err = await surfaced; // ~1.3 s: the full backoff schedule
+      assert.match(err.message, /committing .*AbortError/);
+      assert.throws(() => s.sendData("after"), /AbortError/, "send() after a dead pump must throw, not queue silently");
+    } finally {
+      faults.closeAborts = 0;
       await s.close();
     }
   });

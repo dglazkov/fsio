@@ -172,6 +172,17 @@ Only filler-padded pings and DATA batches spill to the file lane.
   adoption, where earlier chunks were already consumed and deleted), so a
   violating first commit is indistinguishable from a resumed stream. After
   the base is discovered, a sequence gap stalls consumption until filled.
+- A corollary: a failed commit MUST NOT abandon its sequence number — the
+  gap it would leave wedges the session's uplink permanently. The client
+  SHOULD retry the *same* number with bounded backoff before surfacing a
+  transport error. A same-seq retry is idempotent by construction: an
+  uncommitted swap file was never visible; directory creation is
+  create-or-open; and a chunk re-created below the host's consumption
+  point is inert (never consumed, removed with the session dir — D6).
+  Observed trigger: Chrome aborting `close()` mid-stream
+  (`AbortError: Aborted due to security policy`,
+  [#37](https://github.com/dglazkov/fsio/issues/37)) — the write-side
+  analogue of invariant 3's transient read failures.
 - **Two lanes, one sequence space**
   ([D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches); F7, F10):
   frame batches ≤180 raw bytes SHOULD be committed as a created directory

@@ -45,6 +45,10 @@ export type { FsDirectory, FsFile, FsSnapshot, FsWritable };
 
 export const hasObserver = "FileSystemObserver" in globalThis;
 
+// Backoff schedule for uplink commit retries (#37). Bounded: after these
+// are exhausted the failure surfaces as a transport error.
+const COMMIT_RETRY_MS = [10, 50, 250, 1000];
+
 const errName = (e: unknown) => (e instanceof DOMException || e instanceof Error ? e.name : "Error");
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -147,6 +151,8 @@ export class FsioSession {
     bytesOut: number;
     wakeups: number;
     staleReads?: number;
+    /** uplink commits that failed transiently and were retried (#37) */
+    commitRetries?: number;
   } = {
     chunksWritten: 0,
     dirChunks: 0,
@@ -326,15 +332,7 @@ export class FsioSession {
       await this.#initDone; // sends may be queued while init is in flight
       while (this.#queue.length > 0 && !this.#closed) {
         const batch = concatBytes(this.#queue.splice(0));
-        if (this.uplink !== "file" && batch.length <= DIR_CHUNK_MAX_BYTES) {
-          // payload rides the directory *name*; no content write, no close()
-          const name = dirChunkName(this.#outSeq++, batch);
-          await op(`committing ${name.slice(0, 12)}…/`, () => this.#inDir.getDirectoryHandle(name, { create: true }));
-          this.stats.dirChunks++;
-        } else {
-          await this.#writeFile(chunkName(this.#outSeq++), batch, this.#inDir);
-          this.stats.fileChunks++;
-        }
+        await this.#commitChunk(batch);
         this.stats.chunksWritten++;
         this.stats.bytesOut += batch.length;
       }
@@ -343,6 +341,43 @@ export class FsioSession {
       this.#emit("error", this.#pumpError);
     } finally {
       this.#pumping = false;
+    }
+  }
+
+  // Commit `batch` as the next chunk, retrying transient failures with
+  // bounded backoff (#37; spec Uplink). A failed commit must not abandon
+  // its sequence number: the host consumes in/ strictly in order, so a gap
+  // wedges the uplink for the rest of the session — the observed CfT abort
+  // ("AbortError: Aborted due to security policy") cost the whole bench,
+  // not one message. Retrying the SAME seq is idempotent:
+  //   - commit truly failed (common case): nothing became visible — the
+  //     swap file was never renamed in; dir creation is create-or-open;
+  //   - commit landed but still threw: identical bytes re-land under the
+  //     same name (host re-reads torn snapshots, invariant 3/F11), or, if
+  //     already consumed, the re-created chunk sits below the host's
+  //     consumption point, inert until session cleanup (D6).
+  async #commitChunk(batch: Uint8Array): Promise<void> {
+    const seq = this.#outSeq;
+    const useDirLane = this.uplink !== "file" && batch.length <= DIR_CHUNK_MAX_BYTES;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        if (useDirLane) {
+          // payload rides the directory *name*; no content write, no close()
+          const name = dirChunkName(seq, batch);
+          await op(`committing ${name.slice(0, 12)}…/`, () => this.#inDir.getDirectoryHandle(name, { create: true }));
+          this.stats.dirChunks++;
+        } else {
+          await this.#writeFile(chunkName(seq), batch, this.#inDir);
+          this.stats.fileChunks++;
+        }
+        this.#outSeq = seq + 1;
+        return;
+      } catch (e) {
+        if (attempt >= COMMIT_RETRY_MS.length || this.#closed) throw e;
+        this.stats.commitRetries = (this.stats.commitRetries ?? 0) + 1;
+        this.#emit("note", `chunk ${seq} commit failed (${errMsg(e)}) — retrying in ${COMMIT_RETRY_MS[attempt]}ms`);
+        await new Promise((r) => setTimeout(r, COMMIT_RETRY_MS[attempt]));
+      }
     }
   }
 
