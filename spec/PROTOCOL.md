@@ -274,11 +274,13 @@ Only filler-padded pings and DATA batches spill to the file lane.
   uplink dir. A client observing a writer epoch above its own has been
   superseded: it MUST stop committing chunks (one writer per file,
   F8/D6) but MAY keep reading. Attaching to an exited session gets
-  `1005`. Scrollback replay is client-local (re-read retained segments;
-  replayed RPC frames MUST NOT be re-correlated — the previous writer's
-  response ids can collide with live ones). The attacher's acks start at
-  the head it attached at, which clears the predecessor's unacked window
-  on first ack — a paused pty resumes.
+  `1005`. Scrollback replay is client-local (the reference client re-reads
+  the retained head segment; full multi-segment replay is
+  [#57](https://github.com/dglazkov/fsio/issues/57)). Replayed RPC frames
+  MUST NOT be re-correlated — the previous writer's response ids can
+  collide with live ones. The attacher's acks start at the head it
+  attached at, which clears the predecessor's unacked window on first
+  ack — a paused pty resumes.
 
 ## Session kinds (v0)
 
