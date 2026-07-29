@@ -484,6 +484,10 @@ export class FsioSession {
       this.#emit("frame", f, at);
       if (f.type === FrameType.DATA) this.#emit("data", f.payload);
     }
+    // A takeover that raced our attach window: the status stream is
+    // deduped, so a writer record observed (and skipped) during the hold
+    // will not re-emit — judge it now, against the granted epoch.
+    if (this.#status) this.#maybeFence(this.#status);
   }
 
   // Scrollback replay (D18): re-read the head segment [0, end) and emit its
@@ -724,32 +728,12 @@ export class FsioSession {
     };
     this.#wakeFn = wake;
     if (this.#mode === "observer" || this.#mode === "hybrid" || this.#mode === "adaptive") {
-      try {
-        const obs = new FileSystemObserver(wake);
-        // observe() can STALL, not just refuse (F19: ~49 s on the first
-        // session after a fresh grant, Chrome 150) — and this await gates
-        // `ready` and the uplink. Bound it; a stall is the same downgrade
-        // as a refusal (D7), and the straggler is disconnected if it ever
-        // settles (by then the poll owns wakes).
-        const started = obs.observe(this.#dir, { recursive: true });
-        const timedOut = await Promise.race([
-          started.then(() => false),
-          new Promise<boolean>((r) => setTimeout(() => r(true), this.#observeSettleMs)),
-        ]);
-        if (timedOut) {
-          started.then(() => obs.disconnect()).catch(() => {});
-          this.#emit("note", `FileSystemObserver.observe() did not settle within ${this.#observeSettleMs}ms (F19) — falling back to polling`);
-          this.#mode = "poll";
-        } else {
-          this.#observer = obs;
-        }
-      } catch (e) {
-        // An observer that won't start is a downgrade, not a failure (D7).
-        // (Known trigger: directories under /tmp on macOS — spec/FINDINGS.md F9.)
-        this.#emit("note", `FileSystemObserver refused to start (${errName(e)}: ${errMsg(e)}) — falling back to polling`);
-        this.#observer = null;
-        this.#mode = "poll";
-      }
+      // NOT awaited (F19): observe() can stall for tens of seconds without
+      // rejecting, and awaiting it here used to gate init — `ready`, the
+      // uplink, heartbeats — behind a notifier the protocol can live
+      // without (D1/D7). Until it settles, polling carries the session
+      // (adaptive's session-start hot poll below + the safety poll).
+      this.#attachObserver(wake);
     }
     if (this.#mode === "poll" || this.#mode === "hybrid") {
       this.#pollTimer = setInterval(wake, this.pollMs);
@@ -768,6 +752,52 @@ export class FsioSession {
         } catch {} // a dead pump already surfaced via "error"
       }, this.heartbeatMs);
     }
+  }
+
+  /** Observer startup, concurrent with session traffic. Three outcomes:
+   *  settle (adopt), reject (downgrade, D7/F9), or stall past
+   *  observeSettleMs (downgrade, F19 — the straggler is disconnected if
+   *  it ever settles; by then the poll owns wakes). */
+  #attachObserver(wake: () => void): void {
+    let obs: FileSystemObserver;
+    try {
+      obs = new FileSystemObserver(wake);
+    } catch (e) {
+      this.#observerFailed(wake, `FileSystemObserver refused to start (${errName(e)}: ${errMsg(e)})`);
+      return;
+    }
+    const started = obs.observe(this.#dir, { recursive: true });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      started.then(() => obs.disconnect()).catch(() => {});
+      this.#observerFailed(wake, `FileSystemObserver.observe() did not settle within ${this.#observeSettleMs}ms (F19)`);
+    }, this.#observeSettleMs);
+    started.then(
+      () => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        if (this.#closed) return obs.disconnect();
+        this.#observer = obs; // adopted; teardown owns disconnect from here
+      },
+      (e) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        // An observer that won't start is a downgrade, not a failure (D7).
+        // (Known trigger: directories under /tmp on macOS — F9.)
+        this.#observerFailed(wake, `FileSystemObserver refused to start (${errName(e)}: ${errMsg(e)})`);
+      }
+    );
+  }
+
+  #observerFailed(wake: () => void, why: string): void {
+    if (this.#closed) return;
+    this.#emit("note", `${why} — falling back to polling`);
+    this.#mode = "poll";
+    if (!this.#pollTimer) this.#pollTimer = setInterval(wake, this.pollMs);
   }
 
   // Adaptive mode: hot poll exists only while traffic is flowing. The
@@ -902,17 +932,30 @@ export class FsioSession {
       if (JSON.stringify(status) !== JSON.stringify(this.#status)) {
         this.#status = status;
         this.#emit("status", status);
-        // Supersede fence (D18): a higher writer epoch means another client
-        // took over the uplink. Stop writing — one writer per file is the
-        // law (F8/D6) — but keep reading: the downlink is multi-reader.
-        if (status.writer && status.writer.epoch > this.#epoch && !this.#pumpError) {
-          this.#pumpError = new Error(`superseded: another client attached (writer epoch ${status.writer.epoch})`);
-          clearInterval(this.#heartbeatTimer);
-          this.#queue.length = 0; // never commit these — the lane is gone
-          this.#emit("note", `superseded by writer epoch ${status.writer.epoch}: sends now fail, reads continue`);
-        }
+        // Supersede fence (D18) — held while our own attach is in flight
+        // (#hold non-null): a previously-attached session's status.json
+        // permanently names a writer, and the grant record lands there
+        // before the grant response is readable, so a fresh attacher
+        // (epoch still 0) would fence itself on a stale record — or on
+        // its own grant. Found by the #58 cooperative loop: resumed
+        // terminals were dead (sends silently poisoned) whenever the
+        // session had been attached before. #completeAttach re-judges
+        // once the granted epoch is in.
+        if (this.#hold === null) this.#maybeFence(status);
       }
     } catch {}
+  }
+
+  /** Fence this writer if `status` names a higher epoch (D18): stop
+   *  writing — one writer per file is the law (F8/D6) — but keep reading:
+   *  the downlink is multi-reader. */
+  #maybeFence(status: SessionStatus): void {
+    if (status.writer && status.writer.epoch > this.#epoch && !this.#pumpError) {
+      this.#pumpError = new Error(`superseded: another client attached (writer epoch ${status.writer.epoch})`);
+      clearInterval(this.#heartbeatTimer);
+      this.#queue.length = 0; // never commit these — the lane is gone
+      this.#emit("note", `superseded by writer epoch ${status.writer.epoch}: sends now fail, reads continue`);
+    }
   }
 
   /** Resolve when status matches `pred`, reject after timeoutMs. */

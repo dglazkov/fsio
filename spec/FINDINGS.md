@@ -397,8 +397,12 @@ observed jank to chase).
 
 ### F19 — `observe()` can stall for tens of seconds without rejecting; a stall is not a refusal
 
-Single observation so far (2026-07-29, stock Chrome 150.0.0.0, macOS,
-terminal-demo cooperative run — the #58 loop's first click): on the
+First observed 2026-07-29 (stock Chrome 150.0.0.0, macOS, terminal-demo
+cooperative run — the #58 loop's first click), and **recurring**: the
+same run's later passes tripped the 2 s guard on every reattach in one
+tab (three downgrades in 15 s of clicking) while other tabs' observers
+settled fine — so the stall is common enough that observer startup can
+never sit on the session-init path. Original timeline: on the
 first session after a fresh picker grant, `FileSystemObserver.observe()`
 on the just-created session dir neither resolved nor rejected for
 **~49 s**, then resolved. Timeline pinned by three independent clocks:
@@ -419,12 +423,13 @@ concurrent native writes during setup? profile state?), and whether the
 49 s is a fixed internal timeout. Worth a targeted probe page if it
 recurs (the F9 repro-page pattern).
 
-Consequence shipped with the observation: `observe()` settling is now
-bounded (`observeSettleMs`, default 2 s) — past it the client downgrades
-to polling exactly as it would on a refusal, and disconnects the
-straggler if it ever settles. D7's rule gains the stall case: *an
-observer that won't start — loudly or silently — is a downgrade, never
-fatal.*
+Consequence shipped with the observation: observer startup no longer
+gates session init at all — timers start first, the observer is adopted
+when (if) `observe()` settles, and a rejection or a stall past
+`observeSettleMs` (default 2 s) downgrades to polling exactly as a
+refusal would, disconnecting the straggler if it ever settles. D7's
+rule gains the stall case: *an observer that won't start — loudly or
+silently — is a downgrade, never fatal.*
 → [D7](DECISIONS.md#d7--observer-failure-downgrades-to-polling), F6, F9,
 [#58](https://github.com/dglazkov/fsio/issues/58)
 
