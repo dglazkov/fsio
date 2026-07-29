@@ -423,6 +423,21 @@ concurrent native writes during setup? profile state?), and whether the
 49 s is a fixed internal timeout. Worth a targeted probe page if it
 recurs (the F9 repro-page pattern).
 
+Addendum 2026-07-29 (same day, later — the
+[#34](https://github.com/dglazkov/fsio/issues/34)/#64 cooperative run,
+same machine, stock Chrome 150.0.0.0): the stall is no longer
+intermittent here. Every surviving client log from the run's two shared
+folders shows the fallback — 6× the 2 s guard, 1× an immediate
+`AbortError` from `observe()`, plus 4/4 fallbacks independently
+tallied from a second folder's logs; **zero observer settles observed
+across ~11 sessions**. The reproduction-rate question above has an
+answer for this environment: effectively always. Sessions ran entirely
+on the D16 hot-poll (15 ms) and the demo felt fine — including a
+full-TUI `claude` CLI session — which is itself a measured consequence:
+the poll floor carries the product experience alone. The targeted probe
+page is now worth building; the trigger question (profile state? handle
+count? grant age?) is still open.
+
 Consequence shipped with the observation: observer startup no longer
 gates session init at all — timers start first, the observer is adopted
 when (if) `observe()` settles, and a rejection or a stall past
