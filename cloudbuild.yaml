@@ -1,0 +1,36 @@
+# Cloud Build pipeline for the terminal-demo page (#16 S6; the #15
+# deploy-on-tag slot). Trigger: tag push matching v* (created via gcloud,
+# recorded in the S6 commit body). Manual smoke:
+#
+#   gcloud builds submit --config cloudbuild.yaml \
+#     --substitutions=_VERSION=manual-$(git rev-parse --short HEAD)
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      [
+        "build",
+        "-f",
+        "packages/terminal-demo/deploy/Dockerfile",
+        "-t",
+        "${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/terminal-demo:${_VERSION}",
+        ".",
+      ]
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/terminal-demo:${_VERSION}"]
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      [
+        "run",
+        "deploy",
+        "fsio-terminal-demo",
+        "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/terminal-demo:${_VERSION}",
+        "--region=${_REGION}",
+        "--allow-unauthenticated",
+        "--quiet",
+      ]
+substitutions:
+  _REGION: us-central1
+  _VERSION: manual
+options:
+  logging: CLOUD_LOGGING_ONLY
