@@ -31,7 +31,12 @@ style.
    `p3` = blocked or deferred, don't start it) → implement → commit with
    `Closes #N` → push → **watch the CI run to conclusion** → verify the
    issue closed. Backlog items discovered mid-work become new issues, not
-   scope creep.
+   scope creep. Watch CI with `node scripts/ci-status.mjs <pr#|main>`
+   (one line, exit 0 pass / 1 fail / 2 pending) in an until-loop —
+   `gh run watch` and bare sleep-polling are permission-blocked in some
+   agent harnesses, and hand-rolled `gh pr checks` parsing has traps
+   (the `skipping` bucket; the text output's columns) that script
+   already encodes.
 2. Issues also carry `track: *` labels — named sequences with an internal
    order (demo, verification, robustness, security; the order and its
    why live in issue comments, membership in the label). Pick up work
@@ -76,6 +81,23 @@ per page load (#39); pick the newest (`ls -t`):
 Ask the human to click; read the report; never claim browser code works
 without one of the two.
 
+Rig-run protocol (learned from a burned grant window): the terminal's
+CLICK banner is invisible when a rig script runs as a background task —
+**the chat message launching the run must itself ask the human to click,
+in that same message**, and on macOS the rig also raises an OS
+notification at banner time. The grant window is
+`FSIO_GRANT_TIMEOUT_MS` (default 180 s); a timed-out run tears itself
+down cleanly and can just be relaunched.
+
+Measurement labs on the same rig (`scripts/harness-rig.mjs`):
+`npm run bg-lab` (background throttling, F16/F17) and `npm run cost-lab`
+(idle/pollMs cost matrix, F18). Anything measuring *background or
+visibility* behavior must use `startRig({detachable: true})` and detach
+during measured phases — an attached Playwright/CDP session
+force-emulates focus (covered tabs stay `visible`, timers unthrottled)
+and Playwright's default launch flags disable the throttling itself
+(F16's method note; three lab runs were invalidated learning this).
+
 ## Conventions (each learned the hard way)
 
 - **Stable numbers, never renumber**: findings (F), decisions (D), spec open
@@ -85,8 +107,10 @@ without one of the two.
   links to it; every integration test cites the spec rule/F/D it enforces
   (a test without a citation tests an implementation accident).
 - **Markdown links**: bare `#N` does not autolink in repo files — use full
-  GitHub URLs. Check heading-slug anchors after renames (a link checker
-  one-liner lives in the git history of spec commits).
+  GitHub URLs. Heading-slug anchors are checked by
+  `node scripts/check-anchors.mjs` (part of `npm test`, so a rename that
+  breaks links fails CI — still run it directly after editing spec docs
+  for the fast signal).
 - **After editing any package.json by hand, run `npm install`** and commit
   the lockfile — `npm ci` on CI rejects drift.
 - **When a change adds/moves build output, update `.gitignore` in the same
@@ -104,3 +128,7 @@ without one of the two.
   ignore unknown ids (spec Control plane).
 - Wireit "skipped" ≠ broken: it means inputs unchanged. `rm -rf .wireit
   packages/*/.wireit packages/*/dist` simulates a cold CI run.
+- Throwaway node probes written to a scratchpad outside the repo can't
+  `import` repo dependencies (ESM resolves from the *script's* path, not
+  cwd) — put probes under the repo, or import via the dependency's
+  absolute path in `node_modules`.

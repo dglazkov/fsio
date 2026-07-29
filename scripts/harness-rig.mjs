@@ -62,7 +62,7 @@ export async function startRig({
   repo,
   port,
   skipBuild = false,
-  grantTimeoutMs = 180_000,
+  grantTimeoutMs = Number(process.env.FSIO_GRANT_TIMEOUT_MS ?? 180_000),
   // Measuring background behavior needs BOTH of these, learned run by run:
   //  - Playwright's default switches disable the throttling itself
   //    (--disable-background-timer-throttling & friends): run 2 of the
@@ -80,7 +80,18 @@ export async function startRig({
   detachable = false,
   log = (...a) => console.log("[rig]", ...a),
 } = {}) {
-  const banner = (s) => console.log(`\n${"=".repeat(64)}\n  ${s}\n${"=".repeat(64)}\n`);
+  // The banner is invisible when the rig runs as a background task (the
+  // human is reading chat, not the task's output file) — a grant window
+  // once timed out exactly this way. On macOS, also raise a real OS
+  // notification so the click request reaches the human regardless.
+  const banner = (s) => {
+    console.log(`\n${"=".repeat(64)}\n  ${s}\n${"=".repeat(64)}\n`);
+    if (process.platform === "darwin") {
+      spawn("osascript", ["-e", `display notification ${JSON.stringify(s)} with title "fsio rig" sound name "Glass"`], {
+        stdio: "ignore",
+      }).on("error", () => {});
+    }
+  };
 
   if (!skipBuild) {
     log("npm run build (wireit graph is the ground truth)…");
@@ -93,6 +104,17 @@ export async function startRig({
   // whole shared dir and profile churn is not part of the experiment.
   const runsDir = path.join(os.homedir(), ".fsio-harness");
   fs.mkdirSync(runsDir, { recursive: true });
+  // Killed runs (grant timeouts, mid-run aborts) leave run-* dirs behind;
+  // sweep dead ones so forensics stay findable and the dir doesn't grow
+  // forever. A day is enough — anything worth keeping longer has been
+  // read by then.
+  for (const e of fs.readdirSync(runsDir)) {
+    if (!e.startsWith("run-")) continue;
+    const p = path.join(runsDir, e);
+    try {
+      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.rmSync(p, { recursive: true, force: true });
+    } catch {}
+  }
   const run = fs.mkdtempSync(path.join(runsDir, "run-"));
   const dir = path.join(run, "shared");
   const profile = path.join(run, "profile");
