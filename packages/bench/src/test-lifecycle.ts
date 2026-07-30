@@ -246,6 +246,112 @@ test("adoption GCs exited sessions older than the grace period, keeps fresh ones
   }
 });
 
+// ------------------------------------------- scrollback hygiene (#82, D26)
+
+test("an exited session is removed after staleGraceMs of client silence (running host, not just adoption)", async () => {
+  // spec "Scrollback hygiene" / D26: the out log is full scrollback, and a
+  // terminal session whose client vanished must not retain it past the
+  // grace window. Before this rule the adoption-time GC was the only
+  // reaper — an exited session lingered, secrets included, for the life
+  // of the host.
+  await withServer({ allowShell: true, timings: { staleGraceMs: 250, idleSweepMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "shred-exited", { kind: "shell", cmd: "/bin/echo", args: ["secret-scrollback"], pty: false });
+    await waitFor(() => status(dir)?.state === "exited", "session exited");
+    await waitFor(() => !fs.existsSync(dir), "exited session dir removed after grace");
+  });
+});
+
+test("a denied session is removed after staleGraceMs too (error state is terminal)", async () => {
+  // spec "Scrollback hygiene" / D26: denied and errored sessions are as
+  // terminal as exited ones — a crashed client must not leave them behind.
+  await withServer({ allowShell: false, timings: { staleGraceMs: 250, idleSweepMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "shred-denied", { kind: "shell", pty: false });
+    await waitFor(() => status(dir)?.state === "error", "spawn denied");
+    await waitFor(() => !fs.existsSync(dir), "denied session dir removed after grace");
+  });
+});
+
+test("an exited session with a client still talking is NOT removed; silence then reaps it", async () => {
+  // spec "Scrollback hygiene" / D26: the grace window measures CLIENT
+  // silence, not time-since-exit — a client still draining the final out
+  // log keeps refreshing presence with every consumed chunk.
+  // Grace is 4× the talk cadence: the per-iteration liveness assertion must
+  // not flake when a loaded runner stretches a 100 ms sleep.
+  await withServer({ allowShell: true, timings: { staleGraceMs: 400, idleSweepMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "shred-reader", { kind: "shell", cmd: "/bin/echo", args: ["final-output"], pty: false });
+    await waitFor(() => status(dir)?.state === "exited", "session exited");
+    for (let i = 0; i < 8; i++) {
+      sendNotification(dir, "heartbeat");
+      await sleep(100); // each consumed chunk refreshes lastClientSeen
+      assert.ok(fs.existsSync(dir), "session removed while its client was still talking");
+    }
+    await waitFor(() => !fs.existsSync(dir), "session removed once the client went silent");
+  });
+});
+
+test("a detached (running) shell is never swept by the hygiene rule", async () => {
+  // D17/D18 reattach promise: hygiene applies to TERMINAL sessions only —
+  // a detached shell may hold real user processes and its scrollback is
+  // the thing reattach replays.
+  await withServer({ allowShell: true, timings: { staleGraceMs: 100, idleSweepMs: 25, detachAfterMs: 200 } }, async (_server, root) => {
+    const dir = makeSession(root, "shred-detached", { kind: "shell", cmd: "/bin/sleep", args: ["60"], pty: false });
+    await waitFor(() => status(dir)?.state === "running", "shell running");
+    sendNotification(dir, "heartbeat");
+    await waitFor(() => status(dir)?.detached === true, "shell detached");
+    await sleep(400); // many grace windows and sweeps
+    assert.ok(fs.existsSync(dir), "hygiene sweep removed a detached running session");
+    assert.equal(status(dir)?.state, "running");
+  });
+});
+
+test(".fsio/ is appended to the shared dir's .gitignore when inside a git repo — once", async () => {
+  // spec "Scrollback hygiene" / D26: scrollback must never reach version
+  // control. Nested shared dirs get their own .gitignore (git reads one at
+  // every level); restarts must not duplicate the entry.
+  const root = tmpRoot();
+  fs.mkdirSync(path.join(root, ".git")); // the shared dir IS a repo
+  const nested = path.join(root, "project");
+  fs.mkdirSync(nested);
+  const s1 = new HostServer({ root: nested });
+  await s1.start();
+  await s1.close();
+  const file = path.join(nested, ".gitignore");
+  const text = fs.readFileSync(file, "utf8");
+  assert.match(text, /^\.fsio\/$/m, ".gitignore must gain a .fsio/ line");
+  const s2 = new HostServer({ root: nested });
+  await s2.start();
+  await s2.close();
+  assert.equal(fs.readFileSync(file, "utf8"), text, "restart must not duplicate the entry");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("gitignore: existing ignore line respected, non-repos untouched, opt-out honored", async () => {
+  // Existing `.fsio/`-shaped line (any of .fsio, .fsio/, /.fsio): no append.
+  const repo = tmpRoot();
+  fs.mkdirSync(path.join(repo, ".git"));
+  fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules\n/.fsio\n");
+  const s1 = new HostServer({ root: repo });
+  await s1.start();
+  await s1.close();
+  assert.equal(fs.readFileSync(path.join(repo, ".gitignore"), "utf8"), "node_modules\n/.fsio\n");
+  fs.rmSync(repo, { recursive: true, force: true });
+  // Not a repo: no .gitignore materializes.
+  const plain = tmpRoot();
+  const s2 = new HostServer({ root: plain });
+  await s2.start();
+  await s2.close();
+  assert.ok(!fs.existsSync(path.join(plain, ".gitignore")), "non-repo dirs must not grow a .gitignore");
+  fs.rmSync(plain, { recursive: true, force: true });
+  // Embedder opt-out.
+  const optout = tmpRoot();
+  fs.mkdirSync(path.join(optout, ".git"));
+  const s3 = new HostServer({ root: optout, gitignore: false });
+  await s3.start();
+  await s3.close();
+  assert.ok(!fs.existsSync(path.join(optout, ".gitignore")), "gitignore: false must disable the append");
+  fs.rmSync(optout, { recursive: true, force: true });
+});
+
 // ------------------------------------------- host mutual exclusion (#40)
 
 test("start() refuses over a live host.json; the seat frees when the incumbent closes", async () => {

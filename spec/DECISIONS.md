@@ -970,4 +970,66 @@ outcome this is meant to prevent). Bumping `protocol` for the hub (nothing
 on disk changed; a bump would strand every existing client for a facility
 they need not use).
 
+## D26 — scrollback hygiene: retention = the replay window, terminal sessions are swept, `.fsio/` is git-ignored
+
+**Decision.** Three rules bounding what a session leaves behind
+([#82](https://github.com/dglazkov/fsio/issues/82); normative text in the
+spec's Scrollback hygiene section). (1) **Retention is the replay
+window**: fully-acked non-current segments are deleted (the
+[D9](#d9--segmented-log-with-cumulative-ack-flow-control) mechanism,
+now stated as the retention rule), so disk holds exactly the current
+segment plus unacked backlog — what delivery and
+[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client)'s
+head-segment replay need. Extending replay
+([#57](https://github.com/dglazkov/fsio/issues/57)) must serve what
+retention keeps, never widen it. (2) **Terminal sessions are swept**: a
+session that is exited or errored, whose client has been silent past
+`staleGraceMs` (60 s), is removed — previously only at adoption, now also
+continuously by the idle sweep, because a crashed tab otherwise left
+scrollback on disk for the life of the host. Presence is measured by
+consumed uplink chunks (a client still draining the final out log keeps
+acking and is never swept mid-read); detached *running* sessions are
+exempt (their scrollback is the reattach promise). (3) **`.fsio/` is
+auto-git-ignored**: a host whose shared directory lies inside a git
+repository appends `.fsio/` to that directory's own `.gitignore` at
+start, once, and warns loudly when it cannot (`gitignore: false` /
+`--no-gitignore` opts out).
+
+**Context.** Split from [#6](https://github.com/dglazkov/fsio/issues/6)
+as its one implementation-shaped bullet; D20 parked retention here
+("mechanism without a threat model") and the threat-model chapter
+([#81](https://github.com/dglazkov/fsio/issues/81)) then supplied the
+model: co-tenant scrollback reads are accepted, so the mitigation is
+bounding what exists to read, and the sweep answers the readback leg of
+the capability inventory. The #57 tension (replay wants more retained,
+retention wants fewer) dissolves once the arrow is fixed: retention is
+sized by flow control and the head-replay promise, and replay may only
+grow up to it. The gitignore rule's sharp case is one-folder mode —
+`.fsio/` sits inside the user's project, and one `git add -A` would
+commit scrollback; appending to the shared dir's *own* `.gitignore` is
+correct for nested dirs (git reads one at every level) and never touches
+files outside the directory the user handed the host.
+
+**Alternatives rejected.** Time-based retention caps on live segments
+(the ack window already bounds them; a cap under it would break delivery,
+over it is dead letter). Secure-erase shredding (the adversary is the
+folder's readers, not disk forensics — unlink ends folder visibility,
+and on modern SSDs overwrite-in-place is theater anyway). Sweeping
+unstarted session dirs (no spawn.json = no scrollback, and a
+backgrounded tab mid-create — F16's 1/min clamp — could legitimately
+pause that long between mkdir and spawn.json; removing the dir under it
+would strand the commit). Writing to the repo root's `.gitignore` or
+`.git/info/exclude` (touches files outside the granted directory;
+exclude is invisible to collaborators who also run hosts). A
+`core.excludesFile` recommendation (per-user config cannot protect a
+shared repo).
+
+**Findings.** None newly measured; F8/[D6](#d6--one-writer-per-file-one-cleanup-owner)
+(host owns cleanup), F16 (why unstarted dirs are exempt),
+[F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker)/D20
+(co-tenant readability raising the stakes). Enforced by the lifecycle
+tier (`test-lifecycle.ts`: sweep scenarios, gitignore scenarios). Feeds
+#6 (close condition), #57 (the retention ceiling replay may grow into),
+#71 (the daemon inherits all three rules).
+
 **Findings.** None measured. Depends on D24. Feeds #8, #7, #71.

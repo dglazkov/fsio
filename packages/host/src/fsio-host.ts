@@ -12,11 +12,12 @@
 //   --fresh         wipe .fsio on startup
 //   --takeover      start even if host.json looks live (#40) — for a killed
 //                   host whose last heartbeat hasn't gone stale yet
+//   --no-gitignore  don't add .fsio/ to the shared dir's .gitignore (#82)
 
 import { HostServer } from "./host-server.js";
 
 const args = process.argv.slice(2);
-const flags = { allowShell: false, poll: 0, hot: 5, watch: true, fresh: false, takeover: false };
+const flags = { allowShell: false, poll: 0, hot: 5, watch: true, fresh: false, takeover: false, gitignore: true };
 let rootArg: string | null = null;
 for (let i = 0; i < args.length; i++) {
   const a = args[i]!;
@@ -26,6 +27,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--no-watch") flags.watch = false;
   else if (a === "--fresh") flags.fresh = true;
   else if (a === "--takeover") flags.takeover = true;
+  else if (a === "--no-gitignore") flags.gitignore = false;
   else if (!a.startsWith("-")) rootArg = a;
   else {
     console.error(`unknown flag: ${a}`);
@@ -50,6 +52,7 @@ const server = new HostServer({
   allowShell: flags.allowShell,
   fresh: flags.fresh,
   takeover: flags.takeover,
+  gitignore: flags.gitignore,
   watch: flags.watch,
   hotPollMs: flags.hot,
   pollMs: flags.poll,
