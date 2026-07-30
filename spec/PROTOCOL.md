@@ -606,11 +606,18 @@ arbitrarily long to answer
 display
 ([D15](DECISIONS.md#d15--origin-is-client-stamped-advisory-and-display-only);
 the terminal-demo helper does) — but no shipped policy gates on either, and
-`origin` is unauthenticated by design. Still to spec: the allow-list/
-confirmation content itself (#6), authenticating origin claims (#6),
-`.fsio/` auto-added to `.gitignore`,
-scrubbing env in `spawn.json`, and log retention limits (the log contains
-full scrollback).
+`origin` is unauthenticated by design.
+[D23](DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)
+closes the design gap — a grant is what makes an origin claim checkable,
+and profiles carry the allow-list and env-policy content
+([D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry))
+— but nothing ships it yet
+([#71](https://github.com/dglazkov/fsio/issues/71)). Still to spec: the
+threat-model document
+([#81](https://github.com/dglazkov/fsio/issues/81)) and scrollback
+hygiene — `.fsio/` auto-added to `.gitignore`, log retention limits (the
+log contains full scrollback), crashed-session shred
+([#82](https://github.com/dglazkov/fsio/issues/82)).
 
 [Hub deployment](#hub-deployment) raises the stakes rather than the posture:
 a daemon serving every registered workspace concentrates blast radius, and
@@ -618,9 +625,11 @@ one hub folder is multi-tenant by construction — co-tenant origins read each
 other's scrollback, and any file in the folder is forgeable by all of them.
 D20's containment (authority and secrets outside the granted directory) and
 D23's two-authorization split are the mechanism half; the threat-model
-document and the shipped policy content remain
-[#6](https://github.com/dglazkov/fsio/issues/6)'s, and no hub facility should
-ship ahead of it.
+document ([#81](https://github.com/dglazkov/fsio/issues/81)) and the
+shipped policy content
+([#71](https://github.com/dglazkov/fsio/issues/71)) remain open under
+[#6](https://github.com/dglazkov/fsio/issues/6)'s umbrella, and no hub
+facility should ship ahead of them.
 
 ## Open questions
 
