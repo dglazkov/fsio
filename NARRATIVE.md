@@ -58,6 +58,34 @@ Chrome, the daemon).
    frames are symmetric, so composition costs nothing to build —
    only something to show.
 
+## Season two — whose agent is it
+
+Acts 1–5 are one human, one machine: they prove *where the agent runs
+is a deployment detail*. Season two
+([#78](https://github.com/dglazkov/fsio/issues/78)) opens a different
+claim: **whose agent it is becomes a grant, not a possession.** A
+small team shares a chat-like room (a deliberately boring cloud web
+app — rendezvous, identity, chat); each member's agents run locally
+on their own machine in their own configuration; friends borrow each
+other's agents. The member's tab is the junction — the only place
+holding both the fsio grant down to the machine and the cloud
+connection out to the team — so borrowing is borrowing a *service*,
+never credentials or shell access.
+
+The ladder grows its fourth rung: see / edit / run / **share** —
+per-person × per-workspace ×
+[#76](https://github.com/dglazkov/fsio/issues/76) shape grants,
+consent rendered in the owner's tab, where the owner is. And the
+cloud layer supplies the one thing the transport structurally cannot
+([D15](spec/DECISIONS.md#d15--session-origin-is-host-stamped-display-only)
+was right to refuse to fake it): a trust anchor — prompts name a
+*person*, not an origin. Presence is capability presence: an agent is
+borrowable exactly while its owner's tab is open.
+
+The honesty clause carries over: the cloud room is a real server; the
+claim survives precisely because the transport *to the machine* still
+has none. Season two's demo point is that the two compose.
+
 ## The staging device
 
 One identical chat UI with a toggle: **brain: local / page.** Same
