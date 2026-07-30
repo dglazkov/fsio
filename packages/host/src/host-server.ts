@@ -170,6 +170,10 @@ export interface HostTimings {
   heartbeatMs?: number;
   /** slow safety poll backing up fs.watch. */
   safetyPollMs?: number;
+  /** how long traffic keeps the hot poll armed (D4's gate, host-side —
+   *  F22). The browser client's window is 2 s; matching it keeps the two
+   *  sides' idle economics comparable. */
+  hotWindowMs?: number;
   /** idle echo sessions are reaped after this long (workbench artifacts; #3). */
   idleGcMs?: number;
   /** how often the idle sweep runs. */
@@ -216,7 +220,9 @@ export interface HostServerOptions {
   takeover?: boolean;
   /** use fs.watch wakeups. Default true. */
   watch?: boolean;
-  /** hot-poll interval while sessions are active (default 5, 0 = off; F2). */
+  /** hot-poll interval while traffic is flowing (default 5, 0 = off; F2).
+   *  Gated on recent traffic, not session liveness — see `timings.hotWindowMs`
+   *  and markActive() (F22). */
   hotPollMs?: number;
   /** unconditional poll loop interval (default 0 = off). */
   pollMs?: number;
@@ -231,6 +237,7 @@ export interface HostServerOptions {
 const DEFAULT_TIMINGS: Required<HostTimings> = {
   heartbeatMs: 2000,
   safetyPollMs: 250,
+  hotWindowMs: 2000,
   idleGcMs: 5 * 60_000,
   idleSweepMs: 30_000,
   detachAfterMs: 180_000,
@@ -564,6 +571,10 @@ export class HostServer {
   // native (pty + flow-control pause/resume have no kind-API hooks yet).
   private kinds = new Map<string, KindHandler>([["echo", () => ({})]]);
   private timers: ReturnType<typeof setInterval>[] = [];
+  // The hot poll is a lifecycle of its own: armed by traffic, disarmed by
+  // silence (markActive) — not one of the always-on `timers`.
+  private hotTimer: ReturnType<typeof setInterval> | null = null;
+  private lastTraffic = 0;
   private pendingCleanups = new Set<ReturnType<typeof setTimeout>>();
   private rootWatcher: fs.FSWatcher | null = null;
   private hbSeq = 0;
@@ -669,24 +680,34 @@ export class HostServer {
     this.rootWatcher = this.watchDir(this.sessionsDir, () => this.scheduleScan());
     this.timers.push(setInterval(() => this.scheduleScan(), this.timings.safetyPollMs));
     if (this.pollMs > 0) this.timers.push(setInterval(() => this.scheduleScan(), this.pollMs));
-    // Hot poll: fs.watch wakeups ride FSEvents with ~50ms latency on macOS
-    // (measured; spec/FINDINGS.md F2). While a session is live, poll fast so
-    // the uplink isn't notification-bound. Idle cost is zero.
-    if (this.hotPollMs > 0) {
-      this.timers.push(
-        setInterval(() => {
-          for (const s of this.sessions.values()) {
-            if (s.started && !s.done) {
-              this.scheduleScan();
-              return;
-            }
-          }
-        }, this.hotPollMs)
-      );
-    }
+    // The hot poll is armed by traffic, not by liveness — see markActive().
 
     this.scheduleScan();
     return this;
+  }
+
+  /** Traffic gate for the hot poll (D4, ported host-side — F22). fs.watch
+   *  wakeups ride FSEvents at ~50 ms on macOS (F2), too slow for a live
+   *  uplink, so traffic arms a fast scan loop; `hotWindowMs` of silence
+   *  disarms it and the per-dir watchers plus the 250 ms safety scan carry
+   *  the idle case (invariant 1). The old gate was session *liveness*
+   *  (`started && !done`), which is not the same claim: N idle-but-running
+   *  sessions kept the 5 ms × O(N) loop hot forever — F22 measured ~60% of
+   *  a core at 32 idle sessions, against ~3% for the same machinery
+   *  idle-gated (cells A vs B), and ~10% vs ~0.6% at one. Wake-from-idle
+   *  costs a watch event (~50 ms) or a safety scan (≤250 ms); the first
+   *  consumed chunk re-arms the loop. */
+  private markActive(): void {
+    this.lastTraffic = Date.now();
+    if (this.hotTimer || this.hotPollMs <= 0 || !this.running) return;
+    this.hotTimer = setInterval(() => {
+      if (Date.now() - this.lastTraffic > this.timings.hotWindowMs) {
+        clearInterval(this.hotTimer!);
+        this.hotTimer = null;
+        return;
+      }
+      this.scheduleScan();
+    }, this.hotPollMs);
   }
 
   /** Stop serving: kill session processes, release watchers and timers,
@@ -707,6 +728,8 @@ export class HostServer {
     }
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    if (this.hotTimer) clearInterval(this.hotTimer);
+    this.hotTimer = null;
     for (const t of this.pendingCleanups) clearTimeout(t);
     this.pendingCleanups.clear();
     this.rootWatcher?.close();
@@ -931,6 +954,10 @@ export class HostServer {
       return;
     }
     s.watchers.push(this.watchDir(s.dir, () => this.scheduleScan()));
+    // A new session dir is traffic: spawn.json and the client's first chunks
+    // are milliseconds behind it. (The client arms its own hot poll at
+    // session start for the same reason — D4/D16.)
+    this.markActive();
     this.log.info(`session ${id}: adopted`);
   }
 
@@ -1188,6 +1215,9 @@ export class HostServer {
         this.log.warn(`session ${s.id}: discarding unparseable ${name}`);
         continue;
       }
+      // An attach bootstrap is traffic too: the new writer starts committing
+      // to in.<epoch>/ as soon as it hears the grant (D18).
+      this.markActive();
       void this.decideAttach(s, raw);
     }
   }
@@ -1305,6 +1335,7 @@ export class HostServer {
       }
       s.lastActivity = Date.now();
       s.lastClientSeen = Date.now();
+      this.markActive(); // uplink traffic: arm/extend the hot poll (D4/F22)
       s.setDetached(false); // any uplink traffic means the client is back (D17)
       for (const f of frames) this.handleFrame(s, f, t1);
       if (chunk.data !== undefined) fs.rmdirSync(p); // consumption ack

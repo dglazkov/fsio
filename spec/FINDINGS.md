@@ -586,6 +586,28 @@ scan + a hot poll gated on *recent traffic* (D4's gate, host-side at
 last) → idle cost ≈ 0.05–0.1% of a core per session, wake-from-idle
 ~14 ms p50. Also indicts the shipped one-folder host default — the
 gate fix is filed as its own issue.
+
+Addendum 2026-07-30 (the gate fix,
+[#73](https://github.com/dglazkov/fsio/issues/73); same machine and
+lab, 30 s cells): the host's hot poll is now armed by traffic
+(uplink chunks, session adoption, attach bootstraps) and disarmed
+after `hotWindowMs` of silence — D4's client-side gate, ported.
+Re-measured, with cell B re-run *in the same session* as the control:
+
+| % of a core | ×0 | ×1 | ×8 | ×32 |
+|---|---|---|---|---|
+| A: `--hot 5` (default), gate fixed | 0.23 | 0.40 | 0.73 | 1.63 |
+| B: `--hot 0`, same run | 0.27 | 0.40 | 0.73 | 1.73 |
+
+**A is now B, cell for cell** — which is the whole claim: the default
+costs exactly what disabling the hot poll costs, once idle. That
+equality is the load-bearing result, because it is measured within one
+run. The cross-run headline (A ×32: 59.7% → 1.63%, ~37×) overstates
+slightly: this run's B row is also cheaper than 2026-07-29's
+(1.73 vs 3.32 at ×32), so the machine was quieter and/or 30 s cells
+read low. The price paid is latency, not delivery: the first uplink
+chunk after an idle window waits for a watch event (~50 ms, F2) or the
+250 ms safety scan (invariant 1), and consuming it re-arms the loop.
 → F2, F18,
 [D4](DECISIONS.md#d4--hybrid--adaptive-notification),
 [D19](DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources),

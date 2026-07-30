@@ -104,7 +104,18 @@ Chrome does not throttle FileSystemObserver in hidden tabs
 so backgrounded adaptive degrades to observer cadence instead of
 stalling.
 
-**Findings.** F2, F3, F6, F16, F17, F18.
+**Addendum (2026-07-30, [F22](FINDINGS.md#f22--the-hosts-idle-burn-is-the-hot-poll-gate-alive-gated-5-ms-scans-cost-60-of-a-core-at-32-idle-sessions-idle-gated-machinery-3-one-recursive-watcher-2-with-14-ms-wakes),
+[#73](https://github.com/dglazkov/fsio/issues/73)).** The adaptive gate is
+now both peers' rule, not just the browser's. The host had shipped a
+*liveness* gate (`started && !done`) since before the client's activity gate
+existed, which is a different claim: idle-but-running sessions kept the
+5 ms × O(N) scan loop hot forever. Ported host-side with the same 2 s window
+(`timings.hotWindowMs`), armed by uplink chunks, session adoption, and attach
+bootstraps. Idle wake-up falls back to what invariant 1 always required — a
+watch event (~50 ms, F2) or the 250 ms safety scan — and the first consumed
+chunk re-arms the loop.
+
+**Findings.** F2, F3, F6, F16, F17, F18, F22.
 
 ## D5 — dirname fast lane for small uplink batches
 

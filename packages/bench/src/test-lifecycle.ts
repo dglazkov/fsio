@@ -38,15 +38,18 @@ function makeSession(root: string, id: string, spec: SpawnSpec): string {
 }
 
 /** Commit one uplink chunk carrying a single RPC notification, atomically
- *  (temp+rename, like a native client — spec: Uplink). */
+ *  (temp+rename, like a native client — spec: Uplink). Returns the chunk
+ *  path: the host deletes it on consumption, and deletion *is* the ack. */
 const chunkSeq = new Map<string, number>();
-function sendNotification(sessionDir: string, method: string): void {
+function sendNotification(sessionDir: string, method: string): string {
   const seq = (chunkSeq.get(sessionDir) ?? 1);
   chunkSeq.set(sessionDir, seq + 1);
   const bytes = encodeFrame(FrameType.RPC, new TextEncoder().encode(JSON.stringify(rpcNotification(method))));
   const t = path.join(sessionDir, "in", ".t");
+  const chunk = path.join(sessionDir, "in", `${String(seq).padStart(8, "0")}.f`);
   fs.writeFileSync(t, bytes);
-  fs.renameSync(t, path.join(sessionDir, "in", `${String(seq).padStart(8, "0")}.f`));
+  fs.renameSync(t, chunk);
+  return chunk;
 }
 
 function status(sessionDir: string): SessionStatus | null {
@@ -165,6 +168,57 @@ test("idle sweep caps .fsio/client/* dirs: newest kept, stale overflow removed, 
     await sleep(100); // several more sweeps
     assert.equal(fs.readdirSync(clientRoot).length, 8, "sweep must not remove fresh or within-cap dirs");
   });
+});
+
+// --------------------------------------- hot-poll traffic gate (D4, F22, #73)
+
+test("the hot poll is armed by traffic, not by session liveness (F22)", async () => {
+  // F22 located the host's idle burn in this gate: it was `started && !done`
+  // — session *liveness* — so N idle-but-running sessions kept the 5 ms ×
+  // O(N) scan loop hot forever (~60% of a core at 32 idle sessions, against
+  // ~3% for the same machinery idle-gated). D4's client-side rule, ported
+  // host-side: hot only while traffic flowed within hotWindowMs, with the
+  // watchers + safety scan carrying idle (invariant 1).
+  //
+  // Observable without counting scans: with fs.watch off, uplink latency IS
+  // the gate's state — armed = hot-poll speed, disarmed = the safety scan.
+  const HOT_WINDOW = 250;
+  const SAFETY = 1500;
+  const root = tmpRoot();
+  const dir = makeSession(root, "hot-gate", { kind: "echo" }); // exists before start()
+  const server = new HostServer({ root, watch: false, hotPollMs: 5, timings: { hotWindowMs: HOT_WINDOW, safetyPollMs: SAFETY } });
+  await server.start(); // the first scan adopts the session, which arms the poll
+  const timeConsumption = async (what: string): Promise<number> => {
+    const chunk = sendNotification(dir, "heartbeat");
+    const t0 = Date.now();
+    await waitFor(() => !fs.existsSync(chunk), what);
+    return Date.now() - t0;
+  };
+  try {
+    await waitFor(() => status(dir)?.state === "running", "echo session running");
+    const hotMs = await timeConsumption("chunk consumed while hot");
+    assert.ok(hotMs < HOT_WINDOW, `armed hot poll took ${hotMs}ms to consume a chunk`);
+
+    // Silence past the window disarms — while the session stays running, the
+    // exact state the old gate kept polling for.
+    await sleep(HOT_WINDOW * 2);
+    const cold = sendNotification(dir, "heartbeat");
+    await sleep(HOT_WINDOW + 150); // still well before the next safety scan
+    assert.ok(fs.existsSync(cold), "hot poll still scanning after hotWindowMs of silence");
+    assert.equal(status(dir)?.state, "running", "session must still be live — liveness is not the gate");
+
+    // Invariant 1: the safety poll is the backstop, so idle costs latency,
+    // never delivery.
+    await waitFor(() => !fs.existsSync(cold), "idle chunk consumed by the safety scan", SAFETY * 3);
+
+    // …and that consumption re-arms the loop (F22: the hot poll re-arms on
+    // first traffic).
+    const rearmedMs = await timeConsumption("chunk consumed after re-arm");
+    assert.ok(rearmedMs < HOT_WINDOW, `re-armed hot poll took ${rearmedMs}ms`);
+  } finally {
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ------------------------------------- stale-session GC (spec: Session lifecycle)
