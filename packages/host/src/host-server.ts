@@ -220,6 +220,10 @@ export interface HostServerOptions {
   takeover?: boolean;
   /** use fs.watch wakeups. Default true. */
   watch?: boolean;
+  /** ensure `.fsio/` is git-ignored when the shared directory lies inside
+   *  a git repository (#82: the out log is full scrollback and must never
+   *  reach version control). Default true. */
+  gitignore?: boolean;
   /** hot-poll interval while traffic is flowing (default 5, 0 = off; F2).
    *  Gated on recent traffic, not session liveness — see `timings.hotWindowMs`
    *  and markActive() (F22). */
@@ -564,6 +568,7 @@ export class HostServer {
 
   private fresh: boolean;
   private readonly takeover: boolean;
+  private readonly gitignore: boolean;
   private readonly ptyOpt: PtyModule | false | undefined;
   private ptyMod: PtyModule | null = null;
   private sessions = new Map<string, Session>();
@@ -594,6 +599,7 @@ export class HostServer {
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
     this.fresh = opts.fresh ?? false;
     this.takeover = opts.takeover ?? false;
+    this.gitignore = opts.gitignore ?? true;
     this.watchEnabled = opts.watch ?? true;
     this.hotPollMs = opts.hotPollMs ?? 5;
     this.pollMs = opts.pollMs ?? 0;
@@ -664,6 +670,7 @@ export class HostServer {
 
     if (this.fresh) fs.rmSync(this.fsioDir, { recursive: true, force: true });
     fs.mkdirSync(this.sessionsDir, { recursive: true });
+    this.ensureGitignore();
 
     const manifest: FsioManifest = { protocol: PROTOCOL_VERSION };
     writeJsonAtomic(path.join(this.fsioDir, "fsio.json"), manifest);
@@ -801,6 +808,39 @@ export class HostServer {
     );
   }
 
+  // Scrollback hygiene (#82, spec: Scrollback hygiene): the out log is full
+  // scrollback — secrets typed or echoed included — and must never reach
+  // version control. When the shared directory lies inside a git repository
+  // (a .git dir or file anywhere above it — worktrees use a file), ensure
+  // `.fsio/` is ignored by appending to the shared dir's OWN .gitignore:
+  // git honors one at every level, so this is correct for nested dirs and
+  // never touches files outside the directory the user handed us. Failure
+  // warns loudly (the user must add the line themselves) and never blocks
+  // start().
+  private ensureGitignore(): void {
+    if (!this.gitignore) return;
+    let dir = this.sharedDir;
+    for (;;) {
+      if (fs.existsSync(path.join(dir, ".git"))) break;
+      const up = path.dirname(dir);
+      if (up === dir) return; // filesystem root: not a git repo
+      dir = up;
+    }
+    const file = path.join(this.sharedDir, ".gitignore");
+    try {
+      let text = "";
+      try {
+        text = fs.readFileSync(file, "utf8");
+      } catch {}
+      if (text.split("\n").some((l) => /^\/?\.fsio\/?$/.test(l.trim()))) return;
+      const sep = text.length > 0 && !text.endsWith("\n") ? "\n" : "";
+      fs.appendFileSync(file, `${sep}# fsio transport state — session scrollback lives here\n.fsio/\n`);
+      this.log.info(`added .fsio/ to ${file} (scrollback must never be committed)`);
+    } catch (e) {
+      this.log.warn(`could not git-ignore .fsio/ (${errMsg(e)}) — add ".fsio/" to ${file} yourself: session scrollback, secrets included, lives inside it`);
+    }
+  }
+
   private watchDir(p: string, cb: () => void): fs.FSWatcher | null {
     if (!this.watchEnabled) return null;
     try {
@@ -830,6 +870,21 @@ export class HostServer {
 
   private idleSweep(): void {
     for (const s of this.sessions.values()) {
+      // Scrollback hygiene (#82, spec: Scrollback hygiene): a session in a
+      // terminal state — exited, or done without cleanup (denied, errored,
+      // adopted-as-exited) — keeps its dir only while the client may still
+      // be reading. Client silence past staleGraceMs means crashed or gone;
+      // the dir (scrollback included) must not outlive that window. Live
+      // readers are safe: their acks ride uplink chunks, and any consumed
+      // chunk refreshes lastClientSeen. Same window as the adoption-time GC.
+      // Detached-but-running sessions are untouched (exited=false — the
+      // D17/D18 reattach promise).
+      if ((s.exited || s.done) && Date.now() - Math.max(s.lastActivity, s.lastClientSeen) > this.timings.staleGraceMs) {
+        this.log.info(`session ${s.id}: terminal and client silent for ${Math.round(this.timings.staleGraceMs / 1000)}s, removing`);
+        s.close();
+        this.removeSessionDir(s, "terminal, client gone");
+        continue;
+      }
       if (s.started && !s.done && s.spawn?.kind === "echo" && Date.now() - s.lastActivity > this.timings.idleGcMs) {
         this.log.info(`session ${s.id}: idle for ${Math.round(this.timings.idleGcMs / 1000)}s, reaping`);
         s.close();

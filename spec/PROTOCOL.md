@@ -7,7 +7,7 @@ Companions (non-normative):
 
 - [FINDINGS.md](FINDINGS.md) — measured platform behaviors (F1–F22) behind
   the rules here. Rules that exist because of a finding cite it.
-- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D25): why the protocol
+- [DECISIONS.md](DECISIONS.md) — the decision log (D1–D26): why the protocol
   is shaped this way, with alternatives rejected.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in
@@ -257,7 +257,10 @@ Only filler-padded pings and DATA batches spill to the file lane.
   `{total}`, riding the dirname fast lane, throttled to 250 ms / 256 KB).
   The host
   pauses the pty when unacked > 4 MB and resumes below 2 MB;
-  fully-acked segments are deleted by the host.
+  fully-acked segments are deleted by the host. Deletion-on-ack is also
+  the retention rule — the log is scrollback, and the host MUST NOT
+  retain acked history beyond the current segment
+  ([Scrollback hygiene](#scrollback-hygiene)).
 
 ## Session lifecycle
 
@@ -271,8 +274,10 @@ Only filler-padded pings and DATA batches spill to the file lane.
 - Client `close()` sends the `close` notification and stops watching — it
   MUST NOT
   delete anything ([D6](DECISIONS.md#d6--one-writer-per-file-one-cleanup-owner);
-  F8). The host deletes the session dir ~500 ms after close, and GCs stale
-  exited sessions (>60 s) on adoption.
+  F8). The host deletes the session dir ~500 ms after close, and removes
+  sessions in a terminal state whose client has been silent past the stale
+  grace window (60 s) — on adoption and continuously while running
+  ([Scrollback hygiene](#scrollback-hygiene)).
 - Liveness = `host.json` mtime younger than 6 s (3 missed heartbeats).
 - **One live host per `.fsio`**
   ([#40](https://github.com/dglazkov/fsio/issues/40); invariant 4 — F8,
@@ -614,8 +619,8 @@ access — is one capability with three legs:
   policy, runs what policy allows.
 - **Readback.** Every out segment is readable: full scrollback, everything
   typed or echoed into the terminal, secrets included, for as long as
-  segments are retained
-  ([#82](https://github.com/dglazkov/fsio/issues/82) owns retention).
+  segments are retained ([Scrollback hygiene](#scrollback-hygiene) bounds
+  that window).
 - **Adoption.** Attach is takeover
   ([D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)),
   so the capability includes adopting a *live, already-approved* session —
@@ -731,9 +736,9 @@ Stated so they are read, not discovered:
 
 - **Co-tenant scrollback reads** are accepted (D20): granted origins share
   one hub, and the folder cannot hide files from its own tenants. The
-  mitigation is hygiene, not access control — retention limits and
-  crashed-session shred
-  ([#82](https://github.com/dglazkov/fsio/issues/82)).
+  mitigation is hygiene, not access control — retention bounded to the
+  replay window, terminal sessions swept
+  ([Scrollback hygiene](#scrollback-hygiene)).
 - **`origin` absent a grant** authenticates nothing (D15): display
   material only; any folder writer can claim any origin. A D23 grant is
   what makes an origin claim checkable.
@@ -760,10 +765,8 @@ and profiles carry the allow-list and env-policy content
 — but nothing ships it yet
 ([#71](https://github.com/dglazkov/fsio/issues/71)). The
 [threat model](#threat-model) above names the adversaries these mechanisms
-answer. Still to spec: scrollback hygiene — `.fsio/` auto-added to
-`.gitignore`, log retention limits (the log contains full scrollback),
-crashed-session shred
-([#82](https://github.com/dglazkov/fsio/issues/82)).
+answer; [scrollback hygiene](#scrollback-hygiene) below bounds what a
+session leaves behind.
 
 [Hub deployment](#hub-deployment) raises the stakes rather than the posture:
 a daemon serving every registered workspace concentrates blast radius, and
@@ -772,10 +775,47 @@ other's scrollback, and any file in the folder is forgeable by all of them.
 D20's containment (authority and secrets outside the granted directory) and
 D23's two-authorization split are the mechanism half; the
 [threat model](#threat-model) is the map. The shipped policy content
-([#71](https://github.com/dglazkov/fsio/issues/71)) and scrollback hygiene
-([#82](https://github.com/dglazkov/fsio/issues/82)) remain open under
+([#71](https://github.com/dglazkov/fsio/issues/71)) remains open under
 [#6](https://github.com/dglazkov/fsio/issues/6)'s umbrella, and no hub
-facility should ship ahead of them.
+facility should ship ahead of it.
+
+### Scrollback hygiene
+
+[D26](DECISIONS.md#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored)
+([#82](https://github.com/dglazkov/fsio/issues/82)). The out log is full
+scrollback — everything typed or echoed, secrets included — and under the
+hub it is co-tenant-readable ([D20](DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)).
+Three rules bound its life:
+
+1. **Retention is the replay window.** The host MUST delete fully-acked
+   non-current segments (the
+   [D9](DECISIONS.md#d9--segmented-log-with-cumulative-ack-flow-control)
+   mechanism already does), so the bytes on disk are exactly the current
+   segment plus unacked backlog — what delivery and
+   [D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)'s
+   head-segment replay need, nothing more. If replay is ever extended to
+   all retained segments
+   ([#57](https://github.com/dglazkov/fsio/issues/57)), it MUST serve what
+   retention already keeps, never widen what retention keeps: replay
+   window = retention window, and the arrow points from retention to
+   replay.
+2. **Terminal sessions do not linger.** Clean close already deletes the
+   session dir (~500 ms). A session in a terminal state — exited or
+   error — whose client has been silent past the stale grace window
+   (60 s) MUST be removed, at adoption *and* continuously while the host
+   runs: a crashed tab must not leave scrollback on disk for the life of
+   the host. Detached running sessions are exempt — their scrollback *is*
+   the [D17](DECISIONS.md#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill)/D18
+   reattach promise. Removal is unlink-level, not anti-forensic: the
+   adversary is the folder's readers ([threat model](#threat-model)), not
+   disk forensics.
+3. **Version control never sees `.fsio/`.** A host serving a shared
+   directory that lies inside a git repository SHOULD ensure `.fsio/` is
+   ignored — the reference host appends it to the shared directory's own
+   `.gitignore` at start, once — and MUST warn loudly when it cannot.
+   The sharp case is the one-folder mode, where `.fsio/` sits inside the
+   user's project; a hub folder is daemon-owned and outside any repo by
+   construction ([D19](DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources)).
 
 ## Open questions
 
