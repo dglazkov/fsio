@@ -98,17 +98,38 @@ the cut relocatable. When the audience can't tell which side of the
 machine boundary the harness is on, the D13 claim stops being a
 slogan and becomes an observed fact.
 
-## Why the hub is part of the story
+## The hub's role: multiplier for season one, stage for season two
 
-[D19](spec/DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources)'s
-folder-as-socket is what makes every act feel *installed* rather than
-rigged: one grant per origin ever, and thereafter agents of either
-topology just show up on it. The hub's service directory
-([#70](https://github.com/dglazkov/fsio/issues/70)) is where act 4's
-tool discovery lives; the consent spine
+The narrative and the hub
+([D19](spec/DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources),
+`track: hub`) are deliberately separable bets. **Every act must
+remain playable in degenerate mode** (folder = workspace = transport
+— a hub of one), so the tracks can fail independently: no demo is
+sequenced behind #70–#72, and no act's thesis may quietly assume the
+daemon. For season one the hub is an ergonomics and posture
+*multiplier* — one grant per origin ever, workspaces as parameters,
+the installed-capability feel — never a dependency.
+
+Season two is different: capability presence ("Bob's test-runner is
+online") requires a standing, zero-gesture, multi-workspace socket,
+which is the hub's thesis wearing a social costume. The service
+directory ([#70](https://github.com/dglazkov/fsio/issues/70)) is the
+local half of [#78](https://github.com/dglazkov/fsio/issues/78)'s
+borrowable-capability roster — the room's roster is the union of
+everyone's service directories, surfaced through their tabs. The hub
+is season two's *staging requirement*: #78 runs without it, but as a
+rigged prop rather than an installed fact.
+
+The tracks braid rather than race: demo-first in build order,
+hub-first in where the findings flow. Demos are the hub spec's
+requirements generator (the #74 grant-composition fork surfaced on
+#70 this way), and pre-hub demo work keeps its session-setup layer
+deliberately disposable — that's the part D19 kills. The consent
+spine
 ([#6](https://github.com/dglazkov/fsio/issues/6)/[#46](https://github.com/dglazkov/fsio/issues/46),
-[#76](https://github.com/dglazkov/fsio/issues/76)) is what keeps the
-ladder honest once the actor climbing it is autonomous.
+[#76](https://github.com/dglazkov/fsio/issues/76)) is shared by both
+tracks and designed once — it's what keeps the ladder honest when the
+actor climbing it is autonomous.
 
 ## Contrast to hold in every telling
 
