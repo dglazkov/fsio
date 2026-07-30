@@ -5,7 +5,7 @@ alternatives rejected, and the findings that forced it. Numbers (D1, D2, …)
 are stable and never reused; superseded decisions get a note, not an edit.
 
 Companions: [PROTOCOL.md](PROTOCOL.md) (the normative spec),
-[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F20).
+[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F21).
 
 ## D1 — events are wakeups, not messages
 

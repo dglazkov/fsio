@@ -466,7 +466,76 @@ Unmeasured: what plain "Allow" (not every-visit) yields across
 restarts; whether Chrome's usage-based permission expiry eventually
 decays the grant (worth a check-in weeks, not days); profile-to-profile
 variance.
-→ F15, [#58](https://github.com/dglazkov/fsio/issues/58)
+
+Addendum 2026-07-29 (the [#67](https://github.com/dglazkov/fsio/issues/67)
+hub lab, same machine, stock Chrome 150): the durability mechanism is
+now correctly attributed — **the picker prompt is a plain allow and its
+grant is session-scoped; the three-option prompt ("Allow this time /
+Allow on every visit / Don't allow") is offered only by
+`requestPermission()` over a restored handle.** Two freshly-picked
+origins both dropped to `"prompt"` at the first ⌘Q-relaunch; after
+choosing every-visit at the re-prompt, both held `"granted"` across a
+subsequent restart with zero gestures. So this finding's original
+"chose every-visit at the picker grant" wording was mistaken — the #58
+flow must have routed through a re-prompt at some point. Wizard
+consequence → F21: a first-run flow MUST deliberately trigger one
+`requestPermission` re-prompt to mint the durable grant; the picker
+alone cannot.
+→ F15, F21, [#58](https://github.com/dglazkov/fsio/issues/58)
+
+### F21 — two origins hold independent grants on one directory; the broker splits throughput fairly; the durable grant is minted at the re-prompt, not the picker
+
+Measured 2026-07-29 (stock Chrome 150, macOS, the
+[#67](https://github.com/dglazkov/fsio/issues/67) cooperative run —
+D19's gating lab). Rig: `scripts/hub-lab.mjs` +
+`packages/workbench/repro/hub-multiorigin.html`; two localhost ports =
+two origins, both granted readwrite on the same `~/fsio-hub-lab`. Safe
+Browsing is off on this profile, so absolute `close()` numbers are the
+F7-off regime; the comparisons are the data.
+
+- **Grants coexist and are fully independent.** Both origins picked and
+  held readwrite simultaneously. `chrome://settings/content/filesystem`
+  lists each (origin, folder) row separately; removing 8871's row
+  dropped that origin to `"prompt"` on next load while 8872 stayed
+  `"granted"` — and the revoked origin's *persisted handle still
+  worked*: one click re-granted.
+- **Concurrent writes don't interfere; broker throughput is conserved
+  and split fairly.** Solo: 3,993 ops / 30 s (133 ops/s), close p50
+  3.5 ms. Concurrent (28.8 s overlap): 53 + 74 ≈ 127 ops/s combined at
+  close p50 2.9–3.0 ms (the 53 carries a partial-hidden-tab caveat).
+  **Zero errors across ~8,600 committed writes** in all cells.
+  Cross-origin reads of a live-rewritten beacon file: 753 clean, 3
+  transient stale-snapshot failures (the F11 class), 30 before the
+  other side started. One ~975 ms `close()` outlier hit both origins at
+  the same moment — a shared broker stall, tail only.
+- **Restart persistence is per-origin and depends on how the grant was
+  minted — the picker never offers the durable option.** Both origins'
+  initial picker grants died with the Chrome process (both `"prompt"`
+  after ⌘Q-relaunch, independently). The three-option prompt ("Allow
+  this time / Allow on every visit / Don't allow") appeared only on
+  `requestPermission()` over the restored handle; after choosing
+  every-visit on both, a second full restart returned `"granted"` on
+  load for both, zero gestures (F20 addendum).
+- **Explicit revocation downgrades the re-prompt.** After removing an
+  origin in settings, its `requestPermission()` showed the *plain*
+  allow prompt — no every-visit option. So the durable option is
+  offered for grants that expired with the session, but not (at least
+  immediately) after a user revoked one — a re-granted-after-revocation
+  origin is presumably back to session-scoped until proven otherwise.
+
+Consequences for D19: the hub model's multi-origin assumption **holds**
+— the spec chapter can namespace by client/session without per-origin
+subdirs (co-writer contention is a posture question, not a platform
+one), and the first-run wizard MUST route through one
+`requestPermission` re-prompt to mint the durable grant (picker alone
+is session-scoped). Unmeasured: durability of a post-revocation
+re-grant across restarts; >2 origins; weeks-scale grant decay (F20's
+open caveat).
+→ [D19](DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources),
+F7, F8, F11, F20,
+[#67](https://github.com/dglazkov/fsio/issues/67); feeds
+[#70](https://github.com/dglazkov/fsio/issues/70) (spec chapter),
+[#69](https://github.com/dglazkov/fsio/issues/69) (wizard).
 
 ## Open measurements
 

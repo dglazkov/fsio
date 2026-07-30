@@ -1,0 +1,257 @@
+<!doctype html>
+<!--
+  Hub multi-origin probe (fsio #67, hub track / D19).
+
+  Two copies of this page on two localhost ports = two distinct origins
+  holding File System Access grants on the SAME directory (the hub).
+  Measures, per origin: permission state on load (the F20 zero-gesture
+  revisit, per origin), one-click re-request after revocation, and a
+  timed write probe (solo or concurrent) with cross-origin visibility
+  reads.
+
+  Self-contained on purpose - no framework, no build step (the F9
+  repro-page pattern). Serve via scripts/hub-lab.mjs, which runs it on
+  two ports. Every load writes a report the native side reads from
+  <hub>/probe/p<port>/r-<loadId>.json - after at most one gesture.
+-->
+<html lang="en">
+<meta charset="utf-8" />
+<title>fsio hub multi-origin probe</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  #banner { padding: .6rem 1rem; border-radius: .5rem; color: #fff; font-weight: 600; }
+  #perm { font-size: 1.6rem; font-weight: 700; margin: .8rem 0; }
+  .granted { color: #0a7d38; } .prompt { color: #b3600e; } .denied, .bad { color: #b3261e; }
+  .muted { color: #666; }
+  pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+  button { font: inherit; padding: .4rem 1rem; margin-right: .5rem; }
+  .ok { color: #0a7d38; }
+</style>
+<div id="banner">…</div>
+<div id="perm">checking…</div>
+<p class="muted">
+  Pick the hub folder (it should show <b>fsio-hub-lab</b> below) and
+  choose <b>“Allow on every visit”</b>. The write probe runs ~30 s and
+  reports natively; keep this window <b>visible</b> while it runs.
+</p>
+<p>
+  <button id="pick">Pick hub folder</button>
+  <button id="rerequest" hidden>Re-request permission (1 click)</button>
+  <button id="probe" disabled>Run 30 s write probe</button>
+</p>
+<pre id="out">log appears here…</pre>
+<script type="module">
+  const PORTS = [8871, 8872];
+  const port = Number(location.port);
+  const otherPort = PORTS[0] === port ? PORTS[1] : PORTS[0];
+  const loadId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+
+  const out = document.getElementById("out");
+  const say = (line, cls) => {
+    const span = document.createElement("span");
+    span.textContent = line + "\n";
+    if (cls) span.className = cls;
+    out.append(span);
+  };
+  const banner = document.getElementById("banner");
+  banner.textContent = `${location.origin} — this page is origin ${port === PORTS[0] ? "A" : "B"}`;
+  banner.style.background = port === PORTS[0] ? "#1d76db" : "#d9640b";
+
+  const permEl = document.getElementById("perm");
+  const showPerm = (state) => {
+    permEl.textContent = `permission on load: ${state}`;
+    permEl.className = state;
+  };
+
+  // --- minimal IndexedDB kv (handle persistence, the F20 flow) ---
+  const idb = () => new Promise((res, rej) => {
+    const r = indexedDB.open("fsio-hub-lab", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  const kv = async (mode, fn) => {
+    const db = await idb();
+    return new Promise((res, rej) => {
+      const req = fn(db.transaction("kv", mode).objectStore("kv"));
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+  };
+  const kvGet = (k) => kv("readonly", (s) => s.get(k));
+  const kvSet = (k, v) => kv("readwrite", (s) => s.put(v, k));
+
+  // --- report: rewritten at checkpoints; native side reads it ---
+  const report = {
+    origin: location.origin, port, loadId,
+    loadedAt: Date.now(), loadedAtIso: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    hadHandle: false, handleName: null, permissionOnLoad: null,
+    events: [],
+  };
+  let hub = null;
+  const writeReport = async () => {
+    if (!hub) return;
+    try {
+      const dir = await hub.getDirectoryHandle("probe", { create: true })
+        .then((d) => d.getDirectoryHandle(`p${port}`, { create: true }));
+      const fh = await dir.getFileHandle(`r-${loadId}.json`, { create: true });
+      const w = await fh.createWritable();
+      await w.write(JSON.stringify(report, null, 2));
+      await w.close();
+      say(`report written: probe/p${port}/r-${loadId}.json`, "muted");
+    } catch (e) {
+      say(`report write failed: ${e.name}: ${e.message}`, "bad");
+    }
+  };
+  const event = (type, data) => {
+    report.events.push({ t: Date.now(), type, ...data });
+    return writeReport();
+  };
+
+  const probeBtn = document.getElementById("probe");
+  const rerequestBtn = document.getElementById("rerequest");
+  const armed = () => { probeBtn.disabled = false; };
+
+  // --- load: restore handle, query permission, report (zero gestures) ---
+  const restored = await kvGet("hub").catch(() => null);
+  if (!restored) {
+    report.permissionOnLoad = "no-handle";
+    showPerm("no-handle");
+    say("no persisted handle — click Pick (first run on this origin).");
+  } else {
+    report.hadHandle = true;
+    report.handleName = restored.name;
+    const state = await restored.queryPermission({ mode: "readwrite" });
+    report.permissionOnLoad = state;
+    showPerm(state);
+    say(`restored handle "${restored.name}" — queryPermission(readwrite): ${state}`,
+        state === "granted" ? "ok" : "bad");
+    if (state === "granted") {
+      hub = restored;
+      armed();
+      await event("zero-gesture-load", { handleName: restored.name });
+    } else {
+      rerequestBtn.hidden = false;
+    }
+  }
+
+  document.getElementById("pick").onclick = async () => {
+    try {
+      const dir = await showDirectoryPicker({ id: "fsio-hub-lab", mode: "readwrite" });
+      await kvSet("hub", dir);
+      hub = dir;
+      report.handleName = dir.name;
+      say(`picked: ${dir.name}` + (dir.name === "fsio-hub-lab" ? "" : "  <-- expected fsio-hub-lab!"),
+          dir.name === "fsio-hub-lab" ? "ok" : "bad");
+      armed();
+      await event("picked", { handleName: dir.name, permissionOnLoad: report.permissionOnLoad });
+    } catch (e) {
+      say(`picker: ${e.name}: ${e.message}`, "bad");
+    }
+  };
+
+  rerequestBtn.onclick = async () => {
+    const t0 = performance.now();
+    const result = await restored.requestPermission({ mode: "readwrite" });
+    const ms = Math.round(performance.now() - t0);
+    say(`requestPermission(readwrite): ${result} in ${ms} ms`, result === "granted" ? "ok" : "bad");
+    if (result === "granted") {
+      hub = restored;
+      armed();
+      rerequestBtn.hidden = true;
+    }
+    await event("rerequest", { result, ms });
+  };
+
+  // --- write probe: ~30 s of create/write/close, cross-origin reads ---
+  const pct = (arr, p) => {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    return Math.round(s[Math.floor((p / 100) * (s.length - 1))] * 10) / 10;
+  };
+  probeBtn.onclick = async () => {
+    probeBtn.disabled = true;
+    say("write probe: 30 s…");
+    const mine = await hub.getDirectoryHandle("probe", { create: true })
+      .then((d) => d.getDirectoryHandle(`p${port}`, { create: true }))
+      .then((d) => d.getDirectoryHandle("wr", { create: true }));
+    const durations = { create: [], createWritable: [], write: [], close: [] };
+    const errors = {};
+    const cross = { attempts: 0, ok: 0, transient: 0, otherNotStarted: 0, lastSeen: null };
+    let visChanges = 0;
+    const onVis = () => visChanges++;
+    document.addEventListener("visibilitychange", onVis);
+    const startedAt = Date.now();
+    const visibilityStart = document.visibilityState;
+    const deadline = performance.now() + 30_000;
+    let i = 0;
+    const payload = (n) => `fsio hub lab p${port} w-${n} ${Date.now()} `.padEnd(64, ".");
+    while (performance.now() < deadline) {
+      try {
+        const t0 = performance.now();
+        const fh = await mine.getFileHandle(`w-${i}.txt`, { create: true });
+        const t1 = performance.now();
+        const w = await fh.createWritable();
+        const t2 = performance.now();
+        await w.write(payload(i));
+        const t3 = performance.now();
+        await w.close();
+        const t4 = performance.now();
+        durations.create.push(t1 - t0);
+        durations.createWritable.push(t2 - t1);
+        durations.write.push(t3 - t2);
+        durations.close.push(t4 - t3);
+      } catch (e) {
+        errors[e.name] = (errors[e.name] || 0) + 1;
+      }
+      if (i % 10 === 0) {
+        // Rewrite my beacon, then read the other origin's. Stale-snapshot
+        // failures are expected-transient under live rewrites (F11).
+        try {
+          const bh = await mine.getFileHandle("latest.json", { create: true });
+          const bw = await bh.createWritable();
+          await bw.write(JSON.stringify({ i, t: Date.now() }));
+          await bw.close();
+        } catch (e) {
+          errors["beacon:" + e.name] = (errors["beacon:" + e.name] || 0) + 1;
+        }
+        cross.attempts++;
+        try {
+          const theirs = await hub.getDirectoryHandle("probe")
+            .then((d) => d.getDirectoryHandle(`p${otherPort}`))
+            .then((d) => d.getDirectoryHandle("wr"));
+          const f = await theirs.getFileHandle("latest.json").then((h) => h.getFile());
+          cross.lastSeen = JSON.parse(await f.text());
+          cross.ok++;
+        } catch (e) {
+          if (e.name === "NotFoundError") cross.otherNotStarted++;
+          else if (e.name === "NotReadableError" || e instanceof SyntaxError) cross.transient++;
+          else errors["cross:" + e.name] = (errors["cross:" + e.name] || 0) + 1;
+        }
+      }
+      i++;
+    }
+    document.removeEventListener("visibilitychange", onVis);
+    const endedAt = Date.now();
+    const secs = (endedAt - startedAt) / 1000;
+    const summary = {
+      startedAt, endedAt, seconds: Math.round(secs * 10) / 10,
+      visibilityStart, visibilityEnd: document.visibilityState, visChanges,
+      ops: durations.close.length,
+      opsPerSec: Math.round((durations.close.length / secs) * 10) / 10,
+      close: { p50: pct(durations.close, 50), p95: pct(durations.close, 95),
+               min: pct(durations.close, 0), max: pct(durations.close, 100) },
+      create: { p50: pct(durations.create, 50) },
+      createWritable: { p50: pct(durations.createWritable, 50) },
+      write: { p50: pct(durations.write, 50) },
+      errors, cross,
+    };
+    say(`probe done: ${summary.ops} ops (${summary.opsPerSec}/s), close p50 ${summary.close.p50} ms, ` +
+        `p95 ${summary.close.p95} ms; cross-reads ${cross.ok}/${cross.attempts} ok`, "ok");
+    if (Object.keys(errors).length) say(`errors: ${JSON.stringify(errors)}`, "bad");
+    await event("probe", summary);
+    probeBtn.disabled = false;
+  };
+</script>
+</html>
