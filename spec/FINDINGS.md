@@ -537,6 +537,62 @@ F7, F8, F11, F20,
 [#70](https://github.com/dglazkov/fsio/issues/70) (spec chapter),
 [#69](https://github.com/dglazkov/fsio/issues/69) (wizard).
 
+### F22 — the host's idle burn is the hot-poll gate: alive-gated 5 ms scans cost ~60% of a core at 32 idle sessions; idle-gated machinery ~3%; one recursive watcher ~2% with 14 ms wakes
+
+Measured 2026-07-29 (macOS/arm64, node v24.11.0;
+`node scripts/hub-scan-lab.mjs`; [#68](https://github.com/dglazkov/fsio/issues/68)
+— the D19 hub track's second gate, and F18's deferred host-cost pass).
+Method: CPU-time delta over 60 s cells (F18's method), one measured
+process per cell, real host CLI at defaults except the named knob.
+Idle = N running echo sessions created at the protocol level
+(spawn.json bootstrap), zero traffic, no heartbeats (legacy-client
+semantics — comparable with F18's pre-D17 numbers).
+
+| config (% of a core) | ×0 | ×1 | ×8 | ×32 |
+|---|---|---|---|---|
+| A: host, hot poll 5 ms (shipped default) | 1.15 | 10.4 | 38.0 | 59.7 |
+| B: host, `--hot 0` (per-dir watchers + 250 ms safety scan) | 0.37 | 0.58 | 1.23 | 3.32 |
+| C: probe, ONE recursive watcher + 250 ms scan | — | 0.40 | 0.83 | 1.93 |
+
+- **Mechanism, located in code.** The host's hot poll is gated on
+  `started && !done` — session *liveness*, not traffic
+  (`host-server.ts` `start()`). N idle-but-running sessions keep the
+  5 ms × O(N) `scanOnce()` loop hot forever; the browser client's D4
+  activity gate (hot only while traffic flowed in the last 2 s) was
+  never ported to the host. F18's "~2–5% native per session" is this,
+  remeasured: Δ/session 9.3% (×1) → 4.6 (×8) → 1.8 (×32) — sublinear
+  because the scan loop self-saturates exactly like the client's wake
+  loop (F18): a 32-session scan costs ~4.7 ms p50, capping the
+  effective rate near ~130 scans/s.
+- **Idle-gated machinery is ~18× cheaper.** `--hot 0` prices what the
+  burn was hiding: 2N+1 per-dir `fs.watch` instances + 250 ms safety
+  scans ≈ 0.09%/session at ×32.
+- **The fsiod-shaped loop is ~40% cheaper again and wakes faster.**
+  One recursive `fs.watch` on `sessions/` + the identical 250 ms scan
+  ≈ 0.06%/session at ×32 — and detected 20/20 idle chunk drops at
+  **p50 14 ms, max 64 ms**, well under F2's ~50 ms per-dir libuv
+  quantization. Recursive FSEvents is both the cheap option and the
+  fast one.
+- **Safety-scan scaling bound.** Full-scan cost ~717 µs (×1) →
+  4.7 ms (×32) ≈ ~140 µs/session; at 4 scans/s the safety scan alone
+  nears ~10% of a core around ~180 idle sessions. A hub daemon at that
+  scale wants watch-driven dirty-marking instead of full scans;
+  nothing measured here forces it below ~100 sessions.
+
+Design constraint delivered to
+[#70](https://github.com/dglazkov/fsio/issues/70)/[#71](https://github.com/dglazkov/fsio/issues/71):
+fsiod's idle loop = one recursive watcher + 250 ms idempotent safety
+scan + a hot poll gated on *recent traffic* (D4's gate, host-side at
+last) → idle cost ≈ 0.05–0.1% of a core per session, wake-from-idle
+~14 ms p50. Also indicts the shipped one-folder host default — the
+gate fix is filed as its own issue.
+→ F2, F18,
+[D4](DECISIONS.md#d4--hybrid--adaptive-notification),
+[D19](DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources),
+[#68](https://github.com/dglazkov/fsio/issues/68); feeds
+[#70](https://github.com/dglazkov/fsio/issues/70),
+[#71](https://github.com/dglazkov/fsio/issues/71).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
@@ -559,4 +615,5 @@ npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
 # (not /tmp for observer tests — see F9)
 node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 npm run bg-lab   # F16/F17 (one grant click; ~18 min; raw JSON beside ~/.fsio-harness)
+node scripts/hub-scan-lab.mjs   # F22 host idle-cost matrix (~15 min, no browser)
 ```
