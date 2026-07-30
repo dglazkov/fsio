@@ -2,11 +2,16 @@
 // Hub-scale scan-loop cost lab (#68, hub track / D19) - F18's deferred
 // host-cost pass, priced for fsiod.
 //
-// Mechanism under test (host-server.ts): the host's hot poll is gated on
+// Mechanism under test (host-server.ts): the host's hot poll was gated on
 // session LIVENESS (`started && !done`), not traffic - N idle-but-running
-// sessions keep a 5 ms x O(N) scan loop hot forever. The idle machinery
+// sessions kept a 5 ms x O(N) scan loop hot forever. The idle machinery
 // the hot poll drowns out (per-dir fs.watch wakeups + 250 ms safety scan)
 // is already there; fsiod needs to know what each configuration costs.
+//
+// FIXED in #73 (2026-07-30): the gate is now recent traffic (D4, host-side).
+// This lab keeps working as the regression bench - cell A is the shipped
+// default and cell B is the floor, so *A converging on B* is the pass
+// condition, and A drifting up means the gate broke (F22 addendum).
 //
 // Cells (all idle - zero traffic; CPU-time delta over 60 s, F18's method):
 //   A  status quo:   real host CLI, --hot 5 (alive-gated hot poll)

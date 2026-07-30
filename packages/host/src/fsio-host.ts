@@ -5,7 +5,8 @@
 //   node packages/host/dist/fsio-host.js <dir> [--allow-shell] [--poll <ms>] [--no-watch] [--fresh] [--takeover]
 //
 //   --allow-shell   permit `kind: "shell"` sessions (spawns processes!)
-//   --hot <ms>      hot-poll interval while sessions are active (default 5, 0=off)
+//   --hot <ms>      hot-poll interval while traffic is flowing (default 5, 0=off;
+//                   gated on recent traffic, not session liveness — F22)
 //   --poll <ms>     add an unconditional poll loop at <ms> interval
 //   --no-watch      disable fs.watch (pure polling; use with --poll to measure)
 //   --fresh         wipe .fsio on startup
@@ -67,7 +68,7 @@ try {
 log.info(`fsio host on ${server.fsioDir}`);
 log.info(`  shell sessions: ${server.allowShell ? "ALLOWED" : "disabled (--allow-shell to enable)"}`);
 log.info(
-  `  wakeup: ${flags.watch ? "fs.watch" : "no fs.watch"}${flags.poll ? ` + ${flags.poll}ms poll` : ""}${flags.hot ? ` + ${flags.hot}ms hot poll` : ""} + ${server.timings.safetyPollMs}ms safety poll`
+  `  wakeup: ${flags.watch ? "fs.watch" : "no fs.watch"}${flags.poll ? ` + ${flags.poll}ms poll` : ""}${flags.hot ? ` + ${flags.hot}ms hot poll while active` : ""} + ${server.timings.safetyPollMs}ms safety poll`
 );
 
 // SIGTERM too (pkill's default — dev.sh and the rig stop hosts that way):
