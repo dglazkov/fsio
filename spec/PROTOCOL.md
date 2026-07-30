@@ -594,6 +594,152 @@ upgraded on the other's schedule, so skew is permanent, not a migration
   directories it cannot parse alone (age-based GC only, D6) — a future
   client's session is not garbage.
 
+## Threat model
+
+What holding the shared folder *is*, and against whom the design does and
+does not defend
+([#81](https://github.com/dglazkov/fsio/issues/81), the posture half of
+[#6](https://github.com/dglazkov/fsio/issues/6)). Enforcement lives in the
+decisions this chapter cites; the chapter's job is to trace every rule with
+a security consequence to a named adversary — and to write down what is
+*not* defended, so it is stated rather than discovered.
+
+### The capability: what holding the folder is
+
+Write access to the shared directory — a browser grant or plain POSIX
+access — is one capability with three legs:
+
+- **Transport.** The holder mints sessions and, past the
+  [D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)
+  policy, runs what policy allows.
+- **Readback.** Every out segment is readable: full scrollback, everything
+  typed or echoed into the terminal, secrets included, for as long as
+  segments are retained
+  ([#82](https://github.com/dglazkov/fsio/issues/82) owns retention).
+- **Adoption.** Attach is takeover
+  ([D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)),
+  so the capability includes adopting a *live, already-approved* session —
+  live stdin control of a running shell, not just readback. Attach re-runs
+  the spawn policy with the attacher's identity, and the takeover is
+  observable: the fenced client sees `writer: {epoch, aid}` in
+  `status.json` and can alarm. Silent hijack therefore requires the victim
+  tab to be gone.
+
+Under the hub
+([D19](DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources),
+[D20](DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it))
+the same capability is **multi-tenant**: every granted origin holds all
+three legs over every other origin's sessions, and any file in the folder
+is forgeable by any of them. The isolation unit is the folder, because that
+is the unit Chrome enforces; isolation means a second hub, and co-tenancy
+is a trust decision made at the grant — which is why the hub chapter
+requires it stay legible (the grants/audit view, D20,
+[#46](https://github.com/dglazkov/fsio/issues/46)).
+
+### Threat shapes
+
+Four adversaries, kept distinct: they hold different capabilities, have
+different identity anchors, and get different answers.
+
+**1. A malicious granted origin.** The shape most of the machinery was
+built against. A granted page can mint sessions, write any file in the
+folder, and claim any identity — `origin` is client-stamped and
+unauthenticated
+([D15](DECISIONS.md#d15--origin-is-client-stamped-advisory-and-display-only)).
+The defenses compose: nothing inside the folder is authoritative, so
+forging files captures no authority and no secrets (D20); execution
+requires a grant the page can only obtain from a human at host-drawn
+pixels, proof-of-possession and session-bound so a copied `spawn.json` is
+inert
+([D23](DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities));
+every spawn *and attach* is judged by the D12 policy; and what an allowed
+command can reach is bounded by the child sandbox and the workspace
+profile
+([D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)).
+Revocation is two-sided and independent: the browser grant (per-origin, in
+browser settings —
+[F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker))
+and the host grant (deleted daemon-side, effective at the next policy
+judgment).
+
+**2. A malicious local binary.** A process already running as the user.
+**The protocol does not defend against it, and does not claim to**: it
+holds everything the folder grants and more — daemon-private state, the
+host process itself, every workspace, the browser profile storing the
+handles. The sandbox story (Seatbelt profiles, D22) is about *spawned
+children* — bounding the blast radius of a command the user approved — not
+about hostile peers. Defense against already-running local malware is the
+operating system's job, and a design that claimed it here would be
+theater.
+
+**3. Delegated prompting.** Another person's prompt driving your agent
+with your local capabilities through your open tab
+([#78](https://github.com/dglazkov/fsio/issues/78)): a confused deputy,
+with the twist that the driver may themselves be relaying injected content
+they did not author. The transport can never authenticate this principal —
+D15's rationale: nothing in a filesystem to anchor trust to — but the
+cloud layer that introduces the threat also supplies the anchor: real
+authenticated principals from *outside* the transport, so consent prompts
+can name a person, not an origin ("Alice wants to run `npm test` in
+workspace X"). The mitigation surface is the existing spine with a person
+dimension added: per-person × per-workspace × shape grants
+([#76](https://github.com/dglazkov/fsio/issues/76)), with prompts rendered
+in the owner's tab — where the owner is.
+
+**4. Agent spawn cadence.** A threat shape with no attacker: an agent
+chatty enough that per-command consent becomes prompt fatigue, and fatigue
+decays granular control into click-through theater
+([#76](https://github.com/dglazkov/fsio/issues/76)). The failure lands in
+the human, which is what makes it a threat shape rather than a UX
+footnote — every defense above that ends in "a human judges the prompt"
+inherits it. D23's two-authorization split is the frame (standing grant
+vs. per-request judgment), and shape-scoped grants — between per-command
+prompts and allow-all — are the designed middle ground.
+
+### Two lines users will otherwise misread
+
+- **Anything in the folder is a broadcast.** Every tenant — granted
+  origins and local processes alike — reads every file. That one rule
+  generates D20's containment (authority and secrets live outside the
+  granted directory) and D23's grant shape (proof-of-possession, never
+  bearer; what lands in the folder is a secret-free receipt). There is no
+  partial version: a secret that transits the folder is disclosed to every
+  present and future tenant of it.
+- **Profile directories are not browser permissions.** The browser's reach
+  is exactly the picked handle, full stop; nothing the host or a profile
+  does widens or narrows it. Profile directories govern the *spawned
+  child's* sandbox reach (D22). A consent UI that blurs this teaches users
+  that grants scope the browser, and they do not.
+
+### $HOME carve-outs are delayed sandbox escapes
+
+A child sandbox that walls off `$HOME` generates pressure to carve
+exceptions for shell conveniences — history, completion caches, session
+restore. The carve-outs are the escape: `~/.zsh_history` is *replayed* by
+real shells, and `~/.zcompdump` is *sourced* by future ones — a write
+inside the sandbox becomes execution outside it, later. The measured
+posture (the terminal demo's profile,
+[#32](https://github.com/dglazkov/fsio/issues/32)): fix the friction in
+the child's environment (`SHELL_SESSIONS_DISABLE=1`, `HISTFILE` redirected
+into the workspace), never by widening the write wall. Profiles SHOULD
+treat any `$HOME` path that a future unsandboxed process reads or executes
+as non-carvable.
+
+### Accepted and out of scope
+
+Stated so they are read, not discovered:
+
+- **Co-tenant scrollback reads** are accepted (D20): granted origins share
+  one hub, and the folder cannot hide files from its own tenants. The
+  mitigation is hygiene, not access control — retention limits and
+  crashed-session shred
+  ([#82](https://github.com/dglazkov/fsio/issues/82)).
+- **`origin` absent a grant** authenticates nothing (D15): display
+  material only; any folder writer can claim any origin. A D23 grant is
+  what makes an origin claim checkable.
+- **Local processes** (shape 2 above): everything in this chapter assumes
+  the local machine is not already hostile.
+
 ## Security posture (v0 stance)
 
 Running the host with `--allow-shell` grants any page that can write to the
@@ -612,11 +758,11 @@ closes the design gap — a grant is what makes an origin claim checkable,
 and profiles carry the allow-list and env-policy content
 ([D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry))
 — but nothing ships it yet
-([#71](https://github.com/dglazkov/fsio/issues/71)). Still to spec: the
-threat-model document
-([#81](https://github.com/dglazkov/fsio/issues/81)) and scrollback
-hygiene — `.fsio/` auto-added to `.gitignore`, log retention limits (the
-log contains full scrollback), crashed-session shred
+([#71](https://github.com/dglazkov/fsio/issues/71)). The
+[threat model](#threat-model) above names the adversaries these mechanisms
+answer. Still to spec: scrollback hygiene — `.fsio/` auto-added to
+`.gitignore`, log retention limits (the log contains full scrollback),
+crashed-session shred
 ([#82](https://github.com/dglazkov/fsio/issues/82)).
 
 [Hub deployment](#hub-deployment) raises the stakes rather than the posture:
@@ -624,10 +770,10 @@ a daemon serving every registered workspace concentrates blast radius, and
 one hub folder is multi-tenant by construction — co-tenant origins read each
 other's scrollback, and any file in the folder is forgeable by all of them.
 D20's containment (authority and secrets outside the granted directory) and
-D23's two-authorization split are the mechanism half; the threat-model
-document ([#81](https://github.com/dglazkov/fsio/issues/81)) and the
-shipped policy content
-([#71](https://github.com/dglazkov/fsio/issues/71)) remain open under
+D23's two-authorization split are the mechanism half; the
+[threat model](#threat-model) is the map. The shipped policy content
+([#71](https://github.com/dglazkov/fsio/issues/71)) and scrollback hygiene
+([#82](https://github.com/dglazkov/fsio/issues/82)) remain open under
 [#6](https://github.com/dglazkov/fsio/issues/6)'s umbrella, and no hub
 facility should ship ahead of them.
 
