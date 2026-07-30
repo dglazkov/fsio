@@ -672,3 +672,291 @@ as the fallback if a hub assumption cracks late).
 (the namespacing question #67 prices). Depends on D12 (policy), D13/D14
 (embedder surface). Feeds #67–#72; promotes #46, #6, #8, #7; supersedes
 [#65](https://github.com/dglazkov/fsio/issues/65) (closed → #72).
+
+## D20 — the hub folder carries transport and advertisement; authority lives outside it
+
+**Decision.** In hub mode
+([D19](#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources))
+the granted directory holds transport files and public advertisement, and
+nothing else. The layout is the one-folder layout unchanged — one
+`sessions/`, one `client/`, client-minted globally unique ids, **no
+per-origin subdirectories**. Everything authoritative lives in
+daemon-private state outside the grant: the workspace registry, grant
+records, profiles, the singleton lock. Two rules follow and are stated
+normatively in the spec's hub chapter: **no file inside the hub may be a
+security or safety mechanism** (a co-tenant can forge or delete it), and
+**no secret may transit the hub folder** (a file there is a broadcast to
+every tenant). Co-tenancy itself is accepted, not engineered away: one
+origin's session dirs, scrollback included, are readable by every other
+granted origin; the isolation unit is the folder, so isolation means a
+second hub. A daemon MUST be able to enumerate which origins hold grants,
+so the co-tenancy a user accepted stays legible.
+
+**Context.** [#70](https://github.com/dglazkov/fsio/issues/70)'s layout
+bullet, answered by its gating lab. F21 measured grants as independent per
+(origin, folder) with fair-share broker throughput and zero errors across
+~8,600 concurrent writes, which removes the *correctness* motive for
+origin-scoped subdirs (D19's named escape hatch). The security motive
+dissolves separately and more decisively: Chrome grants folders, not
+subtrees, so a co-tenant's handle reaches every subdirectory anyway —
+namespacing would have been isolation theater. Inverting that observation
+is what produces the chapter's spine: if the folder confines nothing, then
+authority must not live in it. This is a real hardening of
+[#46](https://github.com/dglazkov/fsio/issues/46)'s sketch, which wrote
+grants *into* `.fsio/` — safe when one folder meant roughly one page,
+unsafe the moment the folder is a shared socket.
+
+**Alternatives rejected.** Origin-scoped subdirs (D19's hatch: no
+correctness benefit per F21, no isolation benefit per Chrome's grant
+granularity, and a permanent fork in the layout the one-folder mode would
+not share). Encrypting per-origin state in the folder (key distribution has
+the same out-of-band problem the secret does, and it would make the hub
+opaque to the local tools that make "just files" debuggable). Making the
+daemon the only writer, with pages posting intents (that is a localhost
+server with extra steps — D19 rejected it once already). Per-origin
+retention/scrubbing of scrollback to blunt co-tenant reads (mechanism
+without a threat model; [#6](https://github.com/dglazkov/fsio/issues/6)
+owns retention).
+
+**Findings.** [F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker)
+(independence, fair sharing, per-origin revocation),
+[F8](FINDINGS.md#f8--peers-must-not-contend-for-the-same-files)/[D6](#d6--one-writer-per-file-one-cleanup-owner)
+(one writer per file survives co-tenancy only because ids are unique).
+Feeds #71, #46, #6.
+
+## D21 — the daemon is a singleton enforced by an OS lock; the heartbeat stays advisory
+
+**Decision.** One daemon per hub directory, enforced by an OS-level
+exclusive lock (`flock`-class) keyed by the hub's absolute path, held for
+the process lifetime, living in daemon-private state (D20). A daemon that
+cannot acquire it exits non-zero without touching the hub. `host.json`'s
+heartbeat keeps its client-facing meaning (liveness = mtime younger than
+6 s) but is no longer the mutual-exclusion mechanism in hub mode.
+[#40](https://github.com/dglazkov/fsio/issues/40)'s refuse-over-a-live-
+`host.json` rule stays normative for one-folder hosts.
+
+**Context.** #40's rule was always described in the spec as "a seatbelt,
+not a distributed lock" — two hosts starting inside one heartbeat window
+still collide. A hub makes both halves of that worse: a supervisor
+(launchd) restarts the daemon precisely in the window where the old
+heartbeat is fresh, so the seatbelt fires against a corpse; and the
+heartbeat file now sits in a multi-tenant directory where any granted
+origin can delete or backdate it, which by D20's rule disqualifies it from
+being a safety mechanism at all. An OS lock has neither problem and needs
+no heuristic. The one-folder case keeps the seatbelt because it has no
+daemon-private state to lock and no supervisor racing it.
+
+**Alternatives rejected.** Keeping the heartbeat as the only gate (D20:
+forgeable, and it loses the launchd restart race). A pidfile in the hub
+(same forgeability, plus pid reuse). A lock file inside the hub (a
+co-tenant deletes it; `O_EXCL` creation without a kernel-held lock also
+strands the hub after a crash). launchd exclusivity alone (macOS-only,
+and it does not stop a hand-started daemon from serving the same hub —
+[#5](https://github.com/dglazkov/fsio/issues/5) wants a mechanism that
+ports).
+
+**Findings.** None measured; the F8/D6 one-writer invariant is what the
+lock protects — a second daemon would re-spawn every adopted session,
+consume uplink chunks the first then sees as gaps, and mint competing
+[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client) epochs.
+Feeds #71 (launchd install), #7.
+
+## D22 — workspaces are session parameters resolved by a daemon-private registry
+
+**Decision.** `workspace` in a spawn spec names a registry entry, never a
+path; the host resolves the name against a daemon-private registry
+(`fsio share .`) and answers `1006` when it cannot, including the
+one-folder host (a registry of one). Absolute paths never appear on the
+wire in either direction. A process-spawning kind MUST name a workspace
+when the host serves more than one; `cwd` resolves relative to the
+workspace root and MUST NOT escape it. Each entry carries a profile
+(allow-list, sandbox template, env policy —
+[#46](https://github.com/dglazkov/fsio/issues/46)); a spawned child's reach
+is the intersection of profile and grant scope, and profile directories
+govern the *child*, never the browser's reach. **Direct file access
+composes rather than merges**: a page MAY hold its own FS Access grant on a
+workspace folder and read/write it directly with fsio uninvolved; hosts
+MUST NOT require workspaces to live inside the hub, and MUST NOT route
+direct file I/O through sessions.
+
+**Context.** D19 demoted working folders from transport medium to session
+parameter; this is that rule made normative, plus the answer to the
+grant-composition fork [#70](https://github.com/dglazkov/fsio/issues/70)
+inherited from the agent demos
+([#74](https://github.com/dglazkov/fsio/issues/74),
+[#78](https://github.com/dglazkov/fsio/issues/78)): in hub topology #74's
+capability ladder spans two grants on two different folders — rungs 1–2
+(see/edit, zero-install) on the repo itself, rung 3 (run) on the hub. F21
+prices holding both at exactly one extra gesture, ever, because grants are
+independent per (origin, folder). The alternative readings were filed with
+that fork and are rejected below. Name-not-path is forced twice over: the
+page cannot supply a path (D19's decisive wall — a picked handle has none),
+and the host must not disclose one, because the hub is co-tenant-readable
+(D20) and a path leaks the user's home directory and project layout.
+
+**Alternatives rejected.** Fork option (b), **workspaces physically inside
+`~/fsio`** so one grant covers direct access too (relocates people's repos
+to serve the transport; the tail wags the dog). Fork option (c), **all file
+I/O routed through fsiod sessions** with the page dropping its direct
+handle (clean layering, but the files-only degenerate mode and the hub mode
+would then use disjoint code paths on the page side — and NARRATIVE.md's
+standing constraint is that every act stays playable without the daemon).
+Paths on the wire as a convenience for display (leaks by default; a `label`
+in the registry covers the legitimate need). Silently substituting the
+default workspace for an unresolvable name (the one behavior a subject
+parameter must never have — the client would be told it ran somewhere it
+did not).
+
+**Findings.** [F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker)
+(independent grants make option (a) cost one gesture),
+[F20](FINDINGS.md#f20--a-persisted-handle-with-allow-on-every-visit-spans-browser-restarts-revisit-is-zero-gesture)
+(each grant, once durable, is zero-gesture on revisit). Depends on
+[D12](#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy).
+Feeds #71 (registry + profiles), #74, #72.
+
+## D23 — consent is host-served, and grants are proof-of-possession capabilities
+
+**Decision.** Makes [#46](https://github.com/dglazkov/fsio/issues/46)'s
+device-grant sketch normative, hardened for multi-tenancy. Two
+authorizations, kept separate: a **grant** is standing authority for an
+origin over named workspaces and a class of action, minted by a human at a
+host-drawn consent page and revocable; the
+[D12](#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)
+policy is the per-request judgment. Execution requires both. Rules: only
+hub-confined kinds (`echo`) may be served ungranted; the host draws the
+consent pixels, never the requesting page; the request rides the folder
+(`consent/<rid>.json`, one writer per file, host deletes on answer) and
+needs no gesture, while the navigation to the endpoint MUST be
+user-initiated and MUST follow publication of that endpoint; **grants are
+proof-of-possession, never bearer** — the secret reaches the origin out of
+band of the folder and each request is bound to the session it authorizes;
+what lands in the folder is a secret-free receipt, with the authoritative
+record daemon-private and revocation effective at the next policy judgment;
+the consent server binds loopback, only while a request is pending, behind
+a per-boot unguessable nonce, and carries consent and grant administration
+only — **the folder remains the only data plane**. First-run flows MUST
+route through one deliberate `requestPermission()` re-prompt to mint a
+durable grant. The reference answer channel (a click-opened loopback tab
+delivering the secret by `postMessage` to its opener) is explicitly
+unmeasured and gated on [#79](https://github.com/dglazkov/fsio/issues/79);
+the rules above are transport-independent.
+
+**Context.** D19 concentrated the blast radius in daemon policy and
+promoted #46/#6 from parked to core; this is the promotion. Two changes to
+the sketch, both forced by the hub: grants cannot live *in* `.fsio/` (D20),
+and a bearer token in `spawn.json` — which #46 flagged as acceptable if the
+threat model were "web origins only" — is exactly wrong here, because the
+hub's co-tenants *are* web origins and can read it. Proof-of-possession
+plus session binding makes a copied `spawn.json` inert: it cannot be
+re-aimed at a session id the MAC does not cover, and the session it does
+cover has already been adopted. The bearer/PoP question was #46's first
+hard constraint; the hub answers it. The two-authorization split is what
+keeps [#74](https://github.com/dglazkov/fsio/issues/74)'s ladder honest at
+rung 3 — "execution in principle" (the grant, installed once) is a
+different consent from "this command, now" (the D12 prompt) — and
+[#76](https://github.com/dglazkov/fsio/issues/76) is the design space
+between them, where an agent chatty enough to cause prompt fatigue meets a
+grant broad enough to stop asking.
+
+**Alternatives rejected.** Bearer tokens in `spawn.json` (readable by every
+co-tenant — the hub's defining difference from one folder). Grant records
+in the hub (forgeable and readable; D20). A redemption code in the receipt,
+exchanged for the secret over loopback (a co-tenant reads the receipt and
+races the redemption; it also needs `fetch()` to loopback, the leg most
+likely to be blocked). Origin claims as authorization
+([D15](#d15--origin-is-client-stamped-advisory-and-display-only) stands:
+unauthenticated, display-only — the grant is what makes an origin claim
+checkable). A page-drawn consent dialog (clickjackable by construction; the
+whole point is pixels the requester cannot reach). One authorization
+instead of two (either prompts on every command — click-through theater —
+or a standing grant that silently authorizes tomorrow's commands).
+Long-lived HTTP for anything beyond consent (an open data-plane port
+forfeits the "no server" claim; #46's own hard constraint).
+
+**Findings.** [F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker)
+and [F20](FINDINGS.md#f20--a-persisted-handle-with-allow-on-every-visit-spans-browser-restarts-revisit-is-zero-gesture)'s
+addendum (the durable grant is minted at the re-prompt, so a first-run flow
+that stops at the picker is session-scoped),
+[F15](FINDINGS.md#f15--browser-write-access-is-gated-per-session-and-cannot-be-automated-one-gesture-unlocks-the-whole-session)
+(the gesture is unautomatable, so the flow must not race activation).
+Unmeasured, filed: #79 (answer channel), #69 (first-run ergonomics).
+Depends on D12, D20. Feeds #6, #46, #71, #76.
+
+## D24 — the service directory is the origin-facing capability document
+
+**Decision.** `host.json` stays the hot 2 s heartbeat and gains
+`servicesRev`. The capability document is a separate host-owned file,
+`services.json`, temp+renamed only when its content changes:
+`{rev, protocol, capabilities, kinds, workspaces, consent?}`. A client
+already statting the heartbeat learns from `servicesRev` when to re-read —
+the [D3](#d3--rename-committed-doorbell-outsig) doorbell discipline, hot
+pointer plus cold state. `kinds` is
+[D13](#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry)'s
+registry surfaced to pages. Because one file serves all tenants, it
+advertises only what every granted origin may see: workspace **names** the
+user marked advertisable — never paths, never the full registry. Per-origin
+visibility is a property of the grant, carried by its receipt (D23).
+`allowShell`/`pty` stay in `host.json` for one-folder compatibility; hub
+clients read `capabilities`.
+
+**Context.** [#70](https://github.com/dglazkov/fsio/issues/70)'s service-
+directory bullet, and the substrate the later bus slices enumerate
+([#18](https://github.com/dglazkov/fsio/issues/18),
+[#44](https://github.com/dglazkov/fsio/issues/44),
+[#45](https://github.com/dglazkov/fsio/issues/45)). Splitting hot from cold
+is not premature: `host.json` is rewritten every 2 s forever, and a hub's
+directory grows with registered workspaces and kinds, so merging them would
+rewrite the largest document on the fastest cadence and hand every client a
+re-parse per beat. The privacy line is the same one D22 draws — a roster of
+workspace names is a smaller leak than paths, but it is still a leak to
+*ungranted* origins, and the grant is the right place to widen it.
+
+**Alternatives rejected.** Growing `host.json` itself (couples a growing
+document to a 2 s rewrite; also mixes a forgeable-liveness file with the
+capability contract). Per-origin directory files (a file per origin in a
+folder every origin can read is not per-origin anything — D20). An RPC
+method for enumeration (a client would need a session to learn what
+sessions it may create — a bootstrap circle; files are readable before
+anything is spawned). Advertising the full registry to everyone (leaks the
+user's project roster to any granted origin, and to ungranted ones that
+merely hold the folder).
+
+**Findings.** None measured. Depends on D3, D13, D20. Feeds #8, #18, #44,
+#45, #71.
+
+## D25 — capabilities are feature-detected names; `protocol` is the on-disk version
+
+**Decision.** `protocol` versions the **bytes on disk** — frames, file
+names, layout — and increments only when an older peer would misread them.
+Everything else is a named capability advertised in `services.json` and
+feature-detected. Rules: unknown JSON fields are ignored in both directions
+and in every file; unknown capability names are never fatal; clients gate
+behavior on capability names, not `protocol` ranges; capability names are
+stable and never reused, exactly like F and D numbers (a withdrawn
+capability burns its name); a peer reading a `protocol` higher than it
+implements MUST NOT create sessions and SHOULD surface an upgrade path; a
+daemon leaves session directories it cannot parse alone, GC'ing them only
+by age. Adding the hub chapter therefore does not bump `protocol`: every
+hub facility is additive.
+
+**Context.** [#8](https://github.com/dglazkov/fsio/issues/8), pulled by
+D19. Until now both sides shipped together — the workbench and the host
+come out of one repo at one commit — so skew was a theory. An *installed*
+daemon meets pages of every vintage, on the user's upgrade schedule for one
+and the deployer's for the other, in both directions (old daemon/new page
+is the common case; new daemon/old page happens on every restart). That is
+a permanent condition, not a migration, and permanent skew is what named
+capabilities are for. This entry sets the discipline; #8 keeps the concrete
+job of freezing schemas and enumerating the first capability names.
+
+**Alternatives rejected.** Semantic versioning of the whole protocol with
+range checks (invites "if version ≥ N" branches that break the moment a
+facility is backported or withdrawn). Negotiation handshakes (there is no
+connection to negotiate over — the client reads a file before it writes
+anything, which is strictly simpler). Failing closed on unknown fields
+(guarantees that every additive change breaks every old peer — the exact
+outcome this is meant to prevent). Bumping `protocol` for the hub (nothing
+on disk changed; a bump would strand every existing client for a facility
+they need not use).
+
+**Findings.** None measured. Depends on D24. Feeds #8, #7, #71.

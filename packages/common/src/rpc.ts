@@ -28,6 +28,14 @@ export const RpcErrors = {
   SPAWN_DENIED: 1004,
   /** attach refused: session exited or not attachable (D18). */
   ATTACH_FAILED: 1005,
+  /** hub deployment (D22): `workspace` names no entry this host can
+   *  resolve, or none this client may see. Reserved here so the numbers
+   *  stay stable — no shipped host emits 1006/1007 yet (#71). */
+  UNKNOWN_WORKSPACE: 1006,
+  /** hub deployment (D23): no valid grant covers the request. Absent,
+   *  expired, invalid, and revoked are deliberately one code — the
+   *  client's next move (ask for consent) is the same for all four. */
+  GRANT_REQUIRED: 1007,
 } as const;
 
 /** Conventional id for the spawn request carried by spawn.json. */
