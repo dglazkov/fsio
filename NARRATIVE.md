@@ -87,17 +87,13 @@ daemon. The hub is an ergonomics and posture *multiplier* — one
 grant per origin ever, workspaces as parameters, the
 installed-capability feel — never a dependency.
 
-An honesty note, recorded when season two moved out (next section):
-the hub's standing-socket thesis used to borrow a second
-justification from the room — capability presence for a team, the
-service directory as the roster's local half. That justification
-left with pewter. What remains must carry the track on its own
-merits: one grant per origin ever, multi-workspace routing under a
-single picker gesture, the daemon as the residence of spawn policy,
-and multi-client attach (the mirror hall runs through it). Whether
-that is enough to hold the track's current priority is a live
-question, re-argued where AGENTS.md says priorities live — in the
-hub-track issue comments — not assumed here.
+The track carries itself on those merits: one grant per origin
+ever, multi-workspace routing under a single picker gesture, the
+daemon as the residence of spawn policy, and multi-client attach
+(the mirror hall runs through it). Whether that holds the track's
+current priority is a live question, re-argued where AGENTS.md says
+priorities live — in the hub-track issue comments — not assumed
+here.
 
 The tracks still braid: demos are the hub spec's requirements
 generator, and pre-hub demo work keeps its session-setup layer
@@ -108,40 +104,22 @@ spine
 once — it's what keeps the ladder honest when the actor climbing it
 is autonomous.
 
-## Where season two went
+## A season that isn't here
 
-Season two — pewter.town, the room, borrowed services, benches,
-residents — and the device-displacement interlude were extricated to
-[dglazkov/pewter](https://github.com/dglazkov/pewter) on 2026-07-31.
-The forcing realization: the room never needed the transport. A
-daemon holding an outbound socket to the room (`pewter . --key=…`)
-replaces the junction tab, the folder data plane, and the double hop
-— so the product idea and the transport bet are now separate
-projects that can fail independently. Issues #78, #87, #91, #93, #94
-transferred with it (GitHub redirects hold); the rewritten story is
-[pewter/NARRATIVE.md](https://github.com/dglazkov/pewter/blob/main/NARRATIVE.md).
-
-What pewter keeps from here is the consent grammar — the capability
-rungs, shape grants, the (principal × service × workspace) triple
+A second season was once drafted in this document — a team-facing
+product built above the transport. It was spun out as a separate
+project in July 2026 and does not track back here; the arc ending at
+act 5 is by design, not truncation. Git history has the full story.
+The consent grammar it exercised — the capability rungs, shape
+grants, the (principal × service × workspace) triple
 ([D27](spec/DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)),
 confirmation-as-policy
 ([D12](spec/DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)),
 and the measured-confinement discipline
 ([F23](spec/FINDINGS.md#f23--child-confinement-is-transitive-to-any-depth-and-cannot-be-re-entered-in-either-direction-setuid-binaries-become-unexecutable)–[F26](spec/FINDINGS.md#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out))
-— cited there as prior art. Those pieces were designed on fsio's
-dime and stand on fsio-native ground regardless: two *origins*
+— stays, because it stands on fsio-native ground: two *origins*
 granted the same workspace already need per-asker reach, and a
 chatty agent already needs consent that survives its cadence.
-Whether fsiod one day serves as pewter's local service host is a
-decision pewter would have to earn on merit; neither repo assumes
-it.
-
-What the departure changed here: the demo arc ends at act 5; the
-hub track re-argues its priority on solo value (above); the Linux
-confinement lane parks again (headless-wall-only was pewter's
-prerequisite, not this repo's); and the backgrounded-tab relay
-question shrinks back to its transport core (F16 under a
-backgrounded host tab), shorn of the borrowed-service framing.
 
 ## Contrast to hold in every telling
 

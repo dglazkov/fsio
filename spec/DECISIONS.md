@@ -1073,8 +1073,8 @@ the profile mechanism's requirements from the narrative's acts and left
 the attachment question as its sharpest fork (open question 2): season
 two needs the same workspace to have different reach depending on who is
 asking (R14), which one-profile-per-workspace cannot express. The
-pewter.town walkthrough (NARRATIVE.md, season two visualized) settled it
-by exercise: at no beat did anyone want policy attached to the *place* —
+walkthrough of a team-facing product drafted in the then-NARRATIVE.md
+(since spun out of this repo) settled it by exercise: at no beat did anyone want policy attached to the *place* —
 the owner consents to "Alice may use test-runner in workspace fsio," a
 sentence whose nouns are a person, a service, and a place, exactly the
 grant triple. The registry's job shrinks to what D22 actually needed it
@@ -1083,12 +1083,11 @@ answers #86's "profiles, shapes, roster entries, and MCP servers are one
 concept wearing four hats" — the concept is the named service, and the
 grant is where reach binds to it.
 
-*2026-07-31:* season two and its walkthrough were extricated to
-[dglazkov/pewter](https://github.com/dglazkov/pewter); the exercise that
-settled this decision is now prior art there. The decision stands on
-fsio-native ground regardless: two *origins* granted the same workspace
-(F21's independent grants) already need per-asker reach — R14 is the
-multi-origin case stated generally, with or without a room above it.
+*2026-07-31:* that walkthrough has since moved out of this repo. The
+decision stands on fsio-native ground regardless: two *origins* granted
+the same workspace (F21's independent grants) already need per-asker
+reach — R14 is the multi-origin case stated generally, with or without
+a cloud layer above the transport.
 
 **Alternatives rejected.** Profile-per-workspace (D22 as written —
 cannot say "same workspace, different reach per asker"; forces season
@@ -1126,9 +1125,8 @@ demonstrates wanting it, and *returning is the evidence* that durability
 is wanted. The ladder now reads picker → return → permanent → resident,
 every rung user-initiated. (The same principle makes the resident daemon
 a graduation from the foreground host rather than an installation —
-recorded as narrative posture in the season-two walkthrough, since
-extricated to [dglazkov/pewter](https://github.com/dglazkov/pewter),
-not yet mechanism.)
+recorded as narrative posture in a walkthrough since spun out of this
+repo, not yet mechanism.)
 
 **Alternatives rejected.** The first-run double-tap (the flow D23
 originally mandated: measured workable in
