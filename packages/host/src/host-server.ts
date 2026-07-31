@@ -24,6 +24,7 @@ import {
   rpcResult,
   rpcError,
   PROTOCOL_VERSION,
+  CAPABILITIES,
   type Frame,
   type RpcId,
   type RpcResponseMsg,
@@ -39,6 +40,9 @@ import {
   type ResizeParams,
   type SignalParams,
   type AckParams,
+  type ServicesDoc,
+  type ServiceKind,
+  type ServiceWorkspace,
 } from "@fsio/common";
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -189,6 +193,31 @@ export type WorkspaceResolution = { root: string; name?: string } | { error: str
  *  would be told it ran somewhere it did not (D22). */
 export type WorkspaceResolver = (name: string | undefined, info: SpawnRequestInfo) => WorkspaceResolution;
 
+// ---- service directory (D24): what the embedder contributes to it. The
+// library derives what it knows first-hand (protocol, kinds, whether shell
+// and pty are servable) and transcribes the rest. Grants and consent are
+// *embedder* concepts — the library has no notion of either (fsiod owns
+// them, #71) — so it never infers `needsGrant`, it only reports it.
+
+/** Hub-shaped additions to `services.json` (D24). Every field is a claim
+ *  the embedder makes; none of it is discoverable by the library. */
+export interface ServicesInput {
+  /** capability names beyond the ones the host derives (D25). Unknown to
+   *  a client means "not supported", never fatal — so only advertise a
+   *  name once the facility behind it works. */
+  capabilities?: string[];
+  /** advertisable workspaces: **names only**, never paths (D22/D24). One
+   *  file serves all tenants, so this is the subset the user marked
+   *  advertisable, not the registry. */
+  workspaces?: ServiceWorkspace[];
+  /** kind names that require a D23 grant before the policy is consulted.
+   *  Hub-confined kinds (`echo`, the transport diagnostic) are omitted —
+   *  they may be served ungranted. */
+  needsGrant?: string[];
+  /** the consent endpoint, published only while a host serves one. */
+  consent?: { url: string };
+}
+
 /** Every time-based host behavior, injectable so tests can run them at
  *  short timescales (TESTING.md: "become testable when #17 makes the
  *  intervals injectable"). Defaults are the measured/spec'd values. */
@@ -248,6 +277,10 @@ export interface HostServerOptions {
    *  advertises no name can resolve none. Ignored when `workspaces` is
    *  provided. */
   workspaceName?: string;
+  /** the embedder's half of the service directory (D24) — advertisable
+   *  workspace names, extra capability names, the consent endpoint. May be
+   *  replaced at runtime with `setServices()`. */
+  services?: ServicesInput;
   /** wipe .fsio on startup. Default false. Refused while another host is
    *  live on the directory (#40) — takeover applies here too. */
   fresh?: boolean;
@@ -311,6 +344,32 @@ function writeFileAtomic(file: string, data: string | Uint8Array): void {
 
 function writeJsonAtomic(file: string, obj: unknown): void {
   writeFileAtomic(file, JSON.stringify(obj, null, 2));
+}
+
+/** Everything in `services.json` except `rev`, in a canonical form: fixed
+ *  key order, sorted arrays, known fields only. It is the change test (a
+ *  rewrite that says the same thing must not ring the doorbell) and it runs
+ *  over hostile input too — the hub is co-tenant-writable (D20), so a
+ *  scribbled document must normalize to something, never throw. Unknown
+ *  fields are dropped rather than rejected (D25). */
+function canonServices(d: Partial<ServicesDoc>): Omit<ServicesDoc, "rev"> {
+  const caps = (Array.isArray(d.capabilities) ? d.capabilities : []).filter((c): c is string => typeof c === "string");
+  const kinds = (Array.isArray(d.kinds) ? d.kinds : [])
+    .filter((k): k is ServiceKind => !!k && typeof k.name === "string")
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((k) => (k.needsGrant ? { name: k.name, needsGrant: true } : { name: k.name }));
+  const ws = (Array.isArray(d.workspaces) ? d.workspaces : [])
+    .filter((w): w is ServiceWorkspace => !!w && typeof w.name === "string")
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((w) => (typeof w.label === "string" ? { name: w.name, label: w.label } : { name: w.name }));
+  const url = d.consent && typeof d.consent.url === "string" ? d.consent.url : null;
+  return {
+    protocol: typeof d.protocol === "number" ? d.protocol : PROTOCOL_VERSION,
+    capabilities: [...new Set(caps)].sort(),
+    kinds,
+    ...(Array.isArray(d.workspaces) ? { workspaces: ws } : {}),
+    ...(url === null ? {} : { consent: { url } }),
+  };
 }
 
 /** Client-chosen text that goes back out in an error (status.json is read
@@ -650,6 +709,13 @@ export class HostServer {
   private hbSeq = 0;
   private startedAt = 0;
   private running = false;
+  // Service directory (D24): the embedder's contribution, the last body we
+  // published (canonical JSON, rev excluded — the change test), and the rev
+  // the heartbeat advertises.
+  private servicesInput: ServicesInput;
+  private servicesBody: string | null = null;
+  private servicesRev = 0;
+  private readonly namedWorkspaces: boolean;
 
   // fs.watch events are treated purely as wakeups; every wake runs a full,
   // idempotent scan. A slow safety poll catches anything watch misses.
@@ -668,6 +734,12 @@ export class HostServer {
     // would be the substitution the decision forbids — the client would be
     // told it ran in the workspace it named.
     const ownName = opts.workspaceName;
+    // The `workspaces` capability is a claim that *names* resolve here —
+    // true for a registry (hub) and for a one-folder host that answers to
+    // its own name, false for the default resolver, which serves the shared
+    // dir and `1006`s every name (D22).
+    this.namedWorkspaces = !!opts.workspaces || !!ownName;
+    this.servicesInput = opts.services ?? {};
     this.workspaces =
       opts.workspaces ??
       ((name) =>
@@ -729,7 +801,98 @@ export class HostServer {
   registerKind(kind: string, handler: KindHandler): this {
     if (kind === "shell" || this.kinds.has(kind)) throw new Error(`kind already registered: ${kind}`);
     this.kinds.set(kind, handler);
+    this.republish(); // a kind registered after start() still gets advertised (D24)
     return this;
+  }
+
+  // ------------------------------------------- service directory (D24/D25)
+
+  /** Replace the embedder's half of the service directory and republish.
+   *  Idempotent and cheap: the document is temp+renamed *only* when its
+   *  content actually changes, and only then does `rev` move. fsiod calls
+   *  this when the workspace registry changes — `fsio share` must reach a
+   *  page without a daemon restart, the same "it bites at the next
+   *  judgment" discipline D23 requires of revocation. */
+  setServices(input: ServicesInput): this {
+    this.servicesInput = input;
+    this.republish();
+    return this;
+  }
+
+  /** The document as this host would publish it right now (D24) — the
+   *  introspection surface, and what the tests read. */
+  services(): ServicesDoc {
+    return { rev: this.servicesRev, ...this.buildServices() };
+  }
+
+  private buildServices(): Omit<ServicesDoc, "rev"> {
+    // Mirrors the heartbeat's `allowShell`: with a policy hook the static
+    // boolean is meaningless, so shells are advertised as askable and the
+    // policy gives the real, coded answer per request (D12).
+    const shellServable = this.onSpawnRequest ? true : this.allowShell;
+    const needsGrant = new Set(this.servicesInput.needsGrant ?? []);
+    const named = [...this.kinds.keys(), ...(shellServable ? ["shell"] : [])];
+    return canonServices({
+      protocol: PROTOCOL_VERSION,
+      capabilities: [
+        ...(shellServable ? [CAPABILITIES.SHELL] : []),
+        ...(this.ptyAvailable ? [CAPABILITIES.PTY] : []),
+        CAPABILITIES.ATTACH,
+        ...(this.namedWorkspaces ? [CAPABILITIES.WORKSPACES] : []),
+        ...(this.servicesInput.capabilities ?? []),
+      ],
+      kinds: named.map((name) => (needsGrant.has(name) ? { name, needsGrant: true } : { name })),
+      ...(this.servicesInput.workspaces ? { workspaces: this.servicesInput.workspaces } : {}),
+      ...(this.servicesInput.consent ? { consent: this.servicesInput.consent } : {}),
+    });
+  }
+
+  /** Write `services.json` if — and only if — its content changed, and ring
+   *  the doorbell (`servicesRev` in `host.json`) when it did. Returns true
+   *  on a revision bump. */
+  private publishServices(): boolean {
+    const doc = this.buildServices();
+    const body = JSON.stringify(doc);
+    if (body === this.servicesBody) return false;
+
+    // First publish of this process: adopt what is already on disk. If it
+    // says the same thing, keep its revision and do not rewrite (a restart
+    // must not invalidate every client's cached copy); if it differs — or a
+    // co-tenant scribbled on it — carry the revision forward rather than
+    // rewinding it, since clients compare revisions, not contents.
+    let prev = this.servicesRev;
+    if (this.servicesBody === null) {
+      const onDisk = this.readServices();
+      if (onDisk) {
+        prev = Number.isFinite(onDisk.rev) && onDisk.rev > 0 ? Math.floor(onDisk.rev) : 0;
+        const { rev: _rev, ...rest } = onDisk;
+        if (JSON.stringify(canonServices(rest)) === body) {
+          this.servicesBody = body;
+          this.servicesRev = prev;
+          return false;
+        }
+      }
+    }
+    this.servicesRev = prev + 1;
+    this.servicesBody = body;
+    writeJsonAtomic(path.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
+    return true;
+  }
+
+  private readServices(): ServicesDoc | null {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(this.fsioDir, "services.json"), "utf8")) as ServicesDoc;
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Republish + beat immediately: the heartbeat is the doorbell, and a
+  // client that just learned a workspace exists should not wait out a beat
+  // to hear about it. Costs a write only when something actually changed.
+  private republish(): void {
+    if (this.running && this.publishServices()) this.heartbeat();
   }
 
   /** Attach to the shared dir and begin serving. Resolves after the first
@@ -752,6 +915,9 @@ export class HostServer {
     const manifest: FsioManifest = { protocol: PROTOCOL_VERSION };
     writeJsonAtomic(path.join(this.fsioDir, "fsio.json"), manifest);
 
+    // Before the first heartbeat: the beat carries `servicesRev`, and a
+    // doorbell must never point at a document that is not there yet (D24).
+    this.publishServices();
     this.heartbeat();
     this.timers.push(setInterval(() => this.heartbeat(), this.timings.heartbeatMs));
 
@@ -819,6 +985,9 @@ export class HostServer {
     this.rootWatcher?.close();
     this.rootWatcher = null;
     try {
+      // Only the heartbeat is retracted. `services.json` is cold state, and
+      // absence of the beat already reads as host-gone; leaving it lets the
+      // next start adopt its revision instead of rewinding the doorbell (D24).
       fs.unlinkSync(path.join(this.fsioDir, "host.json"));
     } catch {}
     return Promise.all(reaps).then(() => {});
@@ -941,6 +1110,10 @@ export class HostServer {
       startedAt: this.startedAt,
       seq: this.hbSeq++,
       t: now(),
+      // The hot pointer at the cold document (D24) — same split as out.sig
+      // (D3). `allowShell`/`pty` stay for one-folder clients that predate
+      // the service directory; hub clients read `capabilities`.
+      servicesRev: this.servicesRev,
     };
     writeJsonAtomic(path.join(this.fsioDir, "host.json"), info);
   }

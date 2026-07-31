@@ -1242,3 +1242,190 @@ test("a throwing listener routes to the error event and loses no frames", async 
     }
   });
 });
+
+// ------------------------------ service directory (D24/D25, spec: Hub deployment)
+//
+// The capability document is how a page discovers what a host can do —
+// and, in hub mode, that a workspace exists at all. Three rules carry the
+// weight: the heartbeat is the doorbell and the document is the state (D3's
+// split, so a 2 s beat never re-parses a growing file); it advertises names
+// and never paths (D22/D20 — one file serves every co-tenant); and clients
+// feature-detect on capability names, never on a `protocol` range (D25).
+
+test("the service directory is published at start and the heartbeat points at it (D24)", async () => {
+  await withHost({ allowShell: true }, async (client, root) => {
+    const doc = (await client.services())!;
+    assert.ok(doc, "services.json should exist once the host has started");
+    assert.ok(doc.rev >= 1, `rev should start at 1, got ${doc.rev}`);
+    assert.equal(doc.protocol, 0, "the hub chapter is additive: protocol stays 0 (D25)");
+    assert.deepEqual(
+      doc.kinds.map((k) => k.name).sort(),
+      ["echo", "shell"],
+      "kinds is D13's registry surfaced to pages"
+    );
+    assert.ok(doc.capabilities.includes("attach"), `attach should be advertised (got ${doc.capabilities.join(",")})`);
+
+    // The doorbell: host.json's servicesRev names the revision on disk, so
+    // a client already statting the heartbeat knows when to re-read.
+    const host = await client.hostInfo();
+    assert.equal(host.info!.servicesRev, doc.rev);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(root, ".fsio", "services.json"), "utf8"));
+    assert.equal(onDisk.rev, doc.rev);
+  });
+});
+
+test("services.json is temp+renamed only when its content changes (D24)", async () => {
+  // The whole reason it is a separate file from the 2 s heartbeat.
+  await withHost({ timings: { heartbeatMs: 20 } }, async (client, root) => {
+    const file = path.join(root, ".fsio", "services.json");
+    const before = fs.statSync(file).mtimeMs;
+    const beat0 = (await client.hostInfo()).info!.seq;
+    await sleep(200); // ~10 beats
+    const beat1 = (await client.hostInfo()).info!.seq;
+    assert.ok(beat1 > beat0 + 3, `heartbeat should have moved (${beat0} → ${beat1})`);
+    assert.equal(fs.statSync(file).mtimeMs, before, "a heartbeat must not rewrite the capability document");
+    assert.equal((await client.services())!.rev, 1, "rev moves on content change, not on time");
+  });
+});
+
+test("a workspace appearing moves the rev and the doorbell; the client re-reads only then (D24)", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({ root, workspaceName: "here" });
+  await server.start();
+  const client = new FsioClient(new ShimDirectory(root, {}));
+  try {
+    await client.connect();
+    const rev0 = (await client.services())!.rev;
+
+    server.setServices({ workspaces: [{ name: "alpha", label: "Project Alpha" }] });
+    const beat = (await client.hostInfo()).info!;
+    assert.equal(beat.servicesRev, rev0 + 1, "the rev bump rides the heartbeat immediately, not the next beat");
+
+    // Handed a stale rev, the client answers from cache — that is what the
+    // doorbell buys. Handed the new one, it re-reads.
+    assert.deepEqual((await client.services(rev0))!.workspaces, undefined, "a stale rev must not force a re-read");
+    const fresh = (await client.services(beat.servicesRev))!;
+    assert.deepEqual(fresh.workspaces, [{ name: "alpha", label: "Project Alpha" }]);
+
+    // Republishing the same content is a no-op: no rewrite, no rev bump.
+    server.setServices({ workspaces: [{ name: "alpha", label: "Project Alpha" }] });
+    assert.equal((await client.hostInfo()).info!.servicesRev, fresh.rev);
+  } finally {
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the directory advertises workspace names, never paths (D22/D24)", async () => {
+  const ws = workspaceFixture(["alpha", "beta"]);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({
+    root,
+    allowShell: true,
+    workspaces: ws.resolve,
+    // The registry has two entries; the user marked one advertisable. One
+    // file serves every co-tenant, so the other name is not in it either.
+    services: { workspaces: [{ name: "alpha" }], needsGrant: ["shell"] },
+  });
+  await server.start();
+  const client = new FsioClient(new ShimDirectory(root, {}));
+  try {
+    await client.connect();
+    const raw = fs.readFileSync(path.join(root, ".fsio", "services.json"), "utf8");
+    const doc = (await client.services())!;
+    assert.deepEqual(doc.workspaces, [{ name: "alpha" }]);
+    assert.ok(!raw.includes(ws.dirs["alpha"]!), "a path must never reach the hub folder (D20/D22)");
+    assert.ok(!raw.includes("beta"), "an unadvertised name must not leak to every tenant");
+    assert.ok(doc.capabilities.includes("workspaces"), "a host with a registry advertises the capability");
+    assert.deepEqual(
+      doc.kinds.find((k) => k.name === "shell"),
+      { name: "shell", needsGrant: true },
+      "a process-spawning kind declares that it needs a grant (D23 rule 1)"
+    );
+    assert.deepEqual(doc.kinds.find((k) => k.name === "echo"), { name: "echo" }, "hub-confined kinds are served ungranted");
+  } finally {
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+    ws.cleanup();
+  }
+});
+
+test("capabilities are feature-detected names, and an unknown one is not fatal (D25)", async () => {
+  // A host that will not serve shells does not advertise the name; a client
+  // gates on the name rather than on a version range, and asking about a
+  // name nobody implements is an ordinary false.
+  await withHost({ allowShell: false }, async (client) => {
+    const doc = (await client.services())!;
+    assert.ok(!doc.capabilities.includes("shell"), `shell must not be advertised by a host that refuses it: ${doc.capabilities}`);
+    assert.deepEqual(doc.kinds.map((k) => k.name), ["echo"]);
+    assert.ok(!doc.capabilities.includes("workspaces"), "a one-folder host with no name resolves none (D22)");
+    assert.equal(await client.hasCapability("teleportation"), false, "an unknown capability name is a no, not a throw");
+    assert.equal(await client.hasCapability("attach"), true);
+  });
+});
+
+test("a kind registered after start() is advertised (D13/D24)", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({ root });
+  await server.start();
+  try {
+    const rev0 = server.services().rev;
+    server.registerKind("weather", () => ({}));
+    const doc = server.services();
+    assert.deepEqual(doc.kinds.map((k) => k.name), ["echo", "weather"]);
+    assert.equal(doc.rev, rev0 + 1);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".fsio", "host.json"), "utf8")).servicesRev, doc.rev);
+  } finally {
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a co-tenant scribble on services.json never rewinds the revision (D20/D24)", async () => {
+  // Everything in the hub is writable by every granted origin, so the
+  // document is not a security mechanism — but a client that cached rev 99
+  // must not be told "rev 1" and keep its stale copy forever.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  try {
+    const first = new HostServer({ root });
+    await first.start();
+    await first.close();
+    const file = path.join(root, ".fsio", "services.json");
+    fs.writeFileSync(file, JSON.stringify({ rev: 99, capabilities: "not-an-array", kinds: null, junk: true }));
+
+    const second = new HostServer({ root, takeover: true });
+    await second.start();
+    try {
+      const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+      assert.equal(doc.rev, 100, "the revision carries forward, it never rewinds");
+      assert.deepEqual(doc.kinds, [{ name: "echo" }], "a garbage document is repaired, not inherited");
+      assert.ok(!("junk" in doc), "unknown fields are ignored, not propagated (D25)");
+    } finally {
+      await second.close();
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unchanged document survives a restart without ringing the doorbell (D24)", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  try {
+    const first = new HostServer({ root, allowShell: true });
+    await first.start();
+    const rev = first.services().rev;
+    const mtime = fs.statSync(path.join(root, ".fsio", "services.json")).mtimeMs;
+    await first.close();
+
+    const second = new HostServer({ root, allowShell: true, takeover: true });
+    await second.start();
+    try {
+      assert.equal(second.services().rev, rev, "a restart that changes nothing must not invalidate cached copies");
+      assert.equal(fs.statSync(path.join(root, ".fsio", "services.json")).mtimeMs, mtime, "…and must not rewrite the file");
+    } finally {
+      await second.close();
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -932,8 +932,9 @@ anything is spawned). Advertising the full registry to everyone (leaks the
 user's project roster to any granted origin, and to ungranted ones that
 merely hold the folder).
 
-**Findings.** None measured. Depends on D3, D13, D20. Feeds #8, #18, #44,
-#45, #71.
+**Findings.** None measured. Depends on D3, D13, D20. Enforced by the B1
+battery (`test-client.ts`: doorbell, write-on-change, names-never-paths) and
+the fsiod tier (`test-services.ts`). Feeds #8, #18, #44, #45, #71.
 
 ## D25 — capabilities are feature-detected names; `protocol` is the on-disk version
 
@@ -969,6 +970,11 @@ anything, which is strictly simpler). Failing closed on unknown fields
 outcome this is meant to prevent). Bumping `protocol` for the hub (nothing
 on disk changed; a bump would strand every existing client for a facility
 they need not use).
+
+**Findings.** None measured. Depends on D24. The first four capability names
+(`shell`, `pty`, `attach`, `workspaces`) are listed in the spec's
+[service directory](PROTOCOL.md#service-directory) section; enforced by the
+B1 battery (unknown names are a no, not a throw). Feeds #8, #7, #71.
 
 ## D26 — scrollback hygiene: retention = the replay window, terminal sessions are swept, `.fsio/` is git-ignored
 
@@ -1031,5 +1037,3 @@ shared repo).
 tier (`test-lifecycle.ts`: sweep scenarios, gitignore scenarios). Feeds
 #6 (close condition), #57 (the retention ceiling replay may grow into),
 #71 (the daemon inherits all three rules).
-
-**Findings.** None measured. Depends on D24. Feeds #8, #7, #71.

@@ -40,6 +40,7 @@ import {
   type AttachParams,
   type AttachResult,
   type PingResult,
+  type ServicesDoc,
 } from "@fsio/common";
 import type { FsDirectory, FsFile, FsSnapshot, FsWritable } from "./fs.js";
 
@@ -156,6 +157,8 @@ export class FsioClient {
   readonly root: FsDirectory;
   fsioDir!: FsDirectory;
   sessionsDir!: FsDirectory;
+  /** last-read service directory, refreshed when `servicesRev` moves (D24). */
+  private servicesDoc: ServicesDoc | null = null;
 
   constructor(rootHandle: FsDirectory) {
     this.root = rootHandle;
@@ -178,6 +181,35 @@ export class FsioClient {
     } catch {
       return { alive: false, ageMs: Infinity, info: null };
     }
+  }
+
+  /** Read the service directory (D24): what this host can do, which kinds
+   *  it serves, and the workspace **names** it advertises (never paths).
+   *
+   *  The doorbell is `host.json`'s `servicesRev` (D3's hot-pointer/cold-state
+   *  split): a client already statting the heartbeat passes that revision
+   *  here and gets its cached copy back untouched unless the number moved.
+   *  Feature-detect on `capabilities` names, not on `protocol` ranges, and
+   *  treat an unknown name as "not supported", never as an error (D25). */
+  async services(rev?: number): Promise<ServicesDoc | null> {
+    if (rev !== undefined && this.servicesDoc && this.servicesDoc.rev === rev) return this.servicesDoc;
+    try {
+      const fh = await this.fsioDir.getFileHandle("services.json");
+      const doc = JSON.parse(await (await fh.getFile()).text()) as ServicesDoc;
+      // A host that publishes no service directory is not an error, and
+      // neither is a torn read — both mean "ask again later" (invariant 3).
+      if (!doc || typeof doc !== "object") return null;
+      this.servicesDoc = doc;
+      return doc;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Sugar for the D25 handshake: is this capability name advertised? */
+  async hasCapability(name: string, rev?: number): Promise<boolean> {
+    const doc = await this.services(rev);
+    return !!doc && Array.isArray(doc.capabilities) && doc.capabilities.includes(name);
   }
 
   /** Synchronous by design (D11): the caller gets a listener-attachment

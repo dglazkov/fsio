@@ -4,16 +4,16 @@
 // daemon adds is everything the library must not know about: which folder
 // is the hub, which workspaces exist, who may run what.
 //
-// What is here (slice 1 of #71): the singleton lock (D21), the workspace
-// registry wired to the host's D22 resolver, and a fail-closed policy.
-// What is not, in order: the service directory (D24) and capability names
-// (D25), profile content and env policy (from #46), the consent server
-// (D23; its answer channel gated on #79), the one-recursive-watcher scan
-// loop (F22), and `fsio daemon install` (launchd).
+// What is here (slices 1–2 of #71): the singleton lock (D21), the workspace
+// registry wired to the host's D22 resolver, a fail-closed policy, and the
+// service directory (D24/D25). What is not, in order: profile content and
+// env policy (from #46), the consent server (D23; its answer channel gated
+// on #79), the one-recursive-watcher scan loop (F22), and `fsio daemon
+// install` (launchd).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HostServer, type HostLogger, type HostTimings } from "@fsio/host";
+import { HostServer, type HostLogger, type HostTimings, type ServicesInput } from "@fsio/host";
 import { RpcErrors } from "@fsio/common";
 import { acquireHubLock, type HubLock } from "./lock.js";
 import { Registry } from "./registry.js";
@@ -36,6 +36,10 @@ export interface DaemonOptions {
   pollMs?: number;
   /** skip the lock — tests that run several daemons on one hub only. */
   lock?: boolean;
+  /** how often the daemon re-derives the service directory from the
+   *  registry (D24). One stat of a daemon-private file; the cost of missing
+   *  a change is that `fsio share` reaches pages a beat late. */
+  servicesPollMs?: number;
   /** hermetic tests only: serve a hub under the temp dir. A real hub there
    *  is useless (F9 kills the browser's observers) and expensive to
    *  discover, which is why the default is a refusal, not a warning. */
@@ -73,9 +77,27 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
   const lock = opts.lock === false ? null : await acquireHubLock(stateDir, hubReal);
   const registry = new Registry(stateDir);
 
+  // The service directory (D24) is how a page discovers a workspace at all,
+  // and it is one file for every tenant — so it carries the names the user
+  // marked advertisable and nothing else. Not paths, not the entries kept
+  // out of it, not the registry's size. Per-origin visibility is a property
+  // of the grant (D23), which is where a narrower view will come from.
+  const advertised = (): ServicesInput => ({
+    workspaces: registry
+      .list()
+      .filter((e) => e.advertise)
+      .map((e) => (e.label ? { name: e.name, label: e.label } : { name: e.name })),
+    // What the daemon actually does, not what it wishes it did: with the
+    // `--allow-shell` stand-in in play, shells are served ungranted, and a
+    // document that claimed otherwise would send pages to a consent flow
+    // that does not exist yet.
+    needsGrant: opts.allowShell ? [] : ["shell"],
+  });
+
   const server = new HostServer({
     root: hubReal,
     workspaces: registry.resolver(),
+    services: advertised(),
     // Two authorizations, deliberately not one (D23): the grant is standing
     // authority, this hook is the per-request judgment, and execution needs
     // both. Until grants exist there is no standing authority to check, so
@@ -109,6 +131,14 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     throw e;
   }
 
+  // `fsio share` edits daemon-private state from another process, so the
+  // daemon polls for it — the same reason Registry.reload() exists, and the
+  // same rule: a share bites at the next judgment, not the next restart.
+  // Republishing is free when nothing changed (the host writes only on a
+  // content change, D24), so this is one stat per tick.
+  const servicesTimer = setInterval(() => server.setServices(advertised()), opts.servicesPollMs ?? 2000);
+  servicesTimer.unref?.();
+
   let stopped = false;
   return {
     hub: hubReal,
@@ -119,6 +149,7 @@ export async function startDaemon(opts: DaemonOptions = {}): Promise<Daemon> {
     async stop() {
       if (stopped) return;
       stopped = true;
+      clearInterval(servicesTimer);
       await server.close();
       lock?.release();
     },
