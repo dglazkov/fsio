@@ -8,6 +8,8 @@ export {
   type SpawnPolicy,
   type SpawnDecision,
   type SpawnRequestInfo,
+  type WorkspaceResolver,
+  type WorkspaceResolution,
   type KindHandler,
   type KindContext,
   type KindSession,

@@ -74,6 +74,14 @@ export interface ShellSpawn {
   rows?: number;
   cmd?: string;
   args?: string[];
+  /** hub deployment (D22): the NAME of a workspace in the host's registry,
+   *  never a path — the page has none to give (a picked handle carries no
+   *  path) and the host must not disclose one into a co-tenant-readable
+   *  folder (D20). Required when the host serves more than one workspace;
+   *  unresolvable or omitted-where-required is `1006`. */
+  workspace?: string;
+  /** relative to the workspace root (or the shared dir, one-folder mode);
+   *  MUST NOT escape it (D22). */
   cwd?: string;
   /** false forces the pipe fallback even when node-pty is available */
   pty?: boolean;

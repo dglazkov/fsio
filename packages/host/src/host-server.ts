@@ -105,7 +105,11 @@ export interface SpawnRequestInfo {
   /** web origin reported by the client (D15) — same caveat: advisory,
    *  display-only, never an authorization input. */
   origin?: string | undefined;
-  /** shell kinds only: the exact command/args/cwd that would run. */
+  /** hub deployment (D22): the workspace name the spec asked for, after
+   *  the resolver accepted it. Absent in one-folder mode. */
+  workspace?: string;
+  /** shell kinds only: the exact command/args/cwd that would run. `cwd` is
+   *  already resolved inside the workspace root when there is one. */
   cmd?: string;
   args?: string[];
   cwd?: string;
@@ -162,6 +166,29 @@ export type KindHandler = (ctx: KindContext) => KindSession | Promise<KindSessio
  *  Replaces the `allowShell` boolean when provided. */
 export type SpawnPolicy = (spec: Readonly<Record<string, unknown>>, info: SpawnRequestInfo) => SpawnDecision | Promise<SpawnDecision>;
 
+// ---- workspaces (D22): the hub's folders-as-resources hook. The library
+// stays folder-agnostic — it knows how to *use* a resolved root and how to
+// refuse, never where roots come from. fsiod supplies the registry (#71);
+// a one-folder host passes no resolver and behaves exactly as before.
+
+/** What the resolver says about a requested workspace name. `root` is an
+ *  absolute path that never reaches the wire — the host uses it as the
+ *  spawn's base directory and reports only the name. `error` is the
+ *  client-visible text of the `1006`, so it must contain no path and must
+ *  not enumerate workspaces the client did not name. */
+export type WorkspaceResolution = { root: string; name?: string } | { error: string };
+
+/** Resolves a spawn spec's `workspace` name (D22). Deliberately
+ *  synchronous: a registry lookup is a map read, and the resolved root
+ *  must be identical for the policy's `info` and for the actual spawn.
+ *
+ *  The resolver owns "which names exist", "which this client may see",
+ *  and "is a name required here" (it knows how many entries the host
+ *  serves); the host owns containment of `cwd` and the wire discipline.
+ *  It MUST NOT substitute a default for an unresolvable name — the client
+ *  would be told it ran somewhere it did not (D22). */
+export type WorkspaceResolver = (name: string | undefined, info: SpawnRequestInfo) => WorkspaceResolution;
+
 /** Every time-based host behavior, injectable so tests can run them at
  *  short timescales (TESTING.md: "become testable when #17 makes the
  *  intervals injectable"). Defaults are the measured/spec'd values. */
@@ -211,6 +238,16 @@ export interface HostServerOptions {
   allowShell?: boolean;
   /** spawn policy hook (D12); overrides `allowShell`. */
   onSpawnRequest?: SpawnPolicy;
+  /** workspace resolver (D22): turns a spec's `workspace` name into the
+   *  root a process-spawning session runs in. Omitted = the one-folder
+   *  case, a registry of one (see `workspaceName`). */
+  workspaces?: WorkspaceResolver;
+  /** the name a one-folder host answers to for its own shared directory
+   *  (D22: "a registry of one"). Default: none — an omitted `workspace`
+   *  means the shared dir, and any name gets `1006`, because a host that
+   *  advertises no name can resolve none. Ignored when `workspaces` is
+   *  provided. */
+  workspaceName?: string;
   /** wipe .fsio on startup. Default false. Refused while another host is
    *  live on the directory (#40) — takeover applies here too. */
   fresh?: boolean;
@@ -274,6 +311,28 @@ function writeFileAtomic(file: string, data: string | Uint8Array): void {
 
 function writeJsonAtomic(file: string, obj: unknown): void {
   writeFileAtomic(file, JSON.stringify(obj, null, 2));
+}
+
+/** Client-chosen text that goes back out in an error (status.json is read
+ *  by humans in terminals and by pages): bounded, no control characters. */
+const echoSafe = (s: string): string => s.replace(/\p{C}/gu, "").slice(0, 64);
+
+const within = (root: string, p: string): boolean => {
+  const rel = path.relative(root, p);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+};
+
+/** Is `p` inside `root`? Lexically, and again after realpath when the path
+ *  exists — a symlink planted in a workspace is otherwise a one-hop escape
+ *  from the containment D22 requires. An absent `p` is judged lexically
+ *  (there is nothing yet to point anywhere). */
+function contains(root: string, p: string): boolean {
+  if (!within(root, p)) return false;
+  try {
+    return within(fs.realpathSync(root), fs.realpathSync(p));
+  } catch {
+    return true;
+  }
 }
 
 function readJson<T>(file: string): T | null {
@@ -353,6 +412,11 @@ class Session {
   doneSegs: { gen: number; endTotal: number }[] = []; // finished segments
   proc: PtyProcess | ChildProcess | null = null;
   usesPty = false;
+  // Base directory for a spawned child (D22): the resolved workspace root
+  // in hub mode, the shared dir otherwise. Resolved once, before the
+  // policy sees it, so the judged cwd and the executed cwd cannot drift.
+  root: string | null = null;
+  workspace: string | null = null; // its name — the only half that may travel
   kindSession: KindSession | null = null; // registered kinds (D13)
   watchers: (fs.FSWatcher | null)[] = [];
   retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -556,6 +620,7 @@ export class HostServer {
   readonly sessionsDir: string;
   readonly allowShell: boolean;
   private readonly onSpawnRequest: SpawnPolicy | null;
+  private readonly workspaces: WorkspaceResolver;
   readonly watchEnabled: boolean;
   readonly hotPollMs: number;
   readonly pollMs: number;
@@ -597,6 +662,18 @@ export class HostServer {
     this.sessionsDir = path.join(this.fsioDir, "sessions");
     this.allowShell = opts.allowShell ?? false;
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
+    // One-folder mode is a registry of one (D22), not an absence of one:
+    // an omitted name means the shared directory, and a name this host
+    // does not advertise is `1006` like anywhere else. Ignoring the field
+    // would be the substitution the decision forbids — the client would be
+    // told it ran in the workspace it named.
+    const ownName = opts.workspaceName;
+    this.workspaces =
+      opts.workspaces ??
+      ((name) =>
+        name === undefined || name === ownName
+          ? { root: this.sharedDir, ...(name ? { name } : {}) }
+          : { error: `unknown workspace: ${echoSafe(name)}` });
     this.fresh = opts.fresh ?? false;
     this.takeover = opts.takeover ?? false;
     this.gitignore = opts.gitignore ?? true;
@@ -1049,8 +1126,26 @@ export class HostServer {
       kind,
       client: s.spawn.client,
       origin: s.spawn.origin,
-      ...(kind === "shell" ? this.resolveShell(s.spawn) : {}),
     };
+    // Subject before policy (D22): a spawn whose workspace cannot be
+    // resolved never reaches the hook — there is nothing coherent to judge,
+    // and the one behavior forbidden here is picking a subject on the
+    // client's behalf. A one-folder host resolves through the built-in
+    // registry of one, so this path is not hub-only.
+    if (kind === "shell") {
+      const root = this.resolveWorkspace(s, info);
+      if (root === null) return;
+      s.root = root;
+      Object.assign(info, this.resolveShell(s.spawn, root));
+      // Containment (D22): `cwd` is workspace-relative and MUST NOT escape.
+      if (!contains(root, info.cwd!)) {
+        const error = "cwd escapes the workspace root";
+        s.setStatus({ state: "error", error });
+        s.spawnFail(RpcErrors.INVALID_PARAMS, error);
+        s.done = true;
+        return;
+      }
+    }
     this.log.info(
       `session ${s.id}: spawn request kind=${kind}${info.origin ? ` origin=${info.origin}` : ""}${info.cmd ? ` cmd=${info.cmd}` : ""}`
     );
@@ -1155,21 +1250,44 @@ export class HostServer {
       });
   }
 
+  /** Hub deployment (D22): resolve the spec's `workspace` name to the root
+   *  the child will run in, or refuse the session with `1006` and return
+   *  null. `1006` covers unresolvable, may-not-see, and omitted-where-
+   *  required alike — the client's next move (name a workspace it can
+   *  have) is the same for all three. One-folder hosts have no resolver:
+   *  the shared directory is the root, as it always was. */
+  private resolveWorkspace(s: Session, info: SpawnRequestInfo): string | null {
+    const asked = typeof s.spawn?.workspace === "string" ? s.spawn.workspace : undefined;
+    const r = this.workspaces(asked, info);
+    if ("error" in r) {
+      this.log.info(`session ${s.id}: workspace refused (${r.error})`);
+      s.setStatus({ state: "error", error: r.error });
+      s.spawnFail(RpcErrors.UNKNOWN_WORKSPACE, r.error);
+      s.done = true;
+      return null;
+    }
+    const name = r.name ?? asked;
+    if (name) info.workspace = s.workspace = name;
+    return path.resolve(r.root);
+  }
+
   /** The exact thing a shell spec would run — shared by the policy hook's
    *  info and startShell so the judged command can't drift from the
-   *  executed one (#6: "display the exact spawn.json before honoring it"). */
-  private resolveShell(spec: SpawnParams): { cmd: string; args: string[]; cwd: string; pty: boolean } {
+   *  executed one (#6: "display the exact spawn.json before honoring it").
+   *  `root` is the resolved workspace root (D22), or the shared directory
+   *  in one-folder mode. */
+  private resolveShell(spec: SpawnParams, root: string): { cmd: string; args: string[]; cwd: string; pty: boolean } {
     return {
       cmd: spec.cmd || process.env.SHELL || "/bin/bash",
       args: spec.args ?? [],
-      cwd: spec.cwd ? path.resolve(this.sharedDir, spec.cwd) : this.sharedDir,
+      cwd: spec.cwd ? path.resolve(root, spec.cwd) : root,
       pty: !!this.ptyMod && spec.pty !== false,
     };
   }
 
   private startShell(s: Session): void {
     const spec = s.spawn!;
-    const { cmd, args: cmdArgs, cwd, pty: usePty } = this.resolveShell(spec);
+    const { cmd, args: cmdArgs, cwd, pty: usePty } = this.resolveShell(spec, s.root ?? this.sharedDir);
     const cols = spec.cols ?? 80;
     const rows = spec.rows ?? 24;
 
@@ -1301,7 +1419,10 @@ export class HostServer {
       attach: true,
       client: params.client,
       origin: params.origin,
-      ...(kind === "shell" ? this.resolveShell(s.spawn!) : {}),
+      // The workspace was resolved at spawn (D22) — an attach inherits the
+      // subject it is taking over, it never re-picks one.
+      ...(s.workspace ? { workspace: s.workspace } : {}),
+      ...(kind === "shell" ? this.resolveShell(s.spawn!, s.root ?? this.sharedDir) : {}),
     };
     this.log.info(`session ${s.id}: attach request from ${aid}${info.origin ? ` origin=${info.origin}` : ""}`);
     const d = await this.consultPolicy(s, (s.spawn ?? {}) as Readonly<Record<string, unknown>>, info);
@@ -1336,7 +1457,7 @@ export class HostServer {
       kind,
       pid,
       epoch: s.epoch,
-      ...(kind === "shell" ? { pty: s.usesPty, cmd: this.resolveShell(s.spawn!).cmd } : {}),
+      ...(kind === "shell" ? { pty: s.usesPty, cmd: this.resolveShell(s.spawn!, s.root ?? this.sharedDir).cmd } : {}),
     };
     this.log.info(`session ${s.id}: attach granted to ${aid} (epoch ${s.epoch})`);
     answer(rpcResult(id, result));
