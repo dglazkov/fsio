@@ -790,6 +790,92 @@ way a profile author would have to — start from nothing, add only rules a
 [#71](https://github.com/dglazkov/fsio/issues/71),
 [#86](https://github.com/dglazkov/fsio/issues/86).
 
+### F26 — placement moves a child's state but not its identity: the agent CLI's credential lives in the OS keystore, so a deny-default profile silently logs it out
+
+Measured 2026-07-31 (macOS 26.5/arm64, claude CLI 2.1.220;
+`node scripts/agent-reach-lab.mjs`;
+[#90](https://github.com/dglazkov/fsio/issues/90) act-2 leg). The deliberate
+re-run of the organic field test in
+[#18](https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080),
+whose accidental result produced "placement over denial" (R4/R17). Subject:
+the claude CLI, one headless turn per cell, in a scratch workspace with an
+isolated config dir. Denials from the unified log; no credential contents
+were read in either location.
+
+| cell | posture | result | distinct denials |
+|---|---|---|---|
+| 0 | no sandbox, config dir in workspace | ok | 0 |
+| A | shipped profile, config dir in workspace (#18's fix) | ok | 2 (both benign) |
+| A′ | shipped profile, **default** `~/.claude` | **ok, exit 0** | 7 — incl. `~/.claude/projects/…`, `.claude.json.lock`, `.claude.json.tmp.*` |
+| Ak | cell A + `(deny mach-lookup)` | **"Not logged in · Please run /login", exit 1** | 12 — incl. `com.apple.SecurityServer` ×3, `com.apple.securityd.xpc` |
+| B | R17 slot (`~/.fsio/state/<ws>/<svc>/`), carve exactly that wide | **"Not logged in", exit 1** — state tree written | 3 (all benign) |
+| At | cell A + the agent spawns a child (`Bash(ls)`) | ok | 2 (both benign) |
+| C | cell A + synthesized 8-variable environment | **ok — identical** | 2 (both benign) |
+
+- **Placement works, for state.** Pointed at either the in-workspace dir or
+  R17's slot, the child writes its whole tree there — config, backups,
+  `projects/<ws>/` transcripts, `sessions/`, memory — with **zero
+  state-related denials**. R17's carve is exactly wide enough, and needs
+  nothing outside itself.
+- **Placement does not carry identity, and R17's strongest claim is
+  false.** R17 said transcript and token "get the same answer: the slot."
+  They do not. The credential lives in the **login Keychain** (item
+  `Claude Code-credentials`, created 2025-09-17 — i.e. long before this
+  lab); a stale `.credentials.json` sitting in the placed config dir was
+  *removed by the CLI during the run* and was never the source of auth. A
+  fully-populated slot still reports "Not logged in" (cell B).
+- **The keystore is reached by mach-lookup, so a deny-default profile logs
+  the child out.** Cell Ak isolates it: denying mach-lookup produces
+  `com.apple.SecurityServer` and `com.apple.securityd.xpc` denials and the
+  identical "Not logged in" failure. This puts
+  [F25](#f25--a-stdio-mcp-server-runs-under-a-deny-default-profile-in-15-rules-5-of-which-are-the-services-reach-the-same-server-under-the-shell-posture-reads-everything)
+  in direct tension with act 2: **the tight service posture that makes an
+  MCP server safe would silently break a keystore-backed agent.** "Narrow
+  the profile" and "let the child keep its credentials" are not
+  independent knobs, and #86's conflict list gains one it did not have.
+- **The refusal is legible but blames the wrong party.** "Please run
+  /login" is exactly R9's relayable, non-human-readable-refusal shape — and
+  it is *misleading*: the user who follows it will log in successfully and
+  fail again next run, because the cause is the profile, not the session.
+  A mechanism that only *applies* policy cannot say this; the host has to
+  interpret denials to name the real cause.
+- **#18's accident, reproduced exactly — and it is silent.** Cell A′ shows
+  the original denial set, and the run still **exits 0 with a correct
+  answer**. In headless mode nothing surfaces: the turn succeeds, the
+  transcript is simply lost, so resume breaks later with no error at the
+  time of the loss. R3 ("a broken confinement must look broken") applies to
+  *state placement* too, and today it does not hold.
+- **The environment is almost entirely unnecessary.** Cell C ran on 8
+  synthesized variables (`PATH`, `HOME`, `TERM`, `LANG`, `USER`,
+  `LOGNAME`, `SHELL`, `TMPDIR`) plus `CLAUDE_CONFIG_DIR` and behaved
+  identically. None of the other ~39 inherited variables — including
+  [F24](#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read)'s
+  canary secrets and `SSH_AUTH_SOCK` — are load-bearing for this child.
+  Synthesize-then-add is affordable for the act-2 subject, which is the
+  concrete answer #71's env-policy slice needed.
+- **Transitivity holds on a real workload.** Cell At: the agent used its
+  own Bash tool to spawn a child; it stayed confined and succeeded, and the
+  CLI's permission layer did not contradict the wall (R6). Every cell also
+  shows `forbidden-exec-sugid` (×3–5) — F23's setuid denial, hit by a real
+  agent, with no effect on the outcome.
+
+**Method traps, each of which cost a round.** (1) The harness is itself a
+Claude Code session exporting 8 `CLAUDE_*` markers; inherited, they steer
+the subject — the first A′ run wrote nothing and reported zero denials. The
+lab now scrubs `CLAUDE*`/`ANTHROPIC*` before every cell. (2) `log show
+--start` parses **local** time; an ISO/UTC stamp puts the window hours in
+the future and returns nothing, which reads exactly like "no denials" — the
+first three cells all reported 0 for this reason. Same class as F16's
+focus-emulation trap: an instrument that fails silently toward the
+comfortable answer.
+→ F23, F24, F25,
+[D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
+[#18](https://github.com/dglazkov/fsio/issues/18),
+[#90](https://github.com/dglazkov/fsio/issues/90); feeds
+[#71](https://github.com/dglazkov/fsio/issues/71),
+[#86](https://github.com/dglazkov/fsio/issues/86),
+[#76](https://github.com/dglazkov/fsio/issues/76).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
@@ -805,11 +891,11 @@ way a profile author would have to — start from nothing, add only rules a
   non-re-enterable, setuid exec denied) and F24 (full env inheritance,
   read-the-world, egress on).
   → [#86](https://github.com/dglazkov/fsio/issues/86)
-- **The act-2 field test, run deliberately**: the claude CLI under candidate
-  confinement, recording every EPERM and every env var it consults. Done
-  once by accident
-  ([#18](https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080))
-  and it produced the most useful data point the profile design has.
+- ~~The act-2 field test, run deliberately.~~ Measured 2026-07-31 → F26
+  (state placement works; identity lives in the OS keystore, so a
+  deny-default profile logs the child out; 8 environment variables
+  suffice). What a *read* wall costs this subject is still unmeasured —
+  every cell above left reads wide open.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - ~~The same for one MCP server (act 4): is #77's "its binary, its working
   state, and nothing else" true?~~ Measured 2026-07-31 → F25 (true, and
@@ -834,6 +920,9 @@ node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 npm run bg-lab   # F16/F17 (one grant click; ~18 min; raw JSON beside ~/.fsio-harness)
 node scripts/hub-scan-lab.mjs   # F22 host idle-cost matrix (~15 min, no browser)
 node scripts/service-reach-lab.mjs           # F25 shell vs service posture (~1 min)
+node scripts/agent-reach-lab.mjs            # F26 agent CLI under confinement
+                                            # (needs the claude CLI + a config
+                                            #  dir; --workspace/--config/--slot)
 node scripts/confinement-lab.mjs --launchd   # F23/F24 child-confinement matrix
                                              # (~30 s; without --launchd it
                                              #  skips the two launchd cases,
