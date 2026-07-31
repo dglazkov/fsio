@@ -18,7 +18,65 @@ export interface HostInfo {
   startedAt: number;
   seq: number;
   t: number;
+  /** revision of `.fsio/services.json` (D24) — the doorbell. A client
+   *  already statting this file learns from a changed value that the
+   *  (larger, colder) capability document is worth re-reading; the same
+   *  hot-pointer/cold-state split as `out.sig` (D3). Absent on hosts that
+   *  publish no service directory. */
+  servicesRev?: number;
 }
+
+// ---- service directory (D24/D25): the origin-facing capability document
+
+/** One entry of `services.json`'s `kinds` — D13's registry surfaced to
+ *  pages. `needsGrant` means a D23 grant is required *before* the per-request
+ *  policy is even consulted; a hub-confined kind (`echo`) is served without
+ *  one. Absent = the host makes no claim. */
+export interface ServiceKind {
+  name: string;
+  needsGrant?: boolean;
+}
+
+/** One advertisable workspace: a **name**, never a path (D22/D24). `label`
+ *  is display text for consent UIs — the legitimate need paths were
+ *  rejected for. */
+export interface ServiceWorkspace {
+  name: string;
+  label?: string;
+}
+
+/** `.fsio/services.json` — host-owned, temp+renamed ONLY when its content
+ *  changes (D24). One file serves all tenants, so it carries only what
+ *  every granted origin may see: advertisable workspace names, never paths
+ *  and never the full registry. Per-origin visibility is a property of the
+ *  grant, carried by its receipt (D23). */
+export interface ServicesDoc {
+  /** increments on every content change; mirrored into `host.json`. */
+  rev: number;
+  protocol: number;
+  /** feature-detected capability names (D25) — see `CAPABILITIES`. */
+  capabilities: string[];
+  kinds: ServiceKind[];
+  workspaces?: ServiceWorkspace[];
+  /** the consent endpoint, when a host serves one (D23 rule 6). */
+  consent?: { url: string };
+}
+
+/** The capability-name registry (D25). Names are stable and never reused —
+ *  the same discipline as F and D numbers, so a withdrawn capability burns
+ *  its name. Clients feature-detect on these and MUST NOT gate behavior on
+ *  a `protocol` range where a name would do; an unknown name is never
+ *  fatal. #8 keeps the job of growing this list. */
+export const CAPABILITIES = {
+  /** `kind: "shell"` may be requested (the D12 policy still judges each). */
+  SHELL: "shell",
+  /** shell sessions get a real pty rather than the pipe fallback (D14). */
+  PTY: "pty",
+  /** `attach` is served: takeover with writer epochs and replay (D18). */
+  ATTACH: "attach",
+  /** `workspace` names resolve to roots this host serves (D22). */
+  WORKSPACES: "workspaces",
+} as const;
 
 /** `sessions/<id>/out.sig` — doorbell + stream map (rename-committed). */
 export interface OutSig {

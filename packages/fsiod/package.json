@@ -27,7 +27,7 @@
       "dependencies": ["../common:build", "../host:build"]
     },
     "test": {
-      "command": "node --test --test-concurrency=1 dist/test-registry.js dist/test-lock.js",
+      "command": "node --test --test-concurrency=1 dist/test-registry.js dist/test-lock.js dist/test-services.js",
       "files": ["../host/src/**", "../common/src/**"],
       "output": [],
       "dependencies": ["build"]

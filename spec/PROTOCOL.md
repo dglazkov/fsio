@@ -63,6 +63,10 @@ runtimes (atomicity, append semantics, event coalescing).
 <shared-dir>/.fsio/
   fsio.json                 # { protocol: 0 }
   host.json                 # host heartbeat; rewritten (atomically) every 2s
+  services.json             # capability document, if the host publishes one
+                            #   (D24): rewritten ONLY when its content
+                            #   changes; host.json's servicesRev is the
+                            #   doorbell. See "Service directory"
   client/                   # client-owned diagnostics (not protocol): pages
     <client-id>/            # mirror logs, errors, and results here so the
       log.txt               # native side can read them. One dir per page
@@ -586,6 +590,40 @@ advertisable, never paths, never the full registry. A grant's own receipt
 names the workspaces that grant covers — per-origin visibility is a property
 of the grant, not of the directory. `host.json`'s `allowShell`/`pty` stay for
 one-folder compatibility; hub clients read `capabilities`.
+
+Publishing rules:
+
+- A host that publishes the document MUST mirror its `rev` into every
+  `host.json` beat as `servicesRev`, and MUST write the document before the
+  first beat that names it — a doorbell MUST NOT point at a document that is
+  not there.
+- `rev` MUST increment on every content change and MUST NOT move otherwise;
+  a beat, and a restart that changes nothing, are not content changes.
+  A host that finds a higher `rev` already on disk MUST carry it forward
+  rather than rewind it: the document is co-tenant-writable (D20), clients
+  compare revisions rather than contents, and a rewind would strand a cached
+  copy. A host MAY leave the document in place when it stops (absence of the
+  heartbeat already reads as host-gone) — one-folder hosts and hubs alike.
+- The document is not a security mechanism (D20): it is advertisement, and
+  every claim in it is re-judged at spawn time by resolution (D22) and the
+  policy hook (D12).
+
+**The initial capability names.** Stable and never reused
+([D25](DECISIONS.md#d25--capabilities-are-feature-detected-names-protocol-is-the-on-disk-version));
+[#8](https://github.com/dglazkov/fsio/issues/8) keeps the job of growing the
+list as facilities land.
+
+| name | the host serves |
+|---|---|
+| `shell` | `kind: "shell"` may be *requested* — the D12 policy still judges each one, and a grant may still be required (`kinds[].needsGrant`) |
+| `pty` | shell sessions get a real pty rather than the pipe fallback ([D14](DECISIONS.md#d14--host-embedder-surface-introspection-leveled-log-lines-awaited-close-injected-pty)) |
+| `attach` | `attach`: takeover with writer epochs and head-segment replay ([D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)) |
+| `workspaces` | `workspace` names resolve to roots this host serves ([D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)) |
+
+A host MUST advertise a name only while the facility behind it works —
+`shell` is absent from a host that refuses shells outright, `workspaces`
+from one that resolves no names — and a client MUST read an absent or
+unknown name as "not supported", never as an error.
 
 ### Version and capability handshake
 
