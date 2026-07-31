@@ -615,6 +615,109 @@ chunk after an idle window waits for a watch event (~50 ms, F2) or the
 [#70](https://github.com/dglazkov/fsio/issues/70),
 [#71](https://github.com/dglazkov/fsio/issues/71).
 
+### F23 — child confinement is transitive to any depth and cannot be re-entered in either direction; setuid binaries become unexecutable
+
+Measured 2026-07-31 (macOS 26.5/arm64;
+`node scripts/confinement-lab.mjs --launchd`;
+[#86](https://github.com/dglazkov/fsio/issues/86) OQ6 — "transitive
+confinement, or a stated limit?"). Method: the shipped profile
+(`packages/terminal-demo/src/profile.ts`) and the shipped argv shape
+(`sandbox.ts` `sandboxArgv` — the invocation sessions really use, D12's
+no-drift discipline), a scratch ROOT, and a canary directory named in **no**
+`-D` parameter. Every case asks one question: did a file appear at the
+canary path? **8 escape attempts, 0 escapes.**
+
+| attempt | result |
+|---|---|
+| direct child writes outside ROOT (baseline) | confined — EPERM |
+| grandchild (`sh -c` inside `sh -c`) | confined |
+| depth 4 through another interpreter (perl → sh → sh → touch) | confined |
+| detached child, parent exits before the write | confined |
+| re-enter `sandbox-exec` with `(allow default)` | `sandbox_apply: Operation not permitted` |
+| re-enter `sandbox-exec`, same profile, `ROOT=/` | `sandbox_apply: Operation not permitted` |
+| `launchctl submit` (launchd spawns for the child) | rc=1, no canary |
+| `launchctl bootstrap` of a plist written *inside* ROOT | `Bootstrap failed: 5`, no canary |
+
+- **Transitive by inheritance, at every depth and across detachment.** The
+  policy rides the process, so `fork`/`exec` carries it and an orphan keeps
+  it. Act 5's mirror hall (an fsio peer spawning the claude CLI as its
+  subagent) inherits confinement by construction — R13 is a property, not a
+  gap to document.
+- **One-shot: `sandbox_apply` fails in the *safe* direction too.** A
+  confined process cannot re-enter `sandbox-exec` even to **narrow** itself
+  (`(deny default)` → same EPERM). This is the load-bearing result for the
+  hub: a profile must be composed into **one** policy and applied by the
+  spawner, because no layering is available afterwards, and a nested fsio
+  host cannot confine its own children below its own reach — it can only
+  pass its confinement down.
+- **launchd is not a spawn proxy out.** Both routes an unprivileged child
+  has to ask launchd to spawn on its behalf failed under the profile,
+  including the realistic one (write the plist into ROOT — which the child
+  *may* write — then bootstrap it into `gui/$UID`).
+- **setuid/setgid binaries are unexecutable under any Seatbelt profile.**
+  `/bin/ps` (4755), `/usr/bin/top` (4555), `/usr/bin/crontab` (4755),
+  `/usr/bin/sudo` (4511) all fail exec with EPERM; non-setuid tools
+  (`id`, `whoami`, `ssh`, `lsof`) run. The control isolates it to Seatbelt
+  rather than to fsio's posture: `/bin/ps` fails identically under
+  `-p '(version 1)(allow default)'` and runs unsandboxed. A privilege-
+  escalation route is closed for free, and the cost lands on ordinary
+  usability — `ps` in a demo shell reports "Operation not permitted", and
+  no environment fix reaches it (the R2 lever does not apply here; only
+  dropping the sandbox would).
+→ [D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
+[D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry),
+[#86](https://github.com/dglazkov/fsio/issues/86); feeds
+[#71](https://github.com/dglazkov/fsio/issues/71),
+[#77](https://github.com/dglazkov/fsio/issues/77).
+
+### F24 — the wall is a *write* wall: a confined child inherits the host's entire environment (ssh-agent socket included) and reads every file the user can read
+
+Measured 2026-07-31, same lab and run as F23
+([#86](https://github.com/dglazkov/fsio/issues/86) OQ4 — "does the read wall
+exist, and what does it cost?" — plus the env-policy baseline #86 asked for
+as a falsifiable test: not "we intended to scrub", but the bytes the child
+got). Canary secrets were exported into the parent and the child's real
+`env` was diffed against them.
+
+| what crosses | measured |
+|---|---|
+| environment variables | **47 of 48** reached the child |
+| canary secrets (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, one control) | **4 of 4** reached the child |
+| `SSH_AUTH_SOCK` | inherited; `ssh-add -l` inside the sandbox reaches the agent and gets a protocol answer |
+| `HOME`, `SHELL`, `TMPDIR`, 21 `PATH` entries | inherited verbatim, including a PATH entry under `~` |
+| `~/.ssh/id_ed25519` | readable (411 B) |
+| `~/.gitconfig`, `~/.config/gh/hosts.yml`, `/etc/passwd`, every sibling project under `~/Documents` | readable |
+| `~/Library/Messages` | denied — **by TCC, not by Seatbelt** |
+| network egress (`curl https://example.com`) | HTTP 200, deliberate (the demo allows it: `git pull`, `npm install`) |
+
+- **The honest consent sentence is about writes.** "Sandboxed to this
+  folder" is true of modification and false of disclosure: a private key,
+  every credential the environment carries, and every sibling repo are all
+  in reach, and network egress is on, so read reach *is* exfiltration
+  reach. #86's success criterion is "the sentence consent can honestly
+  say" — this finding is what makes that sentence checkable, and the spec's
+  threat model now states it
+  ([What the child sandbox does not bound](PROTOCOL.md#what-the-child-sandbox-does-not-bound)).
+- **Env policy has no baseline to improve on — it is pass-everything.**
+  Both halves of the R4/R17 program (place child state, then scrub what
+  remains) start from zero here; `SSH_AUTH_SOCK` is the sharpest single
+  item, because agent forwarding is a *signing capability*, not a
+  configuration value.
+- **Part of the read wall is already held by someone else.** The
+  TCC-protected set (Messages, Photos, Calendar, …) is denied to the child
+  without fsio doing anything — the same "do not duplicate a wall another
+  party enforces" shape R8 states for the browser's edit boundary, with the
+  OS as the other party.
+- **Unmeasured, deliberately:** what a read wall would *cost* in practice
+  (R2 friction on a real toolchain) — that needs the act-2/act-4 field-test
+  re-runs #86 lists, not this lab.
+→ F23,
+[D20](DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it),
+[#86](https://github.com/dglazkov/fsio/issues/86); feeds
+[#71](https://github.com/dglazkov/fsio/issues/71),
+[#76](https://github.com/dglazkov/fsio/issues/76),
+[#6](https://github.com/dglazkov/fsio/issues/6).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
@@ -625,6 +728,23 @@ chunk after an idle window waits for a watch event (~50 ms, F2) or the
   2026-07-26 → F13 (typing: p50 6 ms all-dirname; flood: 1470 msg/s
   self-batched; backlog ≤3).
   → [#4](https://github.com/dglazkov/fsio/issues/4)
+- ~~Is child confinement transitive, and what does a confined child still
+  hold?~~ Measured 2026-07-31 → F23 (transitive at every depth,
+  non-re-enterable, setuid exec denied) and F24 (full env inheritance,
+  read-the-world, egress on).
+  → [#86](https://github.com/dglazkov/fsio/issues/86)
+- **The act-2 field test, run deliberately**: the claude CLI under candidate
+  confinement, recording every EPERM and every env var it consults. Done
+  once by accident
+  ([#18](https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080))
+  and it produced the most useful data point the profile design has.
+- **The same for one MCP server** (act 4): what does `github` actually
+  touch, and is #77's "its binary, its working state, and nothing else"
+  true?
+- **The daemon's own environment under launchd versus a shell launch.** F24
+  measured what a child *inherits*; what fsiod itself is handed when
+  launchd starts it is the other half, and nobody has looked.
+  → [#71](https://github.com/dglazkov/fsio/issues/71)
 
 ## Reproduce
 
@@ -638,4 +758,8 @@ npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
 node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 npm run bg-lab   # F16/F17 (one grant click; ~18 min; raw JSON beside ~/.fsio-harness)
 node scripts/hub-scan-lab.mjs   # F22 host idle-cost matrix (~15 min, no browser)
+node scripts/confinement-lab.mjs --launchd   # F23/F24 child-confinement matrix
+                                             # (~30 s; without --launchd it
+                                             #  skips the two launchd cases,
+                                             #  which mutate launchd state)
 ```
