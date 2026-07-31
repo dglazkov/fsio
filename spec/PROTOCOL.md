@@ -787,6 +787,40 @@ into the workspace), never by widening the write wall. Profiles SHOULD
 treat any `$HOME` path that a future unsandboxed process reads or executes
 as non-carvable.
 
+### What the child sandbox does not bound
+
+The child sandbox is a **write** wall, and its measured shape is narrower
+than the sentence "sandboxed to this folder" implies
+([F24](FINDINGS.md#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read),
+`scripts/confinement-lab.mjs`). Under the shipped posture a confined child
+still holds: the host's **entire environment** (47 of 48 variables,
+including every exported credential and `SSH_AUTH_SOCK` — agent forwarding
+is a signing capability, not a setting); **read access to every file the
+user can read** — private keys, `~/.gitconfig`, every sibling project — and
+**network egress**, which the demo allows deliberately. Read reach is
+therefore exfiltration reach.
+
+Two consequences are normative for consent surfaces:
+
+- A consent surface MUST NOT describe child confinement in terms broader
+  than modification. "Writes are limited to this folder; this program can
+  still read your files and reach the network" is the honest sentence; "the
+  shell is sandboxed" is not.
+- What the sandbox *does* hold is worth stating too, because it is stronger
+  than usually assumed
+  ([F23](FINDINGS.md#f23--child-confinement-is-transitive-to-any-depth-and-cannot-be-re-entered-in-either-direction-setuid-binaries-become-unexecutable),
+  [D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered)):
+  the write wall is inherited by every descendant at any depth, survives
+  detachment, cannot be widened from inside, and is not escapable by asking
+  launchd to spawn on the child's behalf. Setuid binaries (`sudo`, `ps`,
+  `crontab`) simply do not execute — a closed escalation route whose cost
+  is ordinary usability, not security.
+
+Narrowing the read wall or the environment is
+[#71](https://github.com/dglazkov/fsio/issues/71)'s profile-content slice,
+designed in [#86](https://github.com/dglazkov/fsio/issues/86); what a read
+wall *costs* a real toolchain is unmeasured.
+
 ### Accepted and out of scope
 
 Stated so they are read, not discovered:

@@ -25,6 +25,7 @@
     "harness": "node scripts/browser-harness.mjs",
     "bg-lab": "node scripts/background-lab.mjs",
     "cost-lab": "node scripts/cost-lab.mjs",
+    "confinement-lab": "node scripts/confinement-lab.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "check-anchors": "wireit"
   },
