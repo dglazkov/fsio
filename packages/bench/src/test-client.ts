@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HostServer, type HostServerOptions, type SpawnRequestInfo, type PtyModule } from "@fsio/host";
+import { HostServer, type HostServerOptions, type SpawnRequestInfo, type WorkspaceResolver, type PtyModule } from "@fsio/host";
 import { RpcErrors } from "@fsio/common";
 import { FsioClient, RpcError, now, type PingResult, type SessionStatus } from "@fsio/client";
 import { ShimDirectory, type ShimFaults } from "./fs-shim.js";
@@ -849,6 +849,234 @@ test("registerKind guards its namespace: shell and duplicates are refused", asyn
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// -------------------------------------------- workspaces (D22, hub mode)
+//
+// The resolver hook is what makes folders session *parameters* instead of
+// transport (D19/D22). fsiod supplies the registry (#71); these tests pin
+// the rules the library owns: refuse rather than substitute, contain `cwd`,
+// and never put a path on the wire.
+
+/** A workspace fixture: a resolver over a fixed name→dir table. */
+function workspaceFixture(names: string[]): { root: string; dirs: Record<string, string>; resolve: WorkspaceResolver; cleanup: () => void } {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-ws-"));
+  const dirs: Record<string, string> = {};
+  for (const n of names) fs.mkdirSync((dirs[n] = path.join(base, n)));
+  return {
+    root: base,
+    dirs,
+    resolve: (name) => {
+      if (!name) return names.length === 1 ? { root: dirs[names[0]!]!, name: names[0]! } : { error: "name a workspace" };
+      const dir = dirs[name];
+      return dir ? { root: dir, name } : { error: `unknown workspace: ${name}` };
+    },
+    cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
+  };
+}
+
+test("a named workspace is where the child runs; the policy sees the same cwd (D22)", async () => {
+  const ws = workspaceFixture(["alpha", "beta"]);
+  const seen: SpawnRequestInfo[] = [];
+  try {
+    await withHost(
+      {
+        allowShell: true,
+        workspaces: ws.resolve,
+        onSpawnRequest: (_spec, info) => (seen.push(info), true),
+      },
+      async (client) => {
+        const s = client.createSession({ kind: "shell", cmd: "/bin/pwd", workspace: "beta", pty: false }, { pollMs: 5 });
+        let out = "";
+        s.on("data", (d: Uint8Array) => (out += new TextDecoder().decode(d)));
+        try {
+          await s.ready;
+          await waitFor(() => out.includes("beta") && out, "pwd output");
+          assert.equal(fs.realpathSync(out.trim()), fs.realpathSync(ws.dirs["beta"]!));
+          // The judged cwd and the executed cwd are one value (#6).
+          assert.equal(seen[0]!.workspace, "beta");
+          assert.equal(seen[0]!.cwd, ws.dirs["beta"]);
+        } finally {
+          await s.close();
+        }
+      }
+    );
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test("an unresolvable workspace is 1006 and never reaches the policy (D22)", async () => {
+  const ws = workspaceFixture(["alpha", "beta"]);
+  let consulted = 0;
+  try {
+    await withHost(
+      { allowShell: true, workspaces: ws.resolve, onSpawnRequest: () => (consulted++, true) },
+      async (client) => {
+        const s = client.createSession({ kind: "shell", workspace: "gamma", pty: false }, { pollMs: 5 });
+        try {
+          await assert.rejects(s.ready, (e: unknown) => {
+            assert.ok(e instanceof RpcError);
+            assert.equal(e.code, RpcErrors.UNKNOWN_WORKSPACE);
+            return true;
+          });
+          // Subject before policy: there is nothing coherent to judge when
+          // the host does not know what the session would act on.
+          assert.equal(consulted, 0);
+        } finally {
+          await s.close();
+        }
+      }
+    );
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test("omitting the workspace where one is required is 1006, not workspace zero (D22)", async () => {
+  const ws = workspaceFixture(["alpha", "beta"]);
+  try {
+    await withHost({ allowShell: true, workspaces: ws.resolve }, async (client, root) => {
+      const s = client.createSession({ kind: "shell", cmd: "/bin/pwd", pty: false }, { pollMs: 5 });
+      try {
+        await assert.rejects(s.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError);
+          assert.equal(e.code, RpcErrors.UNKNOWN_WORKSPACE);
+          return true;
+        });
+        // Emphatically NOT the fallback the one-folder host would use: a
+        // client told "ok" would believe it ran somewhere it did not.
+        const status = readStatus(path.join(root, ".fsio", "sessions", s.id));
+        assert.equal(status?.state, "error");
+      } finally {
+        await s.close();
+      }
+    });
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test("cwd is workspace-relative and cannot escape the root (D22)", async () => {
+  const ws = workspaceFixture(["alpha"]);
+  fs.mkdirSync(path.join(ws.dirs["alpha"]!, "sub"));
+  try {
+    await withHost({ allowShell: true, workspaces: ws.resolve }, async (client) => {
+      const inside = client.createSession({ kind: "shell", cmd: "/bin/pwd", workspace: "alpha", cwd: "sub", pty: false }, { pollMs: 5 });
+      let out = "";
+      inside.on("data", (d: Uint8Array) => (out += new TextDecoder().decode(d)));
+      try {
+        await inside.ready;
+        await waitFor(() => out.includes("sub") && out, "pwd output");
+        assert.equal(fs.realpathSync(out.trim()), fs.realpathSync(path.join(ws.dirs["alpha"]!, "sub")));
+      } finally {
+        await inside.close();
+      }
+      const escaping = client.createSession(
+        { kind: "shell", cmd: "/bin/pwd", workspace: "alpha", cwd: "../beta", pty: false },
+        { pollMs: 5 }
+      );
+      try {
+        await assert.rejects(escaping.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError);
+          assert.equal(e.code, RpcErrors.INVALID_PARAMS);
+          assert.match(e.message, /escapes the workspace/);
+          return true;
+        });
+      } finally {
+        await escaping.close();
+      }
+    });
+  } finally {
+    ws.cleanup();
+  }
+});
+
+test("a symlink inside the workspace is not an escape hatch (D22)", async () => {
+  const ws = workspaceFixture(["alpha"]);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-outside-"));
+  fs.symlinkSync(outside, path.join(ws.dirs["alpha"]!, "out"));
+  try {
+    await withHost({ allowShell: true, workspaces: ws.resolve }, async (client) => {
+      const s = client.createSession({ kind: "shell", cmd: "/bin/pwd", workspace: "alpha", cwd: "out", pty: false }, { pollMs: 5 });
+      try {
+        await assert.rejects(s.ready, (e: unknown) => {
+          assert.ok(e instanceof RpcError);
+          assert.equal(e.code, RpcErrors.INVALID_PARAMS);
+          return true;
+        });
+      } finally {
+        await s.close();
+      }
+    });
+  } finally {
+    ws.cleanup();
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("one-folder mode is a registry of one: no name = the shared dir, a foreign name is still 1006 (D22)", async () => {
+  // The hub rules are additive and optional (spec: Hub deployment) — a host
+  // with no registry serves specs that name nothing exactly as it did
+  // before D22. But "ignore the field" would be the substitution D22
+  // forbids, so an unadvertised name is refused here too.
+  await withHost({ allowShell: true }, async (client, root) => {
+    const s = client.createSession({ kind: "shell", cmd: "/bin/pwd", pty: false }, { pollMs: 5 });
+    let out = "";
+    s.on("data", (d: Uint8Array) => (out += new TextDecoder().decode(d)));
+    try {
+      await s.ready;
+      await waitFor(() => out.trim() && out, "pwd output");
+      assert.equal(fs.realpathSync(out.trim()), fs.realpathSync(root));
+    } finally {
+      await s.close();
+    }
+    const foreign = client.createSession({ kind: "shell", cmd: "/bin/pwd", workspace: "elsewhere", pty: false }, { pollMs: 5 });
+    try {
+      await assert.rejects(foreign.ready, (e: unknown) => {
+        assert.ok(e instanceof RpcError);
+        assert.equal(e.code, RpcErrors.UNKNOWN_WORKSPACE);
+        return true;
+      });
+    } finally {
+      await foreign.close();
+    }
+  });
+});
+
+test("workspaceName: the name a one-folder host advertises resolves to its shared dir (D22)", async () => {
+  await withHost({ allowShell: true, workspaceName: "here" }, async (client, root) => {
+    const s = client.createSession({ kind: "shell", cmd: "/bin/pwd", workspace: "here", pty: false }, { pollMs: 5 });
+    let out = "";
+    s.on("data", (d: Uint8Array) => (out += new TextDecoder().decode(d)));
+    try {
+      await s.ready;
+      await waitFor(() => out.trim() && out, "pwd output");
+      assert.equal(fs.realpathSync(out.trim()), fs.realpathSync(root));
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+test("a hostile workspace name does not reach status.json intact (control chars, length)", async () => {
+  await withHost({ allowShell: true }, async (client, root) => {
+    const nasty = `\u001b[2J\u0007${"x".repeat(300)}`;
+    const s = client.createSession({ kind: "shell", workspace: nasty, pty: false }, { pollMs: 5 });
+    try {
+      await assert.rejects(s.ready, (e: unknown) => {
+        assert.ok(e instanceof RpcError);
+        assert.equal(e.code, RpcErrors.UNKNOWN_WORKSPACE);
+        assert.ok(!/[\u001b\u0007]/.test(e.message), "escape sequences must not survive the echo");
+        assert.ok(e.message.length < 128, `error must stay bounded, got ${e.message.length}`);
+        return true;
+      });
+      const status = readStatus(path.join(root, ".fsio", "sessions", s.id));
+      assert.ok(!/[\u001b\u0007]/.test(status?.error ?? ""), "nor into the file a human cats");
+    } finally {
+      await s.close();
+    }
+  });
 });
 
 // ---------------------------------- host introspection: listSessions (D14)

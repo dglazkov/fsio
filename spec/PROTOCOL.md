@@ -461,7 +461,16 @@ leaks the user's home directory and project layout.
   than one; unresolvable names, names the client may not see, and omission
   where a name is required all get `1006` — the host never picks a subject
   on the client's behalf. `cwd` is resolved *relative to the workspace root*
-  and MUST NOT escape it.
+  and MUST NOT escape it: a `cwd` that resolves outside is `-32602`
+  (invalid params — the subject was named and understood, the location
+  inside it was not), and the check MUST survive symlinks, which means
+  comparing resolved real paths and not just strings.
+- Resolution happens **before the policy hook**, like the unknown-kind
+  check: a request whose subject the host cannot resolve is not a request a
+  [D12](DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)
+  policy can meaningfully judge. A refusal MUST NOT enumerate the
+  workspaces the client did not name (advertisable names are what
+  `services.json` is for) and MUST NOT contain a path.
 - A registry entry carries a **profile** — spawn allow-list, sandbox
   template, env policy
   ([#46](https://github.com/dglazkov/fsio/issues/46)). The reach of a spawned

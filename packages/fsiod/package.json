@@ -1,0 +1,40 @@
+{
+  "name": "@fsio/fsiod",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio hub daemon (#71): workspace registry, singleton lock, and the fsio CLI — an embedder of @fsio/host",
+  "type": "module",
+  "bin": {
+    "fsio": "./dist/cli.js",
+    "fsiod": "./dist/fsiod.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted",
+      "dependencies": ["../common:build", "../host:build"]
+    },
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-registry.js dist/test-lock.js",
+      "files": ["../host/src/**", "../common/src/**"],
+      "output": [],
+      "dependencies": ["build"]
+    }
+  },
+  "dependencies": {
+    "@fsio/common": "*",
+    "@fsio/host": "*"
+  }
+}

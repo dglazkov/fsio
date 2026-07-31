@@ -23,6 +23,21 @@ npm run check && npm test
 Optional: `npm i node-pty` gives shell sessions a real pty (vim, colors,
 resize). Without it, shells fall back to plain pipes.
 
+The hub daemon (in progress,
+[#71](https://github.com/dglazkov/fsio/issues/71)) turns that one folder
+into a socket and the folders you work in into named parameters:
+
+```sh
+npm run fsio -- share ~/code/myproject   # name it; the path stays here (D22)
+npm run fsio -- workspaces
+npm run fsiod                            # serve ~/fsio (Ctrl-C to stop)
+```
+
+`fsiod` refuses to spawn processes (`1007`) until the consent flow lands —
+a grant is standing authority and the spawn policy is the per-request
+judgment, and execution needs both
+([D23](spec/DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)).
+
 ## Layout
 
 npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wireit)
@@ -37,6 +52,8 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `packages/workbench` — measurement workbench page (consumes `@fsio/client`)
 - `packages/bench` — node bench clients + protocol/lifecycle/client-conformance tests
 - `packages/terminal-demo` — /terminal demo helper: sandboxed working-folder shell (consumes `@fsio/host`)
+- `packages/fsiod` — the hub daemon and the `fsio` CLI: one granted folder,
+  many workspaces (also consumes `@fsio/host`)
 
 ## Headline numbers so far (macOS, APFS, Chrome 150)
 
