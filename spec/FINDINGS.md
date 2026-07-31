@@ -718,6 +718,78 @@ got). Canary secrets were exported into the parent and the child's real
 [#76](https://github.com/dglazkov/fsio/issues/76),
 [#6](https://github.com/dglazkov/fsio/issues/6).
 
+### F25 — a stdio MCP server runs under a deny-default profile in 15 rules, 5 of which are the service's reach; the same server under the shell posture reads everything
+
+Measured 2026-07-31 (macOS 26.5/arm64, node v24.11.0;
+`node scripts/service-reach-lab.mjs`;
+[#90](https://github.com/dglazkov/fsio/issues/90) act-4 leg, testing
+[#77](https://github.com/dglazkov/fsio/issues/77)'s claim that "an MCP
+server is narrower than a shell"). Subject:
+`@modelcontextprotocol/server-filesystem`, a real stdio MCP server,
+deliberately credential-free. Method: build the deny-default profile the
+way a profile author would have to — start from nothing, add only rules a
+*measured* denial demands (denials read from the unified log; SBPL
+`(trace)` no longer produces a file on current macOS). Three rounds of
+`deny default` → run → read denials → add.
+
+| | P1 — shell posture (`allow default` + write wall) | P2 — service posture (`deny default`) |
+|---|---|---|
+| MCP handshake, `tools/list` | ok, 14 tools | ok, **14 tools — identical** |
+| read inside workspace | ok | ok |
+| `~/.ssh` | reachable | **EPERM** |
+| `~/.gitconfig`, `/etc/passwd` | reachable | **EPERM** |
+| `~/Documents` (sibling projects) | reachable | **EPERM** |
+| DNS / network | reachable | **denied** |
+| profile size | 5 rules | 15 rules |
+
+- **#77's claim is true, and the difference is categorical rather than one
+  of degree.** The same server, doing the same work with the same 14
+  tools, runs with `deny default` and no network at all. That is not
+  available to a shell at any profile size — a shell is a universal
+  executor, so its allow-list is decoration
+  ([#86](https://github.com/dglazkov/fsio/issues/86)'s framing, now with a
+  measurement behind it). The unit of the mechanism being a *named
+  service* (R10, [D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace))
+  is what buys the tighter posture; nothing else in the design does.
+- **The profile decomposes, and the per-service part is small.** Of 15
+  rules, **9 are node-runtime infrastructure** (`/System/Library`,
+  `/usr/lib`, `sysctl-read`, `/dev/urandom`, one `mach-lookup`, …) shared
+  by every node-based service, and **5 are this service's reach** — its
+  binary, its code, its workspace — of which 3 are parameters. So a
+  profile mechanism wants a **runtime base layer plus a per-service
+  delta**, composed into one policy before the spawn
+  ([D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered)),
+  and the thing a user or consent surface reads is the 5-rule delta, not
+  the 15.
+- **Two walls fired on the same read, and they are not redundant.** The
+  server refused `~/.gitconfig` under *both* postures with its own
+  allowed-directories check — an application-level error a driver can
+  relay ("Access denied - path outside allowed directories"), which is
+  exactly R9's legible-to-a-non-human refusal. Seatbelt refuses the same
+  read with `EPERM`. Keep both: the server's wall is *legible but
+  bypassable* (it is the server's own code), Seatbelt's is *enforcement
+  but opaque*. R8's "do not duplicate a wall another party enforces" needs
+  the refinement — do not duplicate another party's wall for
+  **enforcement**, but a second wall that exists for **legibility** is
+  not duplication.
+- **Install-time reach is not run-time reach.** The subject was installed
+  with npm before measurement; `npx`-style invocation would need network
+  at every start, which is exactly the reach P2 denies. A service profile
+  this tight implies the service is *installed*, not fetched per spawn —
+  a constraint `fsio expose` (#77) inherits.
+- **Unmeasured, and it is the important one:** a *credentialed* server
+  (act 4's actual product — the `github` server holding a token). R12
+  says the mechanism must tolerate credentials as a deliberate act; this
+  subject carries none, so the credential path is untested.
+  → [#90](https://github.com/dglazkov/fsio/issues/90)
+→ F23, F24,
+[D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace),
+[D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
+[#77](https://github.com/dglazkov/fsio/issues/77),
+[#90](https://github.com/dglazkov/fsio/issues/90); feeds
+[#71](https://github.com/dglazkov/fsio/issues/71),
+[#86](https://github.com/dglazkov/fsio/issues/86).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
@@ -739,9 +811,10 @@ got). Canary secrets were exported into the parent and the child's real
   ([#18](https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080))
   and it produced the most useful data point the profile design has.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
-- **The same for one MCP server** (act 4): what does `github` actually
-  touch, and is #77's "its binary, its working state, and nothing else"
-  true?
+- ~~The same for one MCP server (act 4): is #77's "its binary, its working
+  state, and nothing else" true?~~ Measured 2026-07-31 → F25 (true, and
+  categorical: deny-default in 15 rules, 5 of them the service's). The
+  *credentialed* server — act 4's actual product — is still unmeasured.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - **The daemon's own environment under launchd versus a shell launch.** F24
   measured what a child *inherits*; what fsiod itself is handed when
@@ -760,6 +833,7 @@ npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
 node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 npm run bg-lab   # F16/F17 (one grant click; ~18 min; raw JSON beside ~/.fsio-harness)
 node scripts/hub-scan-lab.mjs   # F22 host idle-cost matrix (~15 min, no browser)
+node scripts/service-reach-lab.mjs           # F25 shell vs service posture (~1 min)
 node scripts/confinement-lab.mjs --launchd   # F23/F24 child-confinement matrix
                                              # (~30 s; without --launchd it
                                              #  skips the two launchd cases,
