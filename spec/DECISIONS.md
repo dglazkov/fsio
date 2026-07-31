@@ -825,6 +825,12 @@ did not).
 [D12](#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy).
 Feeds #71 (registry + profiles), #74, #72.
 
+**Amended.** [D27](#d27--reach-attaches-to-the-grant-not-the-workspace)
+supersedes the sentence "each entry carries a profile": a registry entry
+is a naming record; profiles attach to named services, and authorization
+binds (principal × service × workspace) in the grant. Every other clause
+stands.
+
 ## D23 — consent is host-served, and grants are proof-of-possession capabilities
 
 **Decision.** Makes [#46](https://github.com/dglazkov/fsio/issues/46)'s
@@ -892,6 +898,12 @@ that stops at the picker is session-scoped),
 (the gesture is unautomatable, so the flow must not race activation).
 Unmeasured, filed: #79 (answer channel), #69 (first-run ergonomics).
 Depends on D12, D20. Feeds #6, #46, #71, #76.
+
+**Amended.** [D28](#d28--durable-grants-are-minted-on-return-not-first-run)
+moves the timing of the sentence "first-run flows MUST route through one
+deliberate `requestPermission()` re-prompt": the re-prompt that mints
+durability belongs to a return visit, not first run; a first visit ends
+session-scoped by design. The re-prompt discipline itself stands.
 
 ## D24 — the service directory is the origin-facing capability document
 
@@ -1037,3 +1049,89 @@ shared repo).
 tier (`test-lifecycle.ts`: sweep scenarios, gitignore scenarios). Feeds
 #6 (close condition), #57 (the retention ceiling replay may grow into),
 #71 (the daemon inherits all three rules).
+
+## D27 — reach attaches to the grant, not the workspace
+
+**Decision.** A workspace registry entry is a naming record — name,
+absolute path, display label — and carries no reach. The profile (spawn
+allow-list, sandbox template, env policy —
+[#46](https://github.com/dglazkov/fsio/issues/46)) attaches to the
+**named service** ([D24](#d24--the-service-directory-is-the-origin-facing-capability-document)'s
+noun: the thing `services.json` advertises), and authorization binds the
+triple **(principal × service × workspace)** in the grant record
+([D23](#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)).
+A spawned child's reach is the intersection of the named service's
+profile and the grant's scope, judged per request by the
+[D12](#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)
+policy with the principal in view. Supersedes
+[D22](#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)'s
+sentence "each entry carries a profile"; every other clause of D22
+stands.
+
+**Context.** [#86](https://github.com/dglazkov/fsio/issues/86) derived
+the profile mechanism's requirements from the narrative's acts and left
+the attachment question as its sharpest fork (open question 2): season
+two needs the same workspace to have different reach depending on who is
+asking (R14), which one-profile-per-workspace cannot express. The
+pewter.town walkthrough (NARRATIVE.md, season two visualized) settled it
+by exercise: at no beat did anyone want policy attached to the *place* —
+the owner consents to "Alice may use test-runner in workspace fsio," a
+sentence whose nouns are a person, a service, and a place, exactly the
+grant triple. The registry's job shrinks to what D22 actually needed it
+for: resolving a name to a path the wire never carries. This also
+answers #86's "profiles, shapes, roster entries, and MCP servers are one
+concept wearing four hats" — the concept is the named service, and the
+grant is where reach binds to it.
+
+**Alternatives rejected.** Profile-per-workspace (D22 as written —
+cannot say "same workspace, different reach per asker"; forces season
+two to fork the mechanism). Per-principal overrides layered on a
+workspace profile (the triple wearing a worse data structure, plus
+precedence rules to document). Per-principal registry entries
+(duplicates naming records to smuggle policy in; the registry stops
+being a roster).
+
+**Findings.** None measured; driven by #86's act derivation. Amends D22;
+depends on D23 (grants), D24 (the service noun). Feeds #71, #76, #77,
+#78, #86.
+
+## D28 — durable grants are minted on return, not first run
+
+**Decision.** A first visit ends session-scoped, by design: pick → use →
+walk away, leaving no residue beyond the handle the origin persisted for
+itself. The deliberate `requestPermission()` re-prompt that mints "Allow
+on every visit"
+([D23](#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities))
+happens at the earliest on a **return visit** — the "welcome back, one
+click makes this permanent" moment — and a flow MUST NOT request
+durability before the origin has been revisited. D23's re-prompt
+discipline stands; its timing moves from first run to return.
+
+**Context.** Two forces point at the same beat. The platform:
+[F20](FINDINGS.md#f20--a-persisted-handle-with-allow-on-every-visit-spans-browser-restarts-revisit-is-zero-gesture)'s
+addendum found the durable grant can only be minted over a *restored*
+handle, so first-visit durability required compressing
+pick → persist → re-prompt into one artificial double-tap — asking for
+permanence on a first date, with a consent sentence no better than
+"allow this twice." The thesis: NARRATIVE.md's trust ladder applied to
+the host's own ergonomics — each rung is offered at the moment the user
+demonstrates wanting it, and *returning is the evidence* that durability
+is wanted. The ladder now reads picker → return → permanent → resident,
+every rung user-initiated. (The same principle makes the resident daemon
+a graduation from the foreground host rather than an installation —
+recorded as narrative posture in the season-two walkthrough, not yet
+mechanism.)
+
+**Alternatives rejected.** The first-run double-tap (the flow D23
+originally mandated: measured workable in
+[F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker),
+but it fights the trust ladder and burns the best consent moment on the
+least-earned ask). Treating a session-scoped first visit as a failure
+state (it is the success state of visit one — "no harm, no foul" is the
+feature).
+
+**Findings.** F20 (addendum), F21. Amends D23. Unmeasured, filed with
+[#69](https://github.com/dglazkov/fsio/issues/69) (rescoped to the
+two-visit flow): whether the return-visit re-prompt reliably offers the
+three-way prompt, and the post-revocation downgrade path. Feeds #69,
+#71, the slice-4 wizard.

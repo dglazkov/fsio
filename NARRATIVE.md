@@ -86,6 +86,86 @@ The honesty clause carries over: the cloud room is a real server; the
 claim survives precisely because the transport *to the machine* still
 has none. Season two's demo point is that the two compose.
 
+## Season two, visualized: pewter.town
+
+An aspiration written as a walkthrough, so the abstractions have to
+cash out in directories and gestures. Suppose a site — call it
+pewter.town — that is season two wearing a product: people register
+their 'puters, see each other's rosters, and borrow each other's
+resources (MCP servers, local agents, test runners) to do real work.
+Bob registers his pewter and invites Alice to hack on a repo
+together. What actually happens?
+
+**Three directories, one trained convention.** Agent harnesses
+already taught users this shape: the directory you launch in is the
+*scope*, and `~/.claude` is the *self* — keys, config, state. fsio
+borrows it wholesale:
+
+- `~/src/fsio/` — the **workspace**. Bob's clone, Bob's scope.
+- `~/fsio/` — the **hub**
+  ([D20](spec/DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)):
+  transport data plane, co-tenant-readable, no authority inside.
+  Exists only once Bob graduates to a resident daemon.
+- `~/.fsio/` — the **self**: registry, grant records, and
+  per-(workspace × service) state slots —
+  `~/.fsio/state/fsio/github/` holds that server's token, never the
+  repo, never the hub. "Daemon-private" means private from *tenants*,
+  not from Bob: it is a dotdir he can `ls`, exactly as legible as
+  `~/.claude`.
+
+**Bob, day one — the host climbs its own ladder.** `cd ~/src/fsio &&
+fsio`. Foreground, in a terminal Bob is watching; the scrollback is
+the audit log and ctrl-C is revocation. No daemon, no installer —
+the host asks for rung-1 trust the same way it offers it to
+children. When pewter.town asks to connect, the picker gesture is
+the natural one: Bob picks his *project folder*, the same folder
+rungs 1–2 (direct edit) and the transport both ride. Consent pixels
+are the terminal itself — a page cannot reach, overlay, or clickjack
+a TTY. The first visit ends session-scoped, deliberately: Bob can
+walk away, no harm, no residue
+([D28](spec/DECISIONS.md#d28--durable-grants-are-minted-on-return-not-first-run)).
+When he returns, the site says *welcome back — one click makes this
+permanent*, and the re-prompt mints durability at the moment
+returning has earned it.
+
+**Graduation, not installation.** Bob adds a second repo, or wants
+his pewter online without babysitting a terminal: `fsio up`. Only
+now does the daemon exist, the hub folder appear, and the one
+genuinely awkward picker gesture — pick `~/fsio`,
+[#69](https://github.com/dglazkov/fsio/issues/69)'s subject — arrive,
+after the value is proven and Bob is invested. He exposes resources
+by name: `fsio expose github`, a `test-runner` shape for `npm test`.
+The directory advertises names — never paths, never a shell.
+
+**The invite.** Bob shares `test-runner` with Alice. The consent
+sentence names a person, a service, and a place — "Alice may use
+test-runner in workspace fsio" — the (principal × service ×
+workspace) triple the grant binds
+([D27](spec/DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)),
+with the person anchored by the cloud layer's identity, the one
+thing the transport structurally cannot supply
+([D15](spec/DECISIONS.md#d15--origin-is-client-stamped-advisory-and-display-only)).
+
+**Alice, day one — the punchline.** Alice picks nothing. No picker,
+no install, no `~/.fsio`, not one directory created on her machine.
+Her click travels tab → cloud → Bob's tab → Bob's hub → Bob's
+daemon, and the result flows back the same way. The asymmetry is
+the design: borrowing is borrowing a service, so the borrower's
+trust ask is zero. Collaboration stays git-shaped — Alice edits her
+own clone, pushes a branch, runs Bob's test-runner against it — and
+if Bob's terminal is open he watches it happen:
+`alice@pewter.town ran test-runner in fsio (exit 0)`.
+
+**Two facts the telling must keep saying out loud.** The owner's
+tab is the bridge: Bob's pewter is online exactly while a
+pewter.town tab holds the folder grant, so presence is a consent
+primitive enforced by physics — closing the tab takes the pewter
+offline. And for borrowers, the browser wall does not exist: Bob's
+see/edit rungs are enforced by his browser on his own grant, but
+every action of Alice's arrives as a service call judged by Bob's
+daemon alone — which is why season two's rule (*a service, never
+credentials or shell*) is load-bearing and not a style preference.
+
 ## The staging device
 
 One identical chat UI with a toggle: **brain: local / page.** Same

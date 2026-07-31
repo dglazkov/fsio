@@ -475,12 +475,16 @@ leaks the user's home directory and project layout.
   policy can meaningfully judge. A refusal MUST NOT enumerate the
   workspaces the client did not name (advertisable names are what
   `services.json` is for) and MUST NOT contain a path.
-- A registry entry carries a **profile** — spawn allow-list, sandbox
-  template, env policy
-  ([#46](https://github.com/dglazkov/fsio/issues/46)). The reach of a spawned
-  child is the intersection of its profile and the grant's scope. Profile
-  directories govern the *child process*; they are not browser permissions,
-  which remain exactly the picked handle and nothing else.
+- A registry entry is a **naming record** — name, path, label — and carries
+  no reach
+  ([D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)).
+  The profile — spawn allow-list, sandbox template, env policy
+  ([#46](https://github.com/dglazkov/fsio/issues/46)) — attaches to the
+  named service, and authorization binds (principal × service × workspace)
+  in the grant. The reach of a spawned child is the intersection of the
+  service's profile and the grant's scope. Profile directories govern the
+  *child process*; they are not browser permissions, which remain exactly
+  the picked handle and nothing else.
 - **Direct file access composes, it does not merge.** A page MAY hold its own
   FS Access grant on a workspace folder and read and write it directly, with
   fsio uninvolved (the zero-install rungs of
@@ -533,14 +537,20 @@ click-through.
    the hub (so only a folder-holder can construct it). HTTP carries consent
    and grant administration; **the folder remains the only data plane.**
 
-**First-run.** The durable grant is minted at a deliberate
+**First visit and return.** The durable grant is minted at a deliberate
 `requestPermission()` re-prompt over a restored handle, not at the picker —
-picker grants die with the browser session (F21, F20 addendum). A first-run
-flow MUST therefore be *pick → persist the handle → re-prompt → user chooses
-"Allow on every visit"*, and a flow that stops at the picker MUST NOT be
-described to the user as installed.
-[#69](https://github.com/dglazkov/fsio/issues/69) measures that flow's
-ergonomics; the rule does not wait on it.
+picker grants die with the browser session (F21, F20 addendum). The
+re-prompt belongs to the **return visit**
+([D28](DECISIONS.md#d28--durable-grants-are-minted-on-return-not-first-run)):
+a first visit ends session-scoped by design — pick, use, walk away, no
+residue beyond the handle the origin persisted — and a flow MUST NOT
+request durability before the origin has been revisited. The return
+visit's *welcome back — make this permanent* re-prompt is where returning
+has earned the ask. A flow that stops at the picker MUST NOT be described
+to the user as installed.
+[#69](https://github.com/dglazkov/fsio/issues/69) measures the two-visit
+flow's ergonomics (including the post-revocation downgrade); the rules do
+not wait on it.
 
 **Unmeasured, and marked as such.** The reference transport for the consent
 answer — a user-opened loopback tab that hands the secret to its opener via
@@ -705,9 +715,9 @@ pixels, proof-of-possession and session-bound so a copied `spawn.json` is
 inert
 ([D23](DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities));
 every spawn *and attach* is judged by the D12 policy; and what an allowed
-command can reach is bounded by the child sandbox and the workspace
-profile
-([D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)).
+command can reach is bounded by the child sandbox and the profile of the
+service the grant names
+([D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)).
 Revocation is two-sided and independent: the browser grant (per-origin, in
 browser settings —
 [F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker))
@@ -807,8 +817,9 @@ the terminal-demo helper does) — but no shipped policy gates on either, and
 `origin` is unauthenticated by design.
 [D23](DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)
 closes the design gap — a grant is what makes an origin claim checkable,
-and profiles carry the allow-list and env-policy content
-([D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry))
+and profiles carry the allow-list and env-policy content, bound per
+(principal × service × workspace)
+([D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace))
 — but nothing ships it yet
 ([#71](https://github.com/dglazkov/fsio/issues/71)). The
 [threat model](#threat-model) above names the adversaries these mechanisms
