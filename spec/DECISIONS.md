@@ -1083,6 +1083,13 @@ answers #86's "profiles, shapes, roster entries, and MCP servers are one
 concept wearing four hats" — the concept is the named service, and the
 grant is where reach binds to it.
 
+*2026-07-31:* season two and its walkthrough were extricated to
+[dglazkov/pewter](https://github.com/dglazkov/pewter); the exercise that
+settled this decision is now prior art there. The decision stands on
+fsio-native ground regardless: two *origins* granted the same workspace
+(F21's independent grants) already need per-asker reach — R14 is the
+multi-origin case stated generally, with or without a room above it.
+
 **Alternatives rejected.** Profile-per-workspace (D22 as written —
 cannot say "same workspace, different reach per asker"; forces season
 two to fork the mechanism). Per-principal overrides layered on a
@@ -1119,8 +1126,9 @@ demonstrates wanting it, and *returning is the evidence* that durability
 is wanted. The ladder now reads picker → return → permanent → resident,
 every rung user-initiated. (The same principle makes the resident daemon
 a graduation from the foreground host rather than an installation —
-recorded as narrative posture in the season-two walkthrough, not yet
-mechanism.)
+recorded as narrative posture in the season-two walkthrough, since
+extricated to [dglazkov/pewter](https://github.com/dglazkov/pewter),
+not yet mechanism.)
 
 **Alternatives rejected.** The first-run double-tap (the flow D23
 originally mandated: measured workable in

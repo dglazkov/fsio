@@ -736,7 +736,10 @@ theater.
 
 **3. Delegated prompting.** Another person's prompt driving your agent
 with your local capabilities through your open tab
-([#78](https://github.com/dglazkov/fsio/issues/78)): a confused deputy,
+([#78](https://github.com/dglazkov/fsio/issues/78), since extricated to
+[dglazkov/pewter](https://github.com/dglazkov/pewter) — the threat is
+stated here because the transport's boundary is what it tests): a
+confused deputy,
 with the twist that the driver may themselves be relaying injected content
 they did not author. The transport can never authenticate this principal —
 D15's rationale: nothing in a filesystem to anchor trust to — but the
