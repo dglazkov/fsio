@@ -738,9 +738,11 @@ got). Canary secrets were exported into the parent and the child's real
   once by accident
   ([#18](https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080))
   and it produced the most useful data point the profile design has.
+  → [#90](https://github.com/dglazkov/fsio/issues/90)
 - **The same for one MCP server** (act 4): what does `github` actually
   touch, and is #77's "its binary, its working state, and nothing else"
   true?
+  → [#90](https://github.com/dglazkov/fsio/issues/90)
 - **The daemon's own environment under launchd versus a shell launch.** F24
   measured what a child *inherits*; what fsiod itself is handed when
   launchd starts it is the other half, and nobody has looked.
