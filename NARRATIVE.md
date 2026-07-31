@@ -51,26 +51,110 @@ Chrome, the daemon).
    harness articulates local stdio MCP servers — the toolbelt web
    agents can't otherwise reach. Files, shell, *and* the installed
    MCP ecosystem, behind the same ladder.
-5. **The mirror hall** (unfiled; #44-shaped): both directions as
-   peers on one socket. A local editor attaches to the page agent;
+5. **The mirror hall**
+   ([#95](https://github.com/dglazkov/fsio/issues/95)): both
+   directions as peers on one socket. A local editor attaches to the page agent;
    the page agent spawns the claude CLI as its subagent over ACP.
    [D10](spec/DECISIONS.md#d10--json-rpc-20-control-plane-over-rpc-frames)
    frames are symmetric, so composition costs nothing to build —
    only something to show.
 
+## The interlude — the first borrower is you
+
+Between the seasons sits a rung the arc needs
+([#94](https://github.com/dglazkov/fsio/issues/94)): **one
+human, many devices.** Bob is on the bus and his phone drives the
+agent on his MacBook at home; Bob opens his second laptop and
+merges the two machines by introducing them as pewters. Still solo
+— no second person, no trust question — and that is the point: the
+seasons climb one ladder, and this is its middle rung. Season one
+proves *where the agent runs* is a deployment detail. The interlude
+proves *where the owner sits* is one too. Season two then makes
+*whose agent it is* a grant. Agent, human, possession — each season
+relocates the thing the one before held fixed.
+
+Mechanically, the interlude is season two with the trust dial at
+zero. A rendezvous server exists — the room, at population one —
+and Bob's tab at home is the **junction**: the one place holding
+both the folder grant down to the machine and the connection out.
+His tap on the bus travels phone → cloud → junction → machine, and
+the result flows back the same way — exactly the path a borrower's
+click will take next season, rehearsed with identity deleted from
+the problem because both ends are Bob. The phone is structurally the
+borrower's seat: zero footprint, no picker, nothing created on the
+device — and not as a metaphor. Mobile browsers have no usable File
+System Access, so a phone *cannot* be a host; the platform
+limitation is promoted to design
+([F26](spec/FINDINGS.md#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out)'s
+move): the seat that asks zero trust is the seat that cannot hold
+any. Whether the pocket surface is a page or an app is a costume
+choice, per season one's reveal; what it can never wear is a folder
+grant.
+
+What the solo telling buys, beat by beat:
+
+- **The attendance ladder gets teeth.** A closed lid is offline —
+  the same physics as tab-close. "Reach my machine from the bus" is
+  the first reason a solo user actually has to run `fsio up`:
+  residency earns its sales pitch a season before the bench needs
+  it, and graduation stops being bookkeeping and becomes desire.
+- **The union at n = 1.** Season two's pitch — capability as the
+  union of setups, not the intersection — is already true of one
+  person's hardware: the one Mac whose Keychain signs the iOS
+  builds is Bob's own Dana's-Mac-Studio. Merging two laptops is the
+  roster union demoed before a second human exists.
+- **Continuity is the sunchase solo.** Desk to couch to bus, the
+  *same conversation*: the session lives in the workspace's
+  placed-state slot and each device's agent brings its own keys —
+  F26 as design, rehearsed at commute scale before
+  Kyiv-to-Portland.
+- **Prompts follow the person, not the machine.**
+  [D12](spec/DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)
+  renders consent in the owner's surfaces, where the owner is — and
+  displacement is what makes that clause do work: the spawn prompt
+  lands on the phone in Bob's pocket. The release ceremony's
+  plumbing, tested with both keys in one pair of hands.
+
+Two clauses arrive early and must be said out loud. The rendezvous
+is a real server, so the honesty clause moves up a season: the
+claim survives because the transport *to the machine* still has
+none, and the interlude says so as plainly as season two will. And
+displacement is the moment account compromise equals machine
+compromise — the wall is no longer purely local. The answer is
+season two's grammar arriving early: **Bob's devices are
+principals.** The phone holds a shape
+([#76](https://github.com/dglazkov/fsio/issues/76)) like any
+borrower — see, chat, run-within-budget — with the wide-open grant
+reserved for surfaces that can render the ceremony; self-borrowing
+runs on the same (principal × service × workspace) triple
+([D27](spec/DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)),
+and the person/machine identity split
+([#87](https://github.com/dglazkov/fsio/issues/87)) stops being
+theoretical the moment one person is two devices. The grant
+machinery is not rehearsed before season two; it is load-bearing
+before season two.
+
+The interlude also fixes the arc's adoption cliff. Season two is
+only true of a team; the interlude gives the same infrastructure —
+the room, presence, the junction role — a single-player mode with
+real utility, worth joining before there is anyone to share with.
+The room debuts at population one; season two's job is to open the
+door.
+
 ## Season two — whose agent is it
 
-Acts 1–5 are one human, one machine: they prove *where the agent runs
-is a deployment detail*. Season two
-([#78](https://github.com/dglazkov/fsio/issues/78)) opens a different
-claim: **whose agent it is becomes a grant, not a possession.** A
-small team shares a chat-like room (a deliberately boring cloud web
-app — rendezvous, identity, chat); each member's machines lend
-capabilities to the team; friends borrow each other's agents. The
-member's tab is the junction — the only place holding both the fsio
-grant down to the machine and the cloud connection out to the team —
-so borrowing is borrowing a *service*, never credentials or shell
-access.
+The interlude left a room of one. Season two
+([#78](https://github.com/dglazkov/fsio/issues/78)) opens the door —
+a second person walks in, and with her the ladder's last claim:
+**whose agent it is becomes a grant, not a possession.** A small
+team shares the chat-like room (a deliberately boring cloud web app
+— rendezvous, chat, and the one thing a room of one never needed:
+identity); each member's machines lend capabilities to the team;
+friends borrow each other's agents. The member's tab is the
+junction the interlude named — still the only place holding both
+the fsio grant down to the machine and the cloud connection out to
+the team — so borrowing is borrowing a *service*, never credentials
+or shell access.
 
 The ladder grows its fourth rung: see / edit / run / **share** — and
 the share rung is not a step on top but a **recursion of the whole
@@ -86,9 +170,10 @@ cloud layer supplies the one thing the transport structurally cannot
 was right to refuse to fake it): a trust anchor — grants name a
 *person*, not an origin.
 
-The honesty clause carries over: the cloud room is a real server; the
-claim survives precisely because the transport *to the machine* still
-has none. Season two's demo point is that the two compose.
+The honesty clause carries over from the interlude: the cloud room
+is a real server; the claim survives precisely because the transport
+*to the machine* still has none. Season two's demo point is that the
+two compose.
 
 ## What pewter.town is
 
@@ -171,9 +256,9 @@ town turns that person from a bottleneck ("ask Bob how he set it
 up") into a quartermaster ("borrow Bob's").
 
 **The borrower gets capabilities at zero footprint** — no picker, no
-install, no `~/.fsio`, nothing created on her machine — and what she
-borrows comes in four kinds, each a kind of Bob-ness her own machine
-cannot supply:
+install, no `~/.fsio`, nothing created on her machine (the seat
+Bob's own phone already broke in) — and what she borrows comes in
+four kinds, each a kind of Bob-ness her own machine cannot supply:
 
 - **Entitlement** — Bob has a subscription; Alice doesn't. Borrowing
   his agent is the *only* way to share the subscription without
@@ -299,10 +384,11 @@ already hold answers:
   any member's agent sits down, resumes the conversation, and brings
   its *own* keys. The conversation belongs to the bench, not the
   agent.
-- **The night problem is residency's real sales pitch.** A bench
-  anchored on a commuter's machine loses its floor when that owner
-  sleeps. "Bob adds a second repo" was bookkeeping; "the bench must
-  not empty when you sleep" is a reason to run `fsio up`.
+- **The night problem is the bus at team scale.** A bench anchored
+  on a commuter's machine loses its floor when that owner sleeps.
+  The interlude sold residency to one person ("reachable while I'm
+  out"); "the bench must not empty when you sleep" is the same
+  desire, now owed to teammates.
 - **The sitter rotates with the sun.** Escalations queue for whoever
   is awake and holds the role — a grant kind the ladder has not
   needed before: holding a *role* (sitter, approver), not borrowing
@@ -335,19 +421,19 @@ in argv —
 logic transposed from return-visit to launch.
 
 Architecturally the move is smaller than it looks, if the hub folder
-stays. The tab was never magic; it was the *junction* — the one
-place holding both the machine grant and the room connection. The
-server pewter collapses the junction into a process but keeps the
-hub as the data plane: a headless connector plays the tab's role
-over the same D10 frames,
+stays. The tab was never magic; it was the *junction*, the role the
+interlude first named. The server pewter collapses the junction into
+a process but keeps the hub as the data plane: a headless connector
+plays the tab's role over the same D10 frames,
 [D19](spec/DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources)/[D20](spec/DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)
 carry over wholesale, and a local editor on the server still
 attaches to the hub (the mirror hall works headless). The browser is
 revealed as what it always was: one costume for the junction role —
 season one's reveal one level up. Season one: "local vs. cloud
-agent" was never an architecture, only where you cut the stdio.
-Season two: "laptop vs. server" was never an architecture — a pewter
-is a role.
+agent" was never an architecture, only where you cut the stdio. The
+interlude: "at your machine vs. away" was never a mode, only where
+the owner sat. Season two: "laptop vs. server" was never an
+architecture — a pewter is a role.
 
 One consequence has teeth: **headless, the confinement track is the
 wall.** On a browser pewter, Chrome enforces the folder boundary and
@@ -474,8 +560,9 @@ When he returns, the site says *welcome back — one click makes this
 permanent*, and the re-prompt mints durability at the moment
 returning has earned it.
 
-**Graduation, not installation.** Bob adds a second repo, or the
-team stands up a bench that must not empty when he sleeps: `fsio
+**Graduation, not installation.** Bob wants his machine reachable
+from the bus, adds a second repo, or the team stands up a bench
+that must not empty when he sleeps: `fsio
 up`. Only now does the daemon exist, the hub folder appear, and the
 one genuinely awkward picker gesture — pick `~/fsio`,
 [#69](https://github.com/dglazkov/fsio/issues/69)'s subject — arrive,
@@ -530,7 +617,11 @@ preference.
 
 ## The staging device
 
-One identical chat UI with a toggle: **brain: local / page.** Same
+Every claim gets the same theatrical form — one identical chat UI,
+one toggle, an audience that cannot find the seam — and the arc
+wears it three times, once per rung of the ladder.
+
+Season one's toggle: **brain: local / page.** Same
 folder, same conversation, same D12 prompts; the only visible
 difference is the
 [D15](spec/DECISIONS.md#d15--origin-is-client-stamped-advisory-and-display-only)
@@ -539,6 +630,12 @@ architecture — it's where you cut the stdio, and the transport made
 the cut relocatable. When the audience can't tell which side of the
 machine boundary the harness is on, the D13 claim stops being a
 slogan and becomes an observed fact.
+
+The interlude's toggle: **seat: desk / pocket.** The same
+conversation picked up mid-turn from the phone on the bus; the only
+visible difference is which surface the next D12 prompt lands on.
+When the audience can't tell which device Bob is holding, "being at
+your machine" stops being a place.
 
 Season two gets its own devices, same trick one level up. The
 **agent: mine / Bob's** toggle: same chat UI, and the only visible
@@ -559,6 +656,12 @@ sequenced behind #70–#72, and no act's thesis may quietly assume the
 daemon. For season one the hub is an ergonomics and posture
 *multiplier* — one grant per origin ever, workspaces as parameters,
 the installed-capability feel — never a dependency.
+
+The interlude sits between the bets: its bus scene *plays* through
+a tab left open at home (degenerate mode holds), but its promise —
+the machine reachable while its owner is away — is the hub's
+standing-socket thesis stated as a user desire, which is why
+graduation to `fsio up` lands there.
 
 Season two is different: capability presence ("Bob's test-runner is
 online") requires a standing, zero-gesture, multi-workspace socket,
@@ -590,6 +693,12 @@ agents are "trust the binary with everything, day one." This is the
 version where trust is incremental, legible, and enforced by parties
 the user already trusts — that sentence is the demo track's thesis,
 and every act should end on some form of it.
+
+The interlude adds the device-level contrast: remote desktop and
+its cousins ship your pixels and your whole authority to wherever
+you happen to be; here the pocket device is a borrower holding a
+shape — a service, never a screen, never the keys. Every interlude
+beat should end on some form of *that*.
 
 Season two adds the team-level contrast: cloud team infrastructure
 is "stand up a service and manage its secrets"; pewter.town is "the
