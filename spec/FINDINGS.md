@@ -979,20 +979,38 @@ exit codes, which is the signal that does not depend on the log at all.
 - ~~The act-2 field test, run deliberately.~~ Measured 2026-07-31 → F26
   (state placement works; identity lives in the OS keystore, so a
   deny-default profile logs the child out; 8 environment variables
-  suffice). What a *read* wall costs this subject is still unmeasured —
-  every cell above left reads wide open.
+  suffice). Its read-wall remainder is folded into the open item below.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - ~~Does the read wall exist, and what does it cost? (#86 open question
   4.)~~ Measured 2026-07-31 → F27 (it exists, costs 21 rules over the
   shipped 8, denies `~/.ssh`/`~/Documents`/`/etc/passwd` — and keeps
-  `~/.gitconfig` and `~/.npm` readable because git and npm name them).
-  Measured against a *toolchain*; what a read wall costs the **agent CLI**
-  of F26 is still unmeasured, and that subject reads far more widely.
+  `~/.gitconfig` and `~/.npm` readable because git and npm name them),
+  against a *toolchain*. Its remainder is the open item below.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - ~~The same for one MCP server (act 4): is #77's "its binary, its working
   state, and nothing else" true?~~ Measured 2026-07-31 → F25 (true, and
-  categorical: deny-default in 15 rules, 5 of them the service's). The
-  *credentialed* server — act 4's actual product — is still unmeasured.
+  categorical: deny-default in 15 rules, 5 of them the service's).
+  → [#90](https://github.com/dglazkov/fsio/issues/90)
+- **What a read wall costs the *agent CLI*** — F27 priced one against a
+  toolchain, and that subject reads far more widely; every F26 cell left
+  reads wide open. **Deferred, not blocked:** act 2 runs unsandboxed for
+  now ([#96](https://github.com/dglazkov/fsio/issues/96)), so nothing on
+  the demo track waits on this. It is #86 open question 4's remainder.
+  → [#86](https://github.com/dglazkov/fsio/issues/86)
+- **How a credentialed child receives its credential — two existence
+  questions, not a survey.** The acquisition channels are closed by the
+  kernel (inherit-at-spawn, `file-read*`, IPC endpoint, network fetch)
+  and F24–F27 priced all four, so more subjects can only yield new
+  *instances*, which F25 already showed are profile parameters. What is
+  genuinely open: (1) does F25's discovery procedure — deny-default, read
+  denials, widen — **terminate** on a credentialed child, or can a
+  credential denial fail to name itself (F26's near-miss: logged, but the
+  child blamed the wrong party)? (2) does the **borrowed-dotfile** mode
+  (`~/.aws`, `~/.config/gh`) occur in practice — the one mode with no
+  mechanism-level fix, since carving another tool's dotfile is what R2
+  forbids? Answerable with already-installed servers; stop at the first
+  hit or when every channel seen is already priced. **Deferred (p3)**
+  behind spending F25–F27 on #71.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - **The daemon's own environment under launchd versus a shell launch.** F24
   measured what a child *inherits*; what fsiod itself is handed when
