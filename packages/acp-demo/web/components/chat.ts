@@ -140,7 +140,7 @@ class AcpChat extends SignalWatcher(LitElement) {
     const answered = e.answer.get();
     const facts = agentFacts.get();
     return html`<div class="entry perm">
-      <div class="who">the agent is asking</div>
+      <div class="who">the agent is asking${e.toolKind && e.toolKind !== "other" ? ` · ${e.toolKind}` : ""}</div>
       <div class="title">${e.title}</div>
       ${e.locations.length ? html`<div class="where">${e.locations.join(", ")}</div>` : nothing}
       ${e.detail ? html`<pre>${e.detail}</pre>` : nothing}

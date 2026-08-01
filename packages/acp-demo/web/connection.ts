@@ -11,8 +11,6 @@ let client: FsioClient | null = null;
 let session: FsioSession | null = null;
 let agent: AgentSession | null = null;
 
-export const getAgent = (): AgentSession | null => agent;
-
 // ---------------------------------------------------------------- gates
 
 export function checkGates(): void {
@@ -226,6 +224,8 @@ export function cancelTurn(): void {
 
 /** Page teardown: close the session so the helper kills the agent (D6). */
 export function closeOnPagehide(): void {
+  agent?.conn.close();
   void session?.close();
   session = null;
+  agent = null;
 }

@@ -54,7 +54,6 @@ export interface ToolEntry {
   toolCallId: string;
   title: Signal.State<string>;
   status: Signal.State<string>;
-  toolKind: string;
   locations: Signal.State<string[]>;
   detail: Signal.State<string>;
 }

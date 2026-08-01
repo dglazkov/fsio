@@ -58,7 +58,6 @@ export interface InitResult {
   agentName: string;
   agentVersion: string;
   authMethods: { id: string; name: string }[];
-  authRequired: boolean;
 }
 
 export class AgentSession {
@@ -101,7 +100,6 @@ export class AgentSession {
       agentName: init.agentInfo?.name ?? "agent",
       agentVersion: init.agentInfo?.version ?? "",
       authMethods: init.authMethods ?? [],
-      authRequired: false,
     };
   }
 
@@ -157,7 +155,6 @@ export class AgentSession {
           toolCallId: id,
           title: signal(tc.title ?? "tool call"),
           status: signal(tc.status ?? "pending"),
-          toolKind: tc.kind ?? "other",
           locations: signal(locationPaths(tc)),
           detail: signal(contentSummary(tc.content)),
         }) as ToolEntry;
