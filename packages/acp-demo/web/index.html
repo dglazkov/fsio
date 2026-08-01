@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>fsio · agent</title>
+
+  <style>
+    /* Two panes and a bar. The conversation is the app; the workspace pane
+       is the argument — the same folder handle powers both, so the files
+       the agent edits change in front of you while you talk to it.
+       Component styling lives in shadow roots; this sheet is the skeleton. */
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #14161a; color: #d8dee9; margin: 0;
+      display: flex; flex-direction: column;
+    }
+    main {
+      flex: 1; min-height: 0;
+      display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+    }
+    @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } acp-workspace { display: none; } }
+    acp-chat { min-width: 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <acp-top-bar></acp-top-bar>
+  <main>
+    <acp-chat></acp-chat>
+    <acp-workspace></acp-workspace>
+  </main>
+  <acp-wizard></acp-wizard>
+
+  <script type="module" src="/main.ts"></script>
+</body>
+</html>

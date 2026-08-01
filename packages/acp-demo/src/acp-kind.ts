@@ -237,6 +237,13 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
           agent: entry.name,
           title: entry.title,
           pid: child.pid ?? null,
+          // The agent's cwd, absolute — ACP's `session/new` requires one,
+          // and the page is the ACP client, so the page has to have it.
+          // A deliberate exception to D22's "names, never paths": that rule
+          // protects a client from learning the layout of workspaces it was
+          // never granted, and this client is holding a handle to this exact
+          // folder. The path is a label for a capability it already has.
+          cwd: opts.root,
           argv: [entry.bin, ...entry.args],
           sandboxed: !!sandbox,
           confinement: summary,

@@ -1243,6 +1243,15 @@ by five rules:
    (R1). A sandbox that cannot be applied fails the spawn (`1002`) rather
    than degrading to an unconfined agent (R3, the `deadPty` precedent).
 
+`acp/info` also returns the agent's **absolute cwd**, which is a deliberate
+exception to [D22](#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)'s
+"names, never paths": ACP's `session/new` requires an absolute cwd, and the
+ACP client here is the page. The rule exists so a client cannot learn the
+layout of workspaces it was never granted; this client is holding a handle
+to this exact folder, so the path is a label for a capability it already
+has, not a disclosure. A multi-tenant host serving `acp` would owe the same
+question a different answer.
+
 **Context.** #18 asked which of two routes the ACP demo should take: a plain
 `{kind: "shell", pty: false}` plus a browser wrapper, or a registered kind.
 Transport-wise both work — the pty path already carried an agent CLI
