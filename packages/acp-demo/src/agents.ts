@@ -22,6 +22,14 @@
 // whose message is "Cannot call write after a stream was destroyed" — a
 // denial that is legible (R9) and wrong about its cause (R19). With
 // `~/.pi` carved, the same run completes.
+//
+// Every entry is looked up on PATH and **installed by the human, never by
+// us** ([#100](https://github.com/dglazkov/fsio/issues/100)): vendoring an
+// adapter was measured at +118 MB and +115 transitive packages (the Zed
+// adapter bundles the whole Claude Code harness — an 11.5 MB `cli.js` — plus
+// native libvips), against a 164 MB tree, for a demo that exists to show a
+// small protocol. So each entry carries an `install` line the helper prints
+// verbatim, and this file stays a list of *names*, not a dependency set.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,6 +60,11 @@ export interface AgentEntry {
   args: string[];
   /** human-facing one-liner for the wizard/banner. */
   title: string;
+  /** how to get it, printed verbatim when this machine does not have it.
+   *  Never run for the human — installing software is their gesture to
+   *  make, not this helper's (P3: a distinct rung wants a distinct
+   *  gesture; P5: we are not the party that gets to grant it). */
+  install: string;
   state: StatePosture;
   /** extra env this agent needs beyond the measured floor (env.ts). */
   env?: Record<string, string>;
@@ -63,6 +76,13 @@ export const AGENTS: AgentEntry[] = [
     bin: "pi-acp",
     args: [],
     title: "pi coding agent (ACP adapter)",
+    // The demo's default subject: one small package, and model-agnostic —
+    // which keeps the page an *ACP* client rather than a client of any one
+    // vendor's agent. Caveat worth knowing before you drive it: pi reads and
+    // edits with its own hands, so it never sends `session/request_permission`
+    // or `fs/*` (#100). What it exercises is the transport, the framing, the
+    // confinement facts and the live workspace — not the consent surface.
+    install: "npm i -g pi-acp",
     state: {
       mode: "carve",
       homeDirs: [".pi"],
@@ -70,15 +90,28 @@ export const AGENTS: AgentEntry[] = [
     },
   },
   {
-    // The Zed adapter for the Claude Code CLI. Not exercised by this
-    // repo's tests — listed because it is the other posture, and F26
-    // measured its state placement directly: CLAUDE_CONFIG_DIR moves the
-    // whole tree with zero denials, while the credential stays in the login
-    // Keychain (reachable here only because the profile is `allow default`).
-    name: "claude-code-acp",
-    bin: "claude-code-acp",
+    // The Claude Code ACP adapter. Not exercised by this repo's tests —
+    // listed because it is the other posture, and F26 measured its state
+    // placement directly: CLAUDE_CONFIG_DIR moves the whole tree with zero
+    // denials, while the credential stays in the login Keychain (reachable
+    // here only because the profile is `allow default`).
+    //
+    // Renamed since F26 was written (checked 2026-08-01): the package
+    // `@zed-industries/claude-code-acp` (0.16.2, bin `claude-code-acp`) is
+    // deprecated in favour of `@agentclientprotocol/claude-agent-acp`
+    // (0.64.0, bin `claude-agent-acp`). The name here is the new one; an
+    // entry pointing at a deprecated package is an entry that will quietly
+    // stop matching what people install.
+    //
+    // Unlike pi-acp this one *does* send `session/request_permission`, which
+    // is why it is the standing answer to #100 for anyone who wants to see
+    // R6 fire against a real agent. It is a PATH install on purpose (see the
+    // note at the top of this file) and needs its own Claude credential.
+    name: "claude-agent-acp",
+    bin: "claude-agent-acp",
     args: [],
     title: "Claude Code (ACP adapter)",
+    install: "npm i -g @agentclientprotocol/claude-agent-acp",
     state: {
       mode: "place",
       env: "CLAUDE_CONFIG_DIR",

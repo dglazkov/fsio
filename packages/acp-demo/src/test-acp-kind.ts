@@ -32,6 +32,7 @@ const FAKE: AgentEntry = {
   bin: process.execPath,
   args: [fixture],
   title: "fixture agent",
+  install: "(built with this repo)",
   state: { mode: "place", env: "FAKE_STATE", why: "the fixture takes its state dir from the environment" },
 };
 
