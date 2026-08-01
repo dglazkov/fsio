@@ -17,7 +17,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { HostServer } from "@fsio/host";
 import { acpKind } from "./acp-kind.js";
-import { AGENTS, resolveBin } from "./agents.js";
+import { AGENTS, resolveBin, type AgentEntry } from "./agents.js";
 import { agentProfile } from "./profile.js";
 import { sandboxArgv } from "./sandbox.js";
 
@@ -30,9 +30,11 @@ const fail = (msg: string): never => {
 
 let rootArg: string | null = null;
 let wantSandbox = true;
+let wantFixture = false;
 for (const a of process.argv.slice(2)) {
   if (a === "--no-sandbox") wantSandbox = false;
-  else if (a.startsWith("-")) fail(`unknown flag ${a} — usage: fsio-acp-helper [dir] [--no-sandbox]`);
+  else if (a === "--fixture") wantFixture = true;
+  else if (a.startsWith("-")) fail(`unknown flag ${a} — usage: fsio-acp-helper [dir] [--no-sandbox] [--fixture]`);
   else rootArg = a;
 }
 
@@ -73,12 +75,46 @@ const scratchReal = fs.realpathSync(scratch);
 
 // ---- which agents this machine can actually serve
 
-const installed = AGENTS.filter((a) => resolveBin(a) !== null);
+// `--fixture` swaps the whole allow-list for one scripted puppet (#100). It
+// asks permission and has no hands: every file it touches travels as an
+// `fs/*` request to the page. That makes the page's two never-fired paths
+// exercisable with no agent installed, no credential, and no model quota —
+// and identically on every run, which is what a browser loop needs to assert
+// on. It is a test asset, so it says so in its own title.
+const FIXTURE: AgentEntry = {
+  name: "fixture",
+  bin: process.execPath,
+  args: [path.join(import.meta.dirname, "fixture-agent.js")],
+  title: "PUPPET — a scripted test agent, not a real one",
+  install: "(built with this repo)",
+  state: {
+    mode: "place",
+    env: "FSIO_FIXTURE_STATE",
+    why: "the puppet keeps no state; a placed dir it never writes to leaves the profile with no carve at all (R4/R17).",
+  },
+};
+
+// `resolveBin` would happily resolve `process.execPath` and report the puppet
+// "installed" even when its script is missing, so check the script itself.
+if (wantFixture && !fs.existsSync(FIXTURE.args[0]!)) {
+  fail(`--fixture: the puppet is not built (expected ${FIXTURE.args[0]}). Run \`npm run build\`.`);
+}
+
+const catalogue: AgentEntry[] = wantFixture ? [FIXTURE] : AGENTS;
+const installed = catalogue.filter((a) => resolveBin(a) !== null);
+const missing = catalogue.filter((a) => resolveBin(a) === null);
+
+/** The catalogue line for one agent: what it is, and how to get it. Shared
+ *  by the startup failure and the banner so the two never drift. */
+const offer = (a: AgentEntry): string => `    ${a.name.padEnd(17)} ${a.title}\n      ${a.install}`;
+
 if (installed.length === 0) {
   fail(
-    `no ACP agent found on PATH. This helper knows:\n` +
-      AGENTS.map((a) => `    ${a.name.padEnd(18)} ${a.bin} — ${a.title}`).join("\n") +
-      `\n  Install one (e.g. \`npm i -g pi-acp\`) and re-run.`
+    `no ACP agent found on PATH. This helper knows:\n\n` +
+      AGENTS.map(offer).join("\n") +
+      `\n\n  Install one and re-run. fsio ships none of them on purpose (#100):\n` +
+      `  vendoring an adapter costs ~118 MB of transitive dependencies, and an\n` +
+      `  agent you installed is one you can also inspect, update, and revoke.`
   );
 }
 
@@ -112,6 +148,11 @@ server.registerKind(
     tmp: scratchReal,
     stateRoot,
     sandbox: wantSandbox,
+    // The page names an agent from this list or names none; either way the
+    // wire never contributes a path (agents.ts). `--fixture` narrows the
+    // list to one, so a page asking for "pi-acp" here is refused by the same
+    // allow-list that refuses anything else it does not serve.
+    agents: catalogue,
   })
 );
 
@@ -148,13 +189,27 @@ if (wantSandbox) {
 
 const folderName = path.basename(rootReal);
 console.log(`
-fsio ACP demo · serving ${rootReal}
-  agents available here: ${installed.map((a) => a.name).join(", ")}
+fsio ACP demo · serving ${rootReal}${
+  wantFixture
+    ? `
+  !! --fixture: this is a PUPPET, not an agent. It calls no model and thinks
+  nothing. It asks permission and has no hands: every file it reads or writes
+  goes through the page. It exists to make the permission card and the fs/*
+  handlers actually run (#100).
+    try:  "go"      propose an edit, ask, write when you allow it
+          "refuse"  reach outside the folder and read the refusals back
+          "many"    three separate asks in one turn
+          "read"    a read, which needs no card — you granted the folder`
+    : ""
+}
+  agents available here: ${installed.map((a) => a.name).join(", ")}${
+    missing.length ? `\n  also known, not installed:\n` + missing.map(offer).join("\n") : ""
+  }
   ${
     wantSandbox
       ? `the agent is confined to this folder: it writes ${folderName}/ (never .fsio),
   one scratch dir, and its own state. It READS everything you can read and
-  the network is open — its brain is remote. The exact policy is written to
+  the network is open — ${wantFixture ? "though the puppet uses neither" : "its brain is remote"}. The exact policy is written to
   .fsio/profiles/<session>.sb while a session runs.`
       : `!! --no-sandbox: the agent runs UNCONFINED — it can write anything you can.
   The page is told (the session header says so). Use this only for debugging.`

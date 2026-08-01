@@ -1021,6 +1021,65 @@ requires passing `from` into `synthesizeEnv`.
 [#71](https://github.com/dglazkov/fsio/issues/71),
 [#77](https://github.com/dglazkov/fsio/issues/77).
 
+### F29 — the consent surface fires: 5 permission asks, 10 `fs/*` calls, 2 rejections that wrote nothing — and an `agent_message_chunk` is a fragment, not a line
+
+Measured 2026-08-01 (macOS 26.5/arm64, Chrome; the shipped `/acp` page, the
+helper run with `--fixture`, a human answering every card; the page's own
+`report.json`). Subject: the **puppet agent**
+(`packages/acp-demo/src/fixture-agent.ts`) — a scripted ACP speaker that asks
+permission and has no hands, so every file it touches travels as an `fs/*`
+request. Written because
+[#100](https://github.com/dglazkov/fsio/issues/100) established that no
+installed agent exercises this half: pi-acp reads and edits itself and asks
+nobody, so the same page measured on the same day scored 52 `session/update`
+notifications, 3 prompts, 1 file change, **zero** `session/request_permission`
+and **zero** `fs/*`.
+
+| | pi-acp (#100's measurement) | puppet, same page, same day |
+|---|---|---|
+| `session/request_permission` | 0 | **5** |
+| answered allow / reject | — | 3 / 2 |
+| `fs/*` | 0 | **10** (7 read, 3 write) |
+| files changed through the page's grant | 0 | 3 |
+| containment refusals, with text | 0 | 4 |
+
+- **The consent property holds in practice, not just in assertion.** Both
+  rejections are followed in the log by the next request with no write
+  between them — `permission answered: reject` → nothing. P5's "the party
+  asking is not the party deciding" is now a measured behavior of the
+  shipped page rather than a claim in a comment.
+- **R9's refusals survive contact, and name the boundary *and* the folder.**
+  The exact strings, produced in the browser by `containedRelative()` and
+  read back out of the agent's transcript for the first time:
+  `refused: /etc/passwd is outside the folder this page was granted
+  (/Users/…/fsio-acp)`; `refused: .fsio is the transport's own directory,
+  owned by the helper`; `path must be absolute: NOTES.md`. Each is
+  actionable by the receiving agent, which is what "written to be relayed"
+  had always asserted and nothing had ever tested.
+- **An `agent_message_chunk` is a *fragment*, not a line — the agent owns
+  its terminators.** This cost a bug. A client is correct to concatenate
+  consecutive chunks into one flowing block (the page does, `web/agent.ts`),
+  so an agent emitting one chunk per line with no trailing newline gets a
+  transcript with every line welded to the next
+  (`…says back.✓ somewhere outside…`). The rule is not ACP-specific
+  guesswork — it follows from "chunk", and it will bite any agent this repo
+  writes. Regression-tested in `test-fixture-agent.ts`.
+- **A read needs no card.** The `read` scenario drew no permission request
+  at all: the human already granted the folder, and re-asking per read would
+  be exactly the prompt fatigue P3 says to fight with scope rather than
+  breadth.
+- **What this does *not* measure.** The puppet writes its own permission
+  card, so "does the card carry enough to decide on" is answered here only
+  for a card we authored. Whether a *real* agent's request carries the tool,
+  the file and the diff — and whether its own permission layer contradicts
+  the sandbox (F26 cell At found it did not, for a different agent) — still
+  needs a real agent that asks, which is #100's remaining half.
+→ [D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
+F24, F26,
+[#100](https://github.com/dglazkov/fsio/issues/100),
+[#18](https://github.com/dglazkov/fsio/issues/18); feeds
+[#86](https://github.com/dglazkov/fsio/issues/86).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
