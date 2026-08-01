@@ -1282,6 +1282,21 @@ the shell demo does (F24 measured what that hands a child; an agent has no
 human watching it, and the sandbox is a write wall — the environment is the
 only lever that can withhold the ssh-agent socket).
 
+**Measured caveat on rule 3, and it is the one that matters.** The payoff —
+the agent's consent question as page UI — is the *agent's* to offer, and
+the first field test (2026-08-01, pi-acp 0.0.32 through the shipped page,
+three turns, a real file edit) produced **zero** `session/request_permission`
+requests and **zero** `fs/*` requests: pi-acp calls `requestPermission` only
+for extension UI, edits files with its own hands, and answered "read
+/etc/passwd" without involving the client at all. The client implements
+both, and both stayed unexercised. Two consequences, neither of which
+changes the decision. (1) R6's demo needs an agent that asks
+([#100](https://github.com/dglazkov/fsio/issues/100)) — the mechanism
+composing with a consent surface it does not own presupposes the surface
+exists. (2) Nothing in this design bounds an agent's *reads*: the profile
+is a write wall (F24) and the page's `fs/*` refusals bound only what the
+page does on the agent's behalf. The demo's copy says so.
+
 **Findings.** F28 (measured, this design's subject), F24/F26 (environment
 and state posture), F12 (downlink headroom for token streams). Depends on
 D13, D10, D6. Known gap, filed rather than papered over: `exit()` stops

@@ -66,8 +66,10 @@ class AcpWorkspace extends SignalWatcher(LitElement) {
       </ul>
       ${facts
         ? html`<footer>
-            the agent writes here and nowhere else${facts.sandboxed ? "" : " — except it is NOT confined right now"}.
-            read directly by this page through your folder grant.
+            ${facts.sandboxed
+              ? html`the agent <em>writes</em> here and nowhere else — it still reads everything you can read.`
+              : html`the agent is NOT confined right now: it can write anything you can.`}
+            this list is read directly by the page, through your folder grant.
           </footer>`
         : nothing}
     `;

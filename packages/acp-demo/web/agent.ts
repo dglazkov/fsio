@@ -11,11 +11,20 @@
 //
 //   `fs/read_text_file` / `fs/write_text_file` — the agent asks the *page*
 //   to touch a file, and the page serves it through the directory handle
-//   the human granted. The grant is the boundary: a path outside the folder
-//   is refused here, in the browser, with an error the agent can relay
-//   (R9). There is no profile to author for this rung — the browser is the
-//   sandbox ([#74](https://github.com/dglazkov/fsio/issues/74)'s rung 2,
-//   R8: don't duplicate a wall another party enforces).
+//   the human granted. A path outside the folder is refused here, in the
+//   browser, with an error the agent can relay (R9). There is no profile to
+//   author for this rung — the browser is the sandbox
+//   ([#74](https://github.com/dglazkov/fsio/issues/74)'s rung 2, R8: don't
+//   duplicate a wall another party enforces).
+//
+// Both are the agent's choice to use, and that is the honest caveat: an
+// agent that reads files with its own hands is bounded by the Seatbelt
+// profile, which is a *write* wall (F24) — it reads the world. Measured in
+// the first field test: pi-acp answered "read /etc/passwd" without ever
+// calling `fs/read_text_file`, and edited a file without asking. What these
+// handlers bound is what the page does **on the agent's behalf**; what the
+// profile bounds is what the child may write. Neither one bounds reads, and
+// no wording here should suggest otherwise.
 import { AcpConnection } from "./acp";
 import { log } from "./reporter";
 import { entries, pushEntry, turn, type PermissionEntry, type TextEntry, type ToolEntry } from "./state";
