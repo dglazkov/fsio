@@ -46,6 +46,7 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `spec/PROTOCOL.md` — the normative spec; the prototype is its workbench
 - `spec/FINDINGS.md` — measured platform behaviors (F1–F12), the lab notebook
 - `spec/DECISIONS.md` — why the protocol is shaped this way (ADR-lite)
+- `spec/PRINCIPLES.md` — platform principles (P1–P6): what the platform refuses to trade away
 - `packages/common` — frame codec + JSON-RPC control plane (both sides import)
 - `packages/client` — client library: sessions over the shared dir (browser or Node, D11)
 - `packages/host` — native host: adopts sessions, answers pings, spawns shells

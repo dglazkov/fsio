@@ -9,10 +9,36 @@ style.
 
 - `spec/PROTOCOL.md` — normative (MUST/SHOULD). `spec/FINDINGS.md` — measured
   platform behaviors, F-numbered. `spec/DECISIONS.md` — ADR-lite, D-numbered.
+  `spec/PRINCIPLES.md` — platform principles, P-numbered (handles below).
 - `TESTING.md` — test tiers and what deliberately isn't tested.
 - `packages/{common,client,host,web,bench}` — npm workspaces; `common` is the
   single source of protocol truth (types + codec + JSON-RPC), both sides
   import it.
+
+## Principles (P1–P6)
+
+The six handles from `spec/PRINCIPLES.md`, meant to be said out loud in
+design arguments — each entry there carries the context/forces/guidance
+behind its handle:
+
+- **P1 — the URL travels; the data stays.** Ship interface, never
+  custody.
+- **P2 — if it didn't ride the folder, it didn't happen.** No side
+  channels; optimize within the medium, never around it.
+- **P3 — trust is a noun.** Every capability is a distinct rung with a
+  distinct gesture; fight prompt fatigue with scope and durability,
+  never breadth.
+- **P4 — fast is a mode, not a premise.** Latency is a parameter;
+  correctness holds at any value of it.
+- **P5 — never your own bouncer.** A rung's enforcer must predate, and
+  not benefit from, the software asking.
+- **P6 — the bottom rung is a destination.** Read-only is a place to
+  live, not an on-ramp.
+
+A design that strains one of these must name it and argue — in the
+D-entry or the PR, not silently. Cite P-numbers the way F/D numbers are
+cited. Before merging protocol-touching changes, ask which principles
+the diff touches (often none — say so and move on).
 
 ## Ground truth commands
 
@@ -58,7 +84,7 @@ style.
    not ranked first).
 4. Direct-to-main is fine for docs/spec/tests; protocol-touching changes
    prefer a short-lived branch + PR so CI gates the merge.
-5. Commit messages explain *why*, cite F/D/issue numbers, and record
+5. Commit messages explain *why*, cite F/D/P/issue numbers, and record
    measured results when behavior was verified (numbers, not adjectives).
    Write multi-line commit/PR/comment bodies to a temp file and pass
    `-F`/`--body-file` — heredocs inside `"$(cat <<'EOF' …)"` get mangled

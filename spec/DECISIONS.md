@@ -3,9 +3,13 @@
 ADR-lite, append-only. Each entry records a decision, its context, the
 alternatives rejected, and the findings that forced it. Numbers (D1, D2, …)
 are stable and never reused; superseded decisions get a note, not an edit.
+Entries may carry a **Principles.** line citing the P-numbers they answer
+to ([PRINCIPLES.md](PRINCIPLES.md)); a decision that *strains* a principle
+must name it and argue rather than stay silent.
 
 Companions: [PROTOCOL.md](PROTOCOL.md) (the normative spec),
-[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F22).
+[FINDINGS.md](FINDINGS.md) (measured platform behaviors, F1–F22),
+[PRINCIPLES.md](PRINCIPLES.md) (the platform principles decisions answer to).
 
 ## D1 — events are wakeups, not messages
 
