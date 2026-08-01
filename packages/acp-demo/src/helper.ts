@@ -17,7 +17,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { HostServer } from "@fsio/host";
 import { acpKind } from "./acp-kind.js";
-import { AGENTS, resolveBin, type AgentEntry } from "./agents.js";
+import { AGENTS, roster, type AgentEntry, type RosterEntry } from "./agents.js";
 import { agentProfile } from "./profile.js";
 import { sandboxArgv } from "./sandbox.js";
 
@@ -101,7 +101,9 @@ const FIXTURE: AgentEntry = {
   bin: process.execPath,
   args: [path.join(import.meta.dirname, "fixture-agent.js")],
   title: "PUPPET — a scripted test agent, not a real one",
-  install: "(built with this repo)",
+  install: "(built with this repo; re-run the helper with --fixture)",
+  // Asking is the entire reason it exists (F29: 5 asks, 10 `fs/*`).
+  asks: true,
   state: {
     mode: "place",
     env: "FSIO_FIXTURE_STATE",
@@ -120,22 +122,23 @@ if (agentArg && !AGENTS.some((a) => a.name === agentArg)) {
 }
 
 const catalogue: AgentEntry[] = wantFixture ? [FIXTURE] : agentArg ? AGENTS.filter((a) => a.name === agentArg) : AGENTS;
-const installed = catalogue.filter((a) => resolveBin(a) !== null);
-const missing = catalogue.filter((a) => resolveBin(a) === null);
 
-/** The catalogue line for one agent: what it is, and how to get it. Shared
- *  by the startup failure and the banner so the two never drift. */
-const offer = (a: AgentEntry): string => `    ${a.name.padEnd(17)} ${a.title}\n      ${a.install}`;
+/** The catalogue line for one agent: what it is, and how to get it. */
+const offer = (a: RosterEntry): string => `    ${a.name.padEnd(17)} ${a.title}\n      ${a.install}`;
 
-if (installed.length === 0) {
-  fail(
-    `no ACP agent found on PATH. This helper knows:\n\n` +
-      AGENTS.map(offer).join("\n") +
-      `\n\n  Install one and re-run. fsio ships none of them on purpose (#100):\n` +
-      `  vendoring an adapter costs ~118 MB of transitive dependencies, and an\n` +
-      `  agent you installed is one you can also inspect, update, and revoke.`
-  );
-}
+// An empty roster is NOT a startup failure any more (#102).
+//
+// It used to be: no agent on PATH, print the catalogue, exit 1. That put
+// the one message a newcomer most needs to read in the one place they are
+// least likely to be looking — a terminal that has already quit, before the
+// page they were sent to has loaded anything. The text was always written
+// for a human; it was going to the wrong surface.
+//
+// So the helper serves an empty roster and the page renders it. The install
+// wall does not disappear — nothing here can install an agent for anyone
+// (P3/P5: a distinct rung wants a distinct gesture, and we are not the
+// party that gets to make it) — it just stops being a process that quit.
+const rosterNow = (): RosterEntry[] => roster(catalogue);
 
 // ---- host
 
@@ -175,6 +178,19 @@ server.registerKind(
   })
 );
 
+// ---- the roster (#102): what this machine can serve, where the page can
+// see it.
+//
+// It rides the service directory as the `acp` kind's embedder `detail`
+// (D31), which means the page learns it on the same `services.json` read it
+// already does to check the kind exists — no second file, no second poll,
+// no second doorbell. Before this, the ONLY channel by which roster
+// knowledge reached the browser was a spawn failure: naming an agent that
+// is not there got you a refusal that listed the alternatives. That is a
+// chooser you have to break something to open.
+const publishRoster = (): void => void server.setServices({ kindDetail: { acp: { agents: rosterNow() } } });
+publishRoster();
+
 // The live-host refusal (#40 — e.g. a second helper on the same folder) is
 // an operator message, not a crash: no stack, just the reason.
 await server.start().catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
@@ -202,11 +218,21 @@ if (wantSandbox) {
   fs.rmSync(probePath, { force: true });
 }
 
+// Re-scan on a slow timer so an agent installed *while the page is sitting
+// on the install card* shows up there without restarting anything. The scan
+// is a few `access()` calls, and `setServices` is content-diffed: a scan
+// that finds nothing new writes nothing and moves no revision (D24), so the
+// page's cached copy stands until there is genuinely news.
+const rosterTimer = setInterval(publishRoster, 3000);
+
 // ---- banner: the second UI surface — what to do next, and the honest
 // safety sentence (F24: it is a *write* wall; reads and network are not
 // bounded, and saying otherwise would be the dishonest version).
 
 const folderName = path.basename(rootReal);
+const startupRoster = rosterNow();
+const installed = startupRoster.filter((a) => a.installed);
+const missing = startupRoster.filter((a) => !a.installed);
 console.log(`
 fsio ACP demo · serving ${rootReal}${
   wantFixture
@@ -221,8 +247,18 @@ fsio ACP demo · serving ${rootReal}${
           "read"    a read, which needs no card — you granted the folder`
     : ""
 }
-  agents available here: ${installed.map((a) => a.name).join(", ")}${
-    missing.length ? `\n  also known, not installed:\n` + missing.map(offer).join("\n") : ""
+  ${
+    installed.length
+      ? `agents available here: ${installed.map((a) => a.name).join(", ")}${
+          missing.length ? `\n  also known, not installed:\n` + missing.map(offer).join("\n") : ""
+        }`
+      : `!! no ACP agent on your PATH. The helper is running anyway — the page will
+  show you this same list and update itself when one appears, so you can
+  install without restarting anything:\n\n` +
+        missing.map(offer).join("\n") +
+        `\n\n  fsio ships none of them on purpose (#100): vendoring an adapter costs
+  ~118 MB of transitive dependencies, and an agent you installed is one you
+  can also inspect, update, and revoke.`
   }
   ${
     wantSandbox
@@ -246,6 +282,7 @@ let closing = false;
 const shutdown = async (signal: string) => {
   if (closing) return;
   closing = true;
+  clearInterval(rosterTimer);
   console.log(`\n${signal} — closing sessions…`);
   await server.close();
   fs.rmSync(fsioDir, { recursive: true, force: true });

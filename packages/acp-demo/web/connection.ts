@@ -4,7 +4,22 @@ import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
 import { log, reporter, step } from "./reporter";
-import { agentFacts, diagnostics, folder, gate, helper, notice, phase, pickError, pushEntry, turn, wizardStep, type Diagnostics } from "./state";
+import {
+  agentFacts,
+  agents,
+  diagnostics,
+  folder,
+  gate,
+  helper,
+  notice,
+  phase,
+  pickError,
+  pushEntry,
+  turn,
+  wizardStep,
+  type AgentOffer,
+  type Diagnostics,
+} from "./state";
 import { startWatching } from "./workspace";
 
 let client: FsioClient | null = null;
@@ -31,6 +46,14 @@ export const onMac = navigator.platform.startsWith("Mac");
 let hostTimer: ReturnType<typeof setInterval> | undefined;
 let diagTimer: ReturnType<typeof setInterval> | undefined;
 let helperWasAlive = false;
+/** The revision of the service directory this page has already read. The
+ *  heartbeat carries it (D3's doorbell), so re-reading is free to skip
+ *  until it moves — which is also what makes "install an agent and watch it
+ *  appear" cost nothing while nobody is installing anything. */
+let servicesRev: number | undefined;
+/** Kept so the agent chooser can start a session after the wizard has
+ *  already run. */
+let rootHandle: FileSystemDirectoryHandle | null = null;
 
 export async function pickFolder(): Promise<void> {
   pickError.set(null);
@@ -48,6 +71,8 @@ async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
   step(`connecting to ${root.name}/`);
   pickError.set(null);
   folder.set({ name: root.name });
+  rootHandle = root;
+  servicesRev = undefined;
   clearInterval(hostTimer);
   // Probe for .fsio WITHOUT creating it: `connect()` would create one in
   // whatever folder was picked, littering the wrong folder and hiding the
@@ -93,15 +118,23 @@ async function refreshHelper(root: FileSystemDirectoryHandle): Promise<void> {
     helper.set("silent");
     return;
   }
-  if (helperWasAlive) return;
+  // Re-read the directory on the first beat and on every revision bump
+  // after it — the roster is live, so an agent installed while this page
+  // sits on the install card lands here without a reload.
+  const rev = host.info?.servicesRev;
+  const first = !helperWasAlive;
+  if (!first && rev === servicesRev) return;
   helperWasAlive = true;
+  servicesRev = rev;
+
   // D25's handshake, used for what it is for: this page needs one specific
   // kind, and a host that doesn't serve it should say so here rather than
   // through a spawn failure three clicks later.
-  const services = await client.services(host.info?.servicesRev);
-  const kinds = (services?.kinds ?? []).map((k) => k.name);
-  reporter.event("helper-alive", { kinds });
-  if (!kinds.includes("acp")) {
+  const services = await client.services(rev);
+  const acp = (services?.kinds ?? []).find((k) => k.name === "acp");
+  if (first) reporter.event("helper-alive", { kinds: (services?.kinds ?? []).map((k) => k.name) });
+  if (!acp) {
+    const kinds = (services?.kinds ?? []).map((k) => k.name);
     helper.set("wrong-kind");
     pickError.set({
       msg: `the helper in ${root.name}/ doesn't serve ACP sessions`,
@@ -112,17 +145,77 @@ async function refreshHelper(root: FileSystemDirectoryHandle): Promise<void> {
     return;
   }
   helper.set("alive");
-  await startAgent(root);
+
+  const roster = readRoster(acp.detail);
+  agents.set(roster);
+  if (session) return; // an agent is already running; a roster change is news for nobody
+
+  // A helper that publishes no roster is a pre-#102 one. Unknown detail is
+  // "not supported", never an error (D25), so let it choose for itself —
+  // exactly what every run did before this existed.
+  if (roster === null) {
+    await startAgent(root, null);
+    return;
+  }
+
+  const ready = roster.filter((a) => a.installed);
+  reporter.event("roster", { installed: ready.map((a) => a.name), known: roster.length });
+  // One agent: name it and go — the page has nothing to ask about. Zero or
+  // several: the human decides, which is the whole point (the helper used
+  // to pick the first that resolved, silently).
+  if (ready.length === 1) {
+    await startAgent(root, ready[0]!.name);
+    return;
+  }
+  phase.set("wizard");
+  wizardStep.set(3);
+}
+
+/** The roster as published by the helper (#102). Everything here arrives as
+ *  a file that any co-tenant of the folder can write (D20), so it is parsed
+ *  defensively and never trusted into anything but display — the name goes
+ *  back to the helper on a spawn, where the allow-list judges it again. */
+function readRoster(detail: Record<string, unknown> | undefined): AgentOffer[] | null {
+  const raw = detail?.["agents"];
+  if (!Array.isArray(raw)) return null;
+  const out: AgentOffer[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== "object") continue;
+    const r = e as Record<string, unknown>;
+    if (typeof r["name"] !== "string" || typeof r["title"] !== "string") continue;
+    out.push({
+      name: r["name"],
+      title: r["title"],
+      install: typeof r["install"] === "string" ? r["install"] : "",
+      installed: r["installed"] === true,
+      asks: r["asks"] === true,
+    });
+  }
+  return out;
+}
+
+/** The chooser's button (#102): the human picked, so the spawn names it. */
+export async function chooseAgent(name: string): Promise<void> {
+  if (!rootHandle || session) return;
+  await startAgent(rootHandle, name);
 }
 
 // ---------------------------------------------------------------- the agent
 
-async function startAgent(root: FileSystemDirectoryHandle): Promise<void> {
+/** `agent` is the name the human chose, or null to let the helper pick —
+ *  which is what a helper too old to publish a roster gets. Either way the
+ *  wire carries a **name**, never a path: the allow-list is host-side and
+ *  judges it again (D30 rule 4). */
+async function startAgent(root: FileSystemDirectoryHandle, name: string | null): Promise<void> {
   if (!client || session) return;
-  step("asking the helper for an agent");
+  step(name ? `asking the helper for ${name}` : "asking the helper for an agent");
+  // What the page *asked* for, beside what the host reports it *started*
+  // (`agent-started`): the pair is how a cooperative run verifies that the
+  // chooser chose, rather than that the helper picked first-installed.
+  reporter.event("agent-chosen", { agent: name });
   turn.set("starting");
   phase.set("chat");
-  const s = client.createSession({ kind: "acp", client: "acp-demo" }, { pollMs: 15 });
+  const s = client.createSession({ kind: "acp", client: "acp-demo", ...(name ? { agent: name } : {}) }, { pollMs: 15 });
   session = s;
   const conn = new AcpConnection(s, {
     onTraffic: (dir, msg) => reporter.event("acp", { dir, method: (msg as { method?: string }).method ?? null }),

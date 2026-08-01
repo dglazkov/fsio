@@ -1306,3 +1306,77 @@ delivery to the kind, so `acp/diagnostics` — the stderr tail that says
 last snapshot. Backpressure remains D13's caveat
 ([#10](https://github.com/dglazkov/fsio/issues/10)): token streams fit,
 file dumps do not.
+
+## D31 — a kind may carry embedder detail: transcribed, never interpreted, detected by presence
+
+**Decision.** Each entry of `services.json`'s `kinds` gains an optional
+`detail` object. The host library copies it verbatim from
+`ServicesInput.kindDetail` and interprets no key of it; detail naming a kind
+the host does not serve is dropped (detail about nothing advertises
+nothing), and a value that is not a JSON object is dropped (the document
+keeps one shape for every reader). Four rules follow:
+
+1. **Clients detect it by presence, not by a capability name.**
+   [D25](#d25--capabilities-are-feature-detected-names-protocol-is-the-on-disk-version)
+   names *facilities every peer must agree on*; `detail` is a contract
+   between one embedder and the page that knows it, and burning a registry
+   name on a payload nobody else will implement is the wrong trade. An
+   absent `detail` reads as "this host says nothing", never as an error.
+2. **The [D24](#d24--the-service-directory-is-the-origin-facing-capability-document)
+   privacy line applies unchanged, and the library cannot enforce it.** One
+   file serves every granted origin, so an embedder that puts paths or
+   secrets in `detail` has published them to all of them. The demo's roster
+   is names and prose; its `bin` never leaves the host.
+3. **`rev` moves when `detail` changes and not otherwise**, exactly as for
+   every other field. That is what makes a *live* roster cheap: the helper
+   re-scans PATH on a timer, and a scan that finds no news writes nothing
+   and rings no doorbell.
+4. **Advertisement is not authorization.** A name read out of `detail` and
+   sent back on a spawn is judged again by whatever judged it before — for
+   the `acp` kind, the host-side allow-list
+   ([D30](#d30--acp-is-payload-the-host-frames-the-browser-is-the-client)
+   rule 4). Nothing here widens what a page may ask for; it only lets the
+   page ask *knowingly*.
+
+**Context.** [#102](https://github.com/dglazkov/fsio/issues/102). The `/acp`
+page could not see which agents the machine had. Roster knowledge reached
+the browser only by failing — name an agent that is not installed and the
+spawn refusal lists the alternatives — and with none installed the helper
+exited before the page loaded anything, which put the one message a
+newcomer most needs in a terminal that had already quit. A roster is a list
+of *records* (name, title, install line, present or not, and whether that
+agent sends a permission request at all — F29/F30 measured that the demo's
+default agent does not), and `capabilities` is a flat list of names, so the
+document had nowhere to put it. D24 already takes exactly this posture
+toward `workspaces` and `needsGrant`: the embedder supplies what the library
+cannot know.
+
+**The line this decision must not blur.** Publishing a roster tempts the
+next step — scan PATH, offer everything that looks like an agent. That is
+refused here and in the demo's code: discovery *enumerates the allow-list
+and checks whether each entry is present*. The allow-list is the boundary
+([#6](https://github.com/dglazkov/fsio/issues/6), P3); a chooser full of
+unvetted executables is a remote-controlled exec surface with a friendly
+face. P3 also explains why the empty-roster page prints an install command
+rather than running one: a distinct rung wants a distinct gesture, and P5
+says we are not the party that gets to make it.
+
+**Alternatives rejected.** A demo-private `.fsio/acp-agents.json` read
+through the folder handle — no protocol change, but it is a second service
+directory with worse manners (its own poll, its own doorbell, its own
+staleness rules), and the second embedder wanting the same thing would build
+a third. A typed roster field in the protocol (`kinds[].agents`) — the
+protocol would then own a schema for something only one embedder means
+anything by, and every future kind's detail would want the same favor. A
+capability name per detail shape (spends a name from a registry meant for
+facilities, on a payload no other peer will ever implement).
+
+**Findings.** [F29](FINDINGS.md#f29--the-consent-surface-fires-5-permission-asks-10-fs-calls-2-rejections-that-wrote-nothing--and-an-agent_message_chunk-is-a-fragment-not-a-line)
+and [F30](FINDINGS.md#f30--a-real-agent-does-ask-but-only-in-a-mode-you-cannot-set-without-importing-the-operators-whole-config-and-its-tooling-hardcodes-two-paths-under-tmp-that-tmpdir-never-names)
+supply the roster's `asks` field — the one entry in it that is a measured
+claim rather than a label, and the reason a chooser is worth having at all.
+Depends on D24, D25, D13. Feeds
+[#106](https://github.com/dglazkov/fsio/issues/106) (the demoable
+one-liner) and [#107](https://github.com/dglazkov/fsio/issues/107) (probing,
+which would fill the same field with richer facts and does not change this
+shape).

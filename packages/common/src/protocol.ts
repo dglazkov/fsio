@@ -35,6 +35,16 @@ export interface HostInfo {
 export interface ServiceKind {
   name: string;
   needsGrant?: boolean;
+  /** Embedder-supplied detail about this kind, transcribed verbatim and
+   *  interpreted by nobody in the library (D31). The protocol says only
+   *  that it is a JSON object; its keys are a contract between one embedder
+   *  and the page that knows it, which is why a client detects it by
+   *  **presence** rather than by a capability name — an unknown `detail` is
+   *  ignorable, and a facility every peer must agree on is not what this
+   *  field is for. Subject to the same privacy line as the rest of the
+   *  document (D24): one file serves every granted origin, so no paths and
+   *  no secrets. */
+  detail?: Record<string, unknown>;
 }
 
 /** One advertisable workspace: a **name**, never a path (D22/D24). `label`
