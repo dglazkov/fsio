@@ -8,7 +8,11 @@ import { SignalWatcher } from "@lit-labs/signals";
 import { gate, phase, wizardStep, folder, helper, pickError } from "../state";
 import { pickFolder, onMac } from "../connection";
 
-const CMD = "npx github:dglazkov/fsio#acp-demo";
+// The command that works TODAY. The terminal demo's one-liner
+// (`npx github:dglazkov/fsio#acp-demo`) needs an artifact branch this demo
+// doesn't have yet (#101) — and a wizard that prints a command which fails
+// is worse than a wizard that prints a longer one.
+const CMD = "node <your-fsio-checkout>/packages/acp-demo/dist/helper.js .";
 
 class AcpWizard extends SignalWatcher(LitElement) {
   static override styles = css`
@@ -88,7 +92,8 @@ class AcpWizard extends SignalWatcher(LitElement) {
     return html`
       <p class="explain">
         In a terminal, <code>cd</code> into the project you want the agent to
-        work on, then:
+        work on, then run the helper from your fsio checkout
+        (<code>npm i &amp;&amp; npm run build</code> there once, first):
       </p>
       <div class="cmd">
         <code>${CMD}</code>
