@@ -961,6 +961,66 @@ exit codes, which is the signal that does not depend on the log at all.
 [#71](https://github.com/dglazkov/fsio/issues/71),
 [#74](https://github.com/dglazkov/fsio/issues/74).
 
+### F28 — a second agent keeps its identity *in* its state dir, so placement and login are the same knob; the denial surfaces as a protocol error that names the wrong cause
+
+Measured 2026-08-01 (macOS 26.5/arm64, node 24.11.0, pi-acp 0.0.32 /
+`@earendil-works/pi-coding-agent` 0.82.1), spawning the agent exactly as
+`packages/acp-demo` does — `sandbox-exec` with the shipped agent profile,
+pipes, synthesized environment — and driving two ACP requests per cell:
+`initialize`, then `session/new`. No model turn was taken in any cell (no
+quota spent, and none needed: the failure lands before inference).
+
+| cell | posture | `initialize` | `session/new` |
+|---|---|---|---|
+| N | no sandbox, inherited environment | ok | ok |
+| E | no sandbox, synthesized 8-variable environment | ok | ok |
+| W | write wall (shipped profile), **no state carve** | **ok** | **fails** — JSON-RPC `-32603` |
+| Wc | write wall + `~/.pi` carved writable | ok | ok |
+
+- **The identity/state split has a second answer, and it is the opposite
+  one.** [F26](#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out)
+  found the claude CLI's credential in the login Keychain, with its state
+  freely placeable. This agent keeps `auth.json` in `~/.pi/agent`, in the
+  same directory as `sessions/` and `models-store.json` — so its
+  placement variable (`PI_CODING_AGENT_DIR`) moves the credential too, and
+  pointing it at an empty slot is indistinguishable from logging out. Two
+  subjects, two incompatible postures: **the mechanism cannot hold one
+  state policy.** `packages/acp-demo/src/agents.ts` therefore declares
+  posture per agent (`place` | `carve`) as a fact about the child, and
+  R17's slot becomes the answer for the agents that can use it rather
+  than the answer.
+- **The denial is loud, and wrong about its cause — R19's second
+  instance.** Cell W answers `session/new` with `{code: -32603, message:
+  "Internal error: Cannot call write after a stream was destroyed"}`. No
+  `EPERM`, no path, no mention of a policy; the same stderr line, and
+  nothing else. A page relaying that text tells the human about a stream.
+  Compared with F26's cell A′ (exit 0, transcript silently lost) this is
+  an improvement bought by *structure*: the write failed inside a request
+  the human had made, so the protocol had somewhere to put the error —
+  but the cause still has to be supplied by the host, which is the only
+  party that knows what it denied.
+- **The environment floor holds on a second subject.** Cell E: `PATH`,
+  `HOME`, `TERM`, `LANG`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR` — the same
+  eight F26 measured — ran the agent identically to full inheritance.
+  Synthesize-then-add (R4) is now two-for-two, and `packages/acp-demo`
+  ships it as the default rather than inheriting `process.env`.
+- **`initialize` proves nothing about a profile.** Every cell passes it,
+  including the broken one: the handshake touches no state. A helper that
+  preflights an agent by initializing it would report a green chain and
+  hand the user a session that dies on its first real request.
+
+**Reproduction.** The mechanism is the repo's: run
+`node packages/acp-demo/dist/helper.js <folder>` and drive it with a client
+(the B1 suite's rig, or the demo page). Cell W is the shipped code with the
+`homeDirs` entry removed from `agents.ts`; cell E is the default, and cell N
+requires passing `from` into `synthesizeEnv`.
+→ F24, F26,
+[D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
+[#18](https://github.com/dglazkov/fsio/issues/18); feeds
+[#86](https://github.com/dglazkov/fsio/issues/86),
+[#71](https://github.com/dglazkov/fsio/issues/71),
+[#77](https://github.com/dglazkov/fsio/issues/77).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
