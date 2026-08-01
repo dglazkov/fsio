@@ -13,9 +13,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { agentProfile, profileSummary } from "./profile.js";
+import { scratchDirs, type AgentEntry } from "./agents.js";
 import { sandboxArgv, type SandboxConfig } from "./sandbox.js";
 
 const darwin = process.platform === "darwin";
+
+/** A minimal entry the scratch tests vary one field at a time. */
+const BASE: AgentEntry = {
+  name: "f30-fixture",
+  bin: "/nonexistent",
+  args: [],
+  title: "scratch fixture",
+  install: "(built with this repo)",
+  state: { mode: "place", env: "F30_STATE", why: "fixture keeps no state" },
+};
 
 // A scratch world: ROOT (with .fsio), a scratch TMP, a state dir standing in
 // for an agent's dotdir, and an OUTSIDE dir that appears in no rule.
@@ -77,10 +88,17 @@ test("agent sandbox: the scratch dir (TMPDIR) is writable", { skip: !darwin }, a
   assert.equal(r.code, 0, r.out);
 });
 
-test("agent sandbox: /private/tmp is NOT writable (the shell profile's habit, dropped)", { skip: !darwin }, async () => {
-  // terminal-demo allows /private/tmp because shell tools hardcode /tmp. An
-  // agent gets one scratch dir and is told its name (TMPDIR) — a hardcoded
-  // /tmp write is a bug in the child, not a hole this profile owes it.
+test("agent sandbox: /private/tmp is NOT writable by default (only a declared scratch entry opens it)", { skip: !darwin }, async () => {
+  // terminal-demo allows /private/tmp because shell tools hardcode /tmp.
+  //
+  // This comment used to say a hardcoded /tmp write is "a bug in the child,
+  // not a hole this profile owes it," on the theory that an agent gets one
+  // scratch dir and is told its name (TMPDIR). F30 measured that false: the
+  // Claude adapter's Bash tool mkdirs under /tmp and never reads TMPDIR, so
+  // the denial broke every Bash call. The default is still closed — what
+  // changed is that an agent can now *declare* the exact paths it needs
+  // (`scratch` / `scratchPatterns` in agents.ts), which is a named hole with
+  // a measurement behind it rather than a blanket allowance.
   const target = path.join("/private/tmp", `fsio-acp-sbx-${process.pid}`);
   const r = await sandboxedSh(`echo x > "${target}"`);
   assert.notEqual(r.code, 0);
@@ -122,6 +140,81 @@ test("profile summary: one honest line — what it writes, and what it does not 
   assert.match(s, /\/Users\/x\/\.pi/);
   assert.match(s, /reads: everything you can read/);
   assert.match(s, /network: on/);
+});
+
+// ------------------------------------------------------- declared scratch (F30)
+//
+// An agent's own tooling can hardcode paths outside $HOME and outside the
+// granted folder. F30 measured two on one agent: a per-workspace dir under
+// /tmp/claude-<uid>/, and a per-call marker file /tmp/claude-<random>-cwd.
+// Both are holes in the wall, so both are declared per-agent and tested for
+// *shape* — the point is that they open what was measured and nothing wider.
+
+test("scratchDirs: resolves {uid} and {cwdSlug}, creates the dir, returns a realpath", () => {
+  const cwd = "/Users/nobody/proj";
+  const entry: AgentEntry = { ...BASE, scratch: [`${os.tmpdir()}/fsio-f30-{uid}/{cwdSlug}`] };
+  const dirs = scratchDirs(entry, cwd, 4242);
+  assert.equal(dirs.length, 1);
+  assert.match(dirs[0]!, /fsio-f30-4242\/-Users-nobody-proj$/);
+  assert.equal(fs.existsSync(dirs[0]!), true, "created, because the agent expects to mkdir inside it");
+  assert.equal(dirs[0]!, fs.realpathSync(dirs[0]!), "realpath'd — Seatbelt matches kernel-real paths");
+  fs.rmSync(path.dirname(dirs[0]!), { recursive: true, force: true });
+});
+
+test("scratchDirs: an entry that declares nothing opens nothing", () => {
+  assert.deepEqual(scratchDirs(BASE, "/Users/nobody/proj", 4242), []);
+});
+
+test("profile: a scratch pattern carrying a quote is refused, not escaped (it would silently widen the wall)", () => {
+  assert.throws(() => agentProfile({ stateDirs: [], agent: "x", scratchPatterns: ['^/private/tmp/a"b$'] }), /refusing a scratch pattern/);
+  assert.throws(() => agentProfile({ stateDirs: [], agent: "x", scratchPatterns: ["^/private/tmp/a\\\\b$"] }), /refusing a scratch pattern/);
+});
+
+test("profile: scratch dirs and patterns are separate sections, so a human reads them as different things", () => {
+  const text = agentProfile({ stateDirs: [], agent: "x", scratchDirs: ["/private/tmp/thing"], scratchPatterns: ["^/private/tmp/m-[0-9]+$"] });
+  assert.match(text, /\(allow file-write\* \(subpath "\/private\/tmp\/thing"\)\)/);
+  assert.match(text, /\(allow file-write\* \(regex #"\^\/private\/tmp\/m-\[0-9\]\+\$"\)\)/);
+  assert.match(text, /tooling hardcodes/, "the dir section says whose tooling and why");
+  assert.match(text, /F30/, "the hole cites the measurement that earned it");
+});
+
+test("profile summary: a hole outside the granted folder is named, never summarised away (R15)", () => {
+  const s = profileSummary("proj", ["/Users/x/.claude"], ["/private/tmp/claude-501/-Users-x-proj"]);
+  assert.match(s, /\/Users\/x\/\.claude/);
+  assert.match(s, /\/private\/tmp\/claude-501\/-Users-x-proj/, "the scratch hole is spelled out");
+  assert.match(s, /reads: everything you can read/, "still says what it does NOT bound (F24)");
+});
+
+test("agent sandbox: a declared scratch dir is writable, and the rest of /private/tmp is not", { skip: !darwin }, async () => {
+  const allowed = fs.realpathSync(fs.mkdtempSync(path.join("/private/tmp", "fsio-f30-ok-")));
+  const p = path.join(fsio, "f30-dirs.sb");
+  fs.writeFileSync(p, agentProfile({ stateDirs: [], agent: "f30", scratchDirs: [allowed] }));
+  const run = (script: string) =>
+    new Promise<number>((resolve) => {
+      const { file, args } = sandboxArgv({ ...cfg, profilePath: p }, "/bin/sh", ["-c", script]);
+      execFile(file, args, { cwd: root }, (err) => resolve(err ? 1 : 0));
+    });
+  assert.equal(await run(`echo x > "${allowed}/inside"`), 0, "the declared dir is open");
+  assert.equal(await run(`echo x > "/private/tmp/fsio-f30-nope-${process.pid}"`), 1, "the rest of /private/tmp stays shut");
+  fs.rmSync(allowed, { recursive: true, force: true });
+  fs.rmSync(`/private/tmp/fsio-f30-nope-${process.pid}`, { force: true });
+});
+
+test("agent sandbox: a scratch pattern matches its filename shape and nothing adjacent", { skip: !darwin }, async () => {
+  const p = path.join(fsio, "f30-pat.sb");
+  fs.writeFileSync(p, agentProfile({ stateDirs: [], agent: "f30", scratchPatterns: [`^/private/tmp/fsio-f30-[0-9A-Fa-f]+-cwd$`] }));
+  const run = (script: string) =>
+    new Promise<number>((resolve) => {
+      const { file, args } = sandboxArgv({ ...cfg, profilePath: p }, "/bin/sh", ["-c", script]);
+      execFile(file, args, { cwd: root }, (err) => resolve(err ? 1 : 0));
+    });
+  const ok = "/private/tmp/fsio-f30-beef-cwd";
+  const near = "/private/tmp/fsio-f30-beef-cwd-extra"; // suffix past the anchor
+  const other = "/private/tmp/fsio-f30-beef";          // no -cwd
+  assert.equal(await run(`echo x > "${ok}"`), 0, "the measured shape is open");
+  assert.equal(await run(`echo x > "${near}"`), 1, "anchored: no writing past the shape");
+  assert.equal(await run(`echo x > "${other}"`), 1, "a near-miss name gets nothing");
+  for (const f of [ok, near, other]) fs.rmSync(f, { force: true });
 });
 
 process.on("exit", () => {

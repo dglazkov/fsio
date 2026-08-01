@@ -68,6 +68,34 @@ export interface AgentEntry {
   state: StatePosture;
   /** extra env this agent needs beyond the measured floor (env.ts). */
   env?: Record<string, string>;
+  /** Absolute dirs **outside $HOME** the agent must be able to write, beyond
+   *  its own state. `StatePosture` deliberately cannot express these — it is
+   *  $HOME-relative on purpose — and the reason this exists anyway is F30:
+   *  the Claude adapter's Bash tool creates a per-workspace scratch dir at
+   *  `/tmp/claude-<uid>/<cwd-with-slashes-as-dashes>/` and **does not read
+   *  TMPDIR**, so a profile that denies `/private/tmp` breaks every Bash
+   *  call at setup — which also takes out Glob and Grep.
+   *
+   *  Templates, resolved by `scratchDirs()`: `{uid}` and `{cwdSlug}`. Note
+   *  the slug is required: `/tmp/claude-<uid>` holds one entry per workspace
+   *  on the machine, so granting the root would let a confined agent write
+   *  into unrelated sessions' scratch state.
+   *
+   *  Measured, never guessed. An entry here is a hole in the wall and has to
+   *  earn it by naming the run that proved it necessary. */
+  scratch?: string[];
+  /** SBPL regexes for individual scratch *files* whose names the agent picks
+   *  at random, so no subpath template can name them (F30). Static, ours,
+   *  never from the wire — a page contributes nothing here, same rule as
+   *  `bin` and `args`.
+   *
+   *  Measured for claude-agent-acp: every Bash call writes a cwd marker at
+   *  `/tmp/claude-<random hex>-cwd`, directly in /tmp rather than under the
+   *  workspace dir. Denying it does not stop the command — stdout arrives
+   *  intact — but zsh exits 1, so the agent is told every command it ran
+   *  failed. A tool that lies about its own success is worse than one that
+   *  is blocked outright (R19: a denial that names the wrong cause). */
+  scratchPatterns?: string[];
 }
 
 export const AGENTS: AgentEntry[] = [
@@ -112,11 +140,36 @@ export const AGENTS: AgentEntry[] = [
     args: [],
     title: "Claude Code (ACP adapter)",
     install: "npm i -g @agentclientprotocol/claude-agent-acp",
+    // Was "place" until it was actually run (F30, 2026-08-01). Placement
+    // moves the state tree perfectly — fresh config, `sessions/`,
+    // `projects/`, zero denials — and the agent still cannot log in, because
+    // login is *two* pieces in two places: the token in the login Keychain
+    // (reachable; the profile is `allow default`) and the account binding
+    // `oauthAccount` inside `~/.claude.json`. Placement replaces that file
+    // with an empty one, so the child holds a key and does not know which
+    // lock it fits: `session/prompt` fails "Authentication required".
+    //
+    // That is F26's headline reaching its conclusion. Two agents out of two
+    // now keep identity and state inseparable (F28 for pi, this for claude),
+    // so R17's placed slot is the nicer design for a kind of agent neither
+    // of ours is. Carve, and say why.
+    //
+    // Note the carve does NOT cover `~/.claude.json` — that is a file beside
+    // the dir, not in it. Auth works anyway because it only needs to *read*
+    // it, and reads were never bounded (F24). The write wall is exactly what
+    // makes this posture viable; a read wall (F27) would break it.
     state: {
-      mode: "place",
-      env: "CLAUDE_CONFIG_DIR",
-      why: "the CLI's whole state tree follows CLAUDE_CONFIG_DIR (F26); its credential lives in the login Keychain and is not placeable.",
+      mode: "carve",
+      homeDirs: [".claude"],
+      why: "the CLI's token is in the login Keychain but its account binding is in ~/.claude.json, so a placed config dir authenticates as nobody (F30); ~/.claude is carved for its state, and the account file is only ever read.",
     },
+    // F30: its Bash tool mkdirs this and ignores TMPDIR. One workspace's
+    // slug, not the `/tmp/claude-<uid>` root — that root holds an entry per
+    // workspace on the machine.
+    scratch: ["/tmp/claude-{uid}/{cwdSlug}"],
+    // Per-Bash-call cwd marker, random name, straight in /tmp (F30). Scoped
+    // to that exact filename shape: this is a file rule, not a subtree.
+    scratchPatterns: ["^/private/tmp/claude-[0-9A-Fa-f]+-cwd$"],
   },
 ];
 
@@ -157,6 +210,25 @@ function isExec(p: string): boolean {
  *  matches kernel-real paths). Dirs that do not exist are dropped: an agent
  *  that has never run has nothing to protect, and a `-D` param pointing at
  *  a missing path is a profile that fails to compile. */
+/** Resolve an entry's `scratch` templates against this run's uid and shared
+ *  folder. Unlike `carveDirs`, missing dirs are **created** rather than
+ *  dropped: the agent expects to `mkdir` inside them, and a `subpath` rule
+ *  naming a path that does not exist yet would let it create the leaf but
+ *  not reach it. Realpath'd last, because Seatbelt matches kernel-real paths
+ *  and `/tmp` is a symlink to `/private/tmp` on macOS. */
+export function scratchDirs(entry: AgentEntry, cwd: string, uid: number = process.getuid?.() ?? 0): string[] {
+  const out: string[] = [];
+  for (const tpl of entry.scratch ?? []) {
+    const abs = tpl.replaceAll("{uid}", String(uid)).replaceAll("{cwdSlug}", cwd.replaceAll("/", "-"));
+    if (!path.isAbsolute(abs)) continue; // a template that resolved to nonsense opens nothing
+    try {
+      fs.mkdirSync(abs, { recursive: true, mode: 0o700 });
+      out.push(fs.realpathSync(abs));
+    } catch {}
+  }
+  return out;
+}
+
 export function carveDirs(entry: AgentEntry, home: string = os.homedir()): string[] {
   if (entry.state.mode !== "carve") return [];
   const out: string[] = [];

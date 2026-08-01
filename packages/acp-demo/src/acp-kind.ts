@@ -30,7 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { KindContext, KindHandler, KindSession } from "@fsio/host";
-import { AGENTS, carveDirs, findAgent, resolveBin, type AgentEntry } from "./agents.js";
+import { AGENTS, carveDirs, findAgent, resolveBin, scratchDirs, type AgentEntry } from "./agents.js";
 import { synthesizeEnv } from "./env.js";
 import { classify, isJsonRpc, LineSplitter, toAgentLine } from "./framing.js";
 import { agentProfile, profileSummary } from "./profile.js";
@@ -125,9 +125,15 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
     const sandbox: SandboxConfig | null = opts.sandbox
       ? { profilePath, root: opts.root, fsio: opts.fsioDir, tmp: opts.tmp }
       : null;
+    // Dirs the agent's own tooling hardcodes outside $HOME (F30). Resolved
+    // against the shared folder, because the path is per-workspace.
+    const scratches = scratchDirs(entry, opts.root);
     if (sandbox) {
       fs.mkdirSync(profileDir, { recursive: true });
-      fs.writeFileSync(profilePath, agentProfile({ stateDirs, agent: entry.name }));
+      fs.writeFileSync(
+        profilePath,
+        agentProfile({ stateDirs, agent: entry.name, scratchDirs: scratches, ...(entry.scratchPatterns ? { scratchPatterns: entry.scratchPatterns } : {}) })
+      );
     }
 
     const env = synthesizeEnv(entry, { tmp: opts.tmp, ...(placedDir ? { stateDir: placedDir } : {}), ...(opts.env ? { from: opts.env } : {}) });
@@ -198,7 +204,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
     });
     child.stdin.on("error", (e: Error) => keep(`[stdin] ${e.message}`));
 
-    const summary = profileSummary(path.basename(opts.root), stateDirs);
+    const summary = profileSummary(path.basename(opts.root), stateDirs, scratches);
     ctx.log.info(`agent ${entry.name} (pid ${child.pid}) ${sandbox ? "confined" : "UNCONFINED"} — ${summary}`);
 
     return {

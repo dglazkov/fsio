@@ -1080,6 +1080,82 @@ F24, F26,
 [#18](https://github.com/dglazkov/fsio/issues/18); feeds
 [#86](https://github.com/dglazkov/fsio/issues/86).
 
+### F30 — a real agent does ask, but only in a mode you cannot set without importing the operator's whole config; and its tooling hardcodes two paths under /tmp that TMPDIR never names
+
+Measured 2026-08-01 (macOS 26.5/arm64, Chrome; the shipped `/acp` page and
+helper; `@agentclientprotocol/claude-agent-acp` 0.64.0, which bundles
+`@anthropic-ai/claude-agent-sdk` 0.3.220 and its own `cli.js`). The
+[#100](https://github.com/dglazkov/fsio/issues/100) leg that
+[F29](#f29--the-consent-surface-fires-5-permission-asks-10-fs-calls-2-rejections-that-wrote-nothing--and-an-agent_message_chunk-is-a-fragment-not-a-line)
+could not answer, because the puppet writes its own card.
+
+**The headline: R6 has a real consumer.** In manual permission mode the
+adapter sends `session/request_permission`, the page renders it, and a human
+answers it:
+
+    1 in session/request_permission
+    permission requested: Edit NOTES.md [allow_always, allow, reject]
+    permission answered: allow
+
+The card names the file and carries three distinct options. That is #100's
+first question answered on the record: a card drawn by an agent nobody here
+wrote is legible enough to decide on.
+
+**And four things that had to be fixed before that sentence could exist:**
+
+- **Placement authenticates as nobody.** Login is two pieces in two places:
+  the token in the login Keychain (reachable — the profile is `allow default`,
+  so F26 cell Ak's fatal mach-lookup denial does not apply here) and the
+  account binding `oauthAccount` inside `~/.claude.json`. A placed
+  `CLAUDE_CONFIG_DIR` moves the state tree perfectly — fresh config,
+  `sessions/`, `projects/`, zero denials — and writes a **389-byte**
+  `.claude.json` where the real one is **62 KB**. The child holds a key and
+  does not know which lock it fits; `session/prompt` fails "Authentication
+  required". F26 measured this on the CLI (cell B); this is the same failure
+  on the adapter, in the shipped demo rather than a lab. The entry's posture
+  is now `carve ~/.claude`.
+- **The carve is `~/.claude`; the account file is `~/.claude.json`, beside
+  it.** Auth works anyway because it only needs to *read* that file, and
+  reads were never bounded (F24). **The write wall is what makes this posture
+  viable at all** — F27's read wall would break it.
+- **Two hardcoded `/tmp` paths, neither derived from TMPDIR.** `profile.ts`
+  asserted that "some tools hardcode /tmp" is a *shell-tool* habit and an
+  agent gets told its scratch dir via TMPDIR. False. (a) The Bash tool mkdirs
+  `/tmp/claude-<uid>/<cwd-with-slashes-as-dashes>/`; denying it fails every
+  Bash call at setup, which also took out Glob and Grep and left the agent
+  unable to inspect the project at all. (b) Every Bash call also writes
+  `/tmp/claude-<random hex>-cwd`, directly in `/tmp`. Denying (b) does **not**
+  stop the command — stdout arrives intact — but zsh exits 1, so the agent is
+  told every command it ran failed. That is R19 in miniature: a denial that
+  reports the wrong cause, and a tool lying about its own success is worse
+  than one plainly blocked. Both are now per-agent declarations
+  (`scratch` / `scratchPatterns`), scoped to one workspace's dir and one
+  filename shape — never the `/tmp/claude-<uid>` root, which holds an entry
+  per workspace on the machine.
+- **`fs/*` stayed at zero in every run.** The adapter honored the permission
+  gate and then wrote the file with its own hands. Consent and access are
+  independent for it: it asks the client *whether*, never *to*. So the page's
+  `fs/*` handlers still have no real-world consumer — only the puppet (F29).
+
+**Method note, and the reason this entry exists in this shape.** The first
+run appeared to show the agent editing without asking, and that was written
+up as "two agents out of two do not ask." It was wrong. Switching the posture
+from `place` to `carve` to fix auth *also imported the operator's Claude Code
+configuration*, including a permission mode set to auto — so the run measured
+the operator's settings and reported them as protocol behavior. The correct
+statement is narrower and more interesting: **for this agent you cannot
+isolate its configuration and authenticate it at the same time.** Placement
+gives a clean room with no identity; carving gives identity and imports the
+policy. Every behavioral measurement of it is therefore entangled with the
+machine it ran on, and a result from one laptop does not transfer. That
+constrains F26's whole approach, and it is the finding most likely to matter
+later.
+→ [D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
+F24, F26, F27, F29,
+[#100](https://github.com/dglazkov/fsio/issues/100); feeds
+[#86](https://github.com/dglazkov/fsio/issues/86),
+[#71](https://github.com/dglazkov/fsio/issues/71).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
