@@ -11,9 +11,10 @@ style.
   platform behaviors, F-numbered. `spec/DECISIONS.md` — ADR-lite, D-numbered.
   `spec/PRINCIPLES.md` — platform principles, P-numbered (handles below).
 - `TESTING.md` — test tiers and what deliberately isn't tested.
-- `packages/{common,client,host,web,bench}` — npm workspaces; `common` is the
-  single source of protocol truth (types + codec + JSON-RPC), both sides
-  import it.
+- `packages/{common,client,host,fsiod,workbench,terminal-demo,acp-demo,bench}`
+  — npm workspaces; `common` is the single source of protocol truth (types +
+  codec + JSON-RPC), both sides import it. The `*-demo` packages are page +
+  native helper pairs consuming `@fsio/host` as a library.
 
 ## Principles (P1–P6)
 

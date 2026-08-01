@@ -1201,3 +1201,84 @@ attaches to the named service), D14 (fail-visible spawn). Constrains #71's
 profile-content slice, #76, #77, and act 5 (#44). Platform note: measured
 on macOS/Seatbelt; a future Linux backend must be re-measured against
 these three rules before they are assumed to hold there.
+
+## D30 — ACP is payload: the host frames, the browser is the client
+
+**Decision.** The `acp` session kind
+([#18](https://github.com/dglazkov/fsio/issues/18), first real consumer of
+[D13](#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry))
+carries a coding agent's stdio, and the two JSON-RPC layers are kept apart
+by five rules:
+
+1. **One DATA frame is exactly one complete ACP message**, both directions.
+   The agent speaks newline-delimited JSON on a pipe, so the host does the
+   reassembly (downlink) and refuses any frame containing more than one line
+   (uplink) — a page can never observe half a message, and can never smuggle
+   a second one into the agent's stdin. Stdout lines that are not a JSON
+   object (version notices, installer chatter) are diverted to diagnostics
+   and **never delivered**.
+2. **`acp/*` RPC methods are transport-level only.** `acp/info` (who is
+   running, under what policy, with which environment) and
+   `acp/diagnostics` (counters, stderr tail) answer questions about the
+   session. No ACP method is ever answered host-side: RPC frames are
+   fsio's control plane ([D10](#d10--json-rpc-20-control-plane-over-rpc-frames)),
+   ACP rides DATA, and nothing crosses.
+3. **The browser is the ACP client.** `session/request_permission` and
+   `fs/read_text_file` arrive as agent→client *requests*, and the party that
+   answers them is the one holding the human and the directory handle. That
+   is the point of the demo, not an implementation detail: the agent's
+   permission prompt becomes page UI (R6) instead of a redraw inside a
+   terminal, and its file reads are served through the grant the human
+   already made.
+4. **The page names an agent from a host-side allow-list, never a path.**
+   `{kind: "acp", agent: "pi-acp"}` is a name looked up in `agents.ts`;
+   naming none selects the first entry installed on this machine. Nothing
+   from the wire becomes argv or environment ([#6](https://github.com/dglazkov/fsio/issues/6)'s
+   allow-list, first entry).
+5. **Confinement and state posture are session facts the page reads.** The
+   spawn result carries `sandboxed`, the one-line `confinement` sentence,
+   and the agent's declared state posture; the session's actual policy file
+   is written to `.fsio/profiles/<session>.sb`, inside the folder the page
+   already holds — the policy is inspectable from the page it confines
+   (R1). A sandbox that cannot be applied fails the spawn (`1002`) rather
+   than degrading to an unconfined agent (R3, the `deadPty` precedent).
+
+**Context.** #18 asked which of two routes the ACP demo should take: a plain
+`{kind: "shell", pty: false}` plus a browser wrapper, or a registered kind.
+Transport-wise both work — the pty path already carried an agent CLI
+([F26](FINDINGS.md#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out)'s
+subject) — so the question is where the *non-transport* obligations live:
+the allow-list, the synthesized environment
+([F28](FINDINGS.md#f28--a-second-agent-keeps-its-identity-in-its-state-dir-so-placement-and-login-are-the-same-knob-the-denial-surfaces-as-a-protocol-error-that-names-the-wrong-cause)
+cell E, F26 cell C), the per-agent state posture, and the framing contract.
+All four are host-side facts about a child process, and none of them can be
+enforced from a page. A kind is where they go.
+
+Deliberately unchanged: `@fsio/host` gains nothing. The kind is registered
+by the demo's own helper (`packages/acp-demo`), which is what D13 claimed
+the registry was for — "stdio-shaped bridge over files, bring your own
+semantics" — and the claim is now tested by something other than `echo`.
+
+**Alternatives rejected.** ACP over RPC frames (the host becomes an ACP
+router, and two protocols share one id space — the confusion this decision
+exists to prevent; also rejected once already in D10: bytes stay raw).
+Line reassembly in the browser (every consumer re-implements a buffer, and
+the malformed-input policy ends up in UI code — where "the agent printed an
+npm notice" becomes a parse error in a chat pane). The host answering
+`session/request_permission` (it would put consent where the human is not —
+P5: never your own bouncer). Carve-by-default for agent state (F26/F28:
+posture is a fact about the child, and guessing it wrong either logs the
+agent out or silently loses its transcripts). Inheriting `process.env` as
+the shell demo does (F24 measured what that hands a child; an agent has no
+human watching it, and the sandbox is a write wall — the environment is the
+only lever that can withhold the ssh-agent socket).
+
+**Findings.** F28 (measured, this design's subject), F24/F26 (environment
+and state posture), F12 (downlink headroom for token streams). Depends on
+D13, D10, D6. Known gap, filed rather than papered over: `exit()` stops
+delivery to the kind, so `acp/diagnostics` — the stderr tail that says
+*why* an agent died — is unreachable exactly post-mortem
+([#98](https://github.com/dglazkov/fsio/issues/98)); a page must hold its
+last snapshot. Backpressure remains D13's caveat
+([#10](https://github.com/dglazkov/fsio/issues/10)): token streams fit,
+file dumps do not.
