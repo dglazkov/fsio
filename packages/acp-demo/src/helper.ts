@@ -10,7 +10,7 @@
 // CLI lives in packages/host/src/fsio-host.ts, and the terminal demo (whose
 // shape this follows) in packages/terminal-demo.
 //
-// Usage:  fsio-acp-helper [dir] [--no-sandbox]
+// Usage:  fsio-acp-demo [dir] [--no-sandbox]
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +28,7 @@ const fail = (msg: string): never => {
 
 // ---- args
 
-const USAGE = "usage: fsio-acp-helper [dir] [--no-sandbox] [--fixture] [--agent <name>]";
+const USAGE = "usage: fsio-acp-demo [dir] [--no-sandbox] [--fixture] [--agent <name>]";
 
 let rootArg: string | null = null;
 let wantSandbox = true;
@@ -159,6 +159,10 @@ const server = new HostServer({
     return true;
   },
   fresh: true, // demo restarts should never inherit stale sessions
+  // This demo serves exactly one kind and it is not `shell`; a pty would
+  // never be reached. Saying so keeps the npx artifact (which bundles no
+  // node_modules) from opening with advice about a package nobody here needs.
+  pty: false,
   logger: log,
 });
 

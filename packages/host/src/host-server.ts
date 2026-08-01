@@ -927,7 +927,13 @@ export class HostServer {
     this.ptyMod = this.ptyOpt === false ? null : (this.ptyOpt ?? (await loadPty()));
     this.ptyAvailable = !!this.ptyMod;
     if (this.ptyMod) this.log.info("pty available: shell sessions get a real pty");
-    else this.log.warn("no pty (node-pty not installed, or pty: false): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
+    // Advice only where it can be acted on: an embedder that said `pty:
+    // false` serves no shell sessions at all, and telling *its* users to go
+    // install node-pty is a first-contact instruction to fix nothing (the
+    // acp-demo npx artifact bundles no node_modules, so it hit this line on
+    // every run — #106).
+    else if (this.ptyOpt === false) this.log.info("pty disabled by the embedder: shell sessions would fall back to pipes");
+    else this.log.warn("no pty (node-pty not installed): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
 
     if (this.fresh) fs.rmSync(this.fsioDir, { recursive: true, force: true });
     fs.mkdirSync(this.sessionsDir, { recursive: true });
