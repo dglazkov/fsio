@@ -15,6 +15,7 @@ import {
   phase,
   pickError,
   pushEntry,
+  queued,
   turn,
   wizardStep,
   type AgentOffer,
@@ -229,6 +230,13 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
     // diagnostics snapshot is all we will ever have of the stderr that
     // says why. Stop polling and keep what we hold.
     clearInterval(diagTimer);
+    // Nothing will ever send these now; say so rather than leaving them
+    // sitting under a composer that looks like it is still going somewhere.
+    if (queued.get().length) {
+      pushEntry({ kind: "note", text: `${queued.get().length} queued prompt(s) never sent — the agent is gone` });
+      reporter.event("queue-dropped", { count: queued.get().length, why: "agent-exited" });
+      queued.set([]);
+    }
     const tail = diagnostics.get()?.stderr ?? [];
     pushEntry({
       kind: "error",
@@ -305,13 +313,55 @@ async function pollDiagnostics(): Promise<void> {
 
 // ---------------------------------------------------------------- input
 
+/** Send now, or hold it until the turn ends.
+ *
+ *  One turn is in flight at a time (ACP), so the alternatives were queue or
+ *  refuse. Refusing is what the page used to do, badly — it took the text
+ *  and dropped it. A queue is the version that keeps faith with someone who
+ *  typed a follow-up while reading the answer to the last one. */
 export function sendPrompt(text: string): void {
   const a = agent;
-  if (!a || turn.get() !== "idle") return;
-  void a.prompt(text);
+  if (!a) return;
+  const t = turn.get();
+  if (t === "gone" || t === "starting") return;
+  if (t !== "idle") {
+    queued.set([...queued.get(), text]);
+    reporter.event("prompt-queued", { depth: queued.get().length });
+    return;
+  }
+  void runTurn(a, text);
 }
 
+/** One turn, then the next queued prompt if the session is still healthy.
+ *  Draining here rather than on a signal watcher keeps the ordering obvious:
+ *  a queued prompt is sent by the turn that was blocking it. */
+async function runTurn(a: AgentSession, text: string): Promise<void> {
+  await a.prompt(text);
+  const q = queued.get();
+  // `turn` is whatever prompt() left behind — `gone` if the agent exited,
+  // and cancelTurn() empties the queue — so both stop the drain.
+  if (!q.length || turn.get() !== "idle" || agent !== a) return;
+  queued.set(q.slice(1));
+  void runTurn(a, q[0]!);
+}
+
+/** Drop a queued prompt without sending it. */
+export function unqueue(index: number): void {
+  const q = queued.get();
+  if (index < 0 || index >= q.length) return;
+  queued.set(q.filter((_, i) => i !== index));
+}
+
+/** Stop is the human's brake, so it stops what is coming too: a queue that
+ *  kept firing after "stop" would be the opposite of what the button says.
+ *  Dropped prompts are announced rather than silently discarded. */
 export function cancelTurn(): void {
+  const dropped = queued.get().length;
+  if (dropped) {
+    queued.set([]);
+    pushEntry({ kind: "note", text: `stopped — ${dropped} queued prompt${dropped === 1 ? "" : "s"} dropped` });
+    reporter.event("queue-dropped", { count: dropped, why: "cancel" });
+  }
   agent?.cancel();
 }
 

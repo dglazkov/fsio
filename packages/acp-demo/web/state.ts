@@ -55,6 +55,16 @@ export const agentFacts = signal<AgentFacts | null>(null);
 export type Turn = "starting" | "idle" | "thinking" | "cancelling" | "gone";
 export const turn = signal<Turn>("starting");
 
+/** Prompts typed while the agent was busy, oldest first.
+ *
+ *  ACP has one turn in flight per session, so a second prompt cannot simply
+ *  be sent. The composer used to answer that by dropping the text: it
+ *  cleared the textarea and `sendPrompt` discarded anything that arrived
+ *  outside `idle`, so typing during a turn lost what you typed. Holding it
+ *  here instead means the page keeps the one thing it has that the human
+ *  cannot get back. */
+export const queued = signal<string[]>([]);
+
 // ---------------------------------------------------------------- transcript
 //
 // Mutable fields are nested signals: a streamed token updates one entry

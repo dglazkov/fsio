@@ -12,8 +12,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agentFacts, entries, notice, turn, type Entry, type PermissionEntry, type ToolEntry } from "../state";
-import { cancelTurn, sendPrompt } from "../connection";
+import { agentFacts, entries, notice, queued, turn, type Entry, type PermissionEntry, type ToolEntry } from "../state";
+import { cancelTurn, sendPrompt, unqueue } from "../connection";
+import { renderMarkdown } from "../markdown";
 
 class AcpChat extends SignalWatcher(LitElement) {
   static override styles = css`
@@ -24,8 +25,53 @@ class AcpChat extends SignalWatcher(LitElement) {
       align-self: flex-end; background: #2e3440; border-radius: 10px 10px 2px 10px;
       padding: 0.5rem 0.8rem; white-space: pre-wrap; color: #eceff4;
     }
-    .agent { white-space: pre-wrap; }
-    .thought { white-space: pre-wrap; color: #7b8598; font-style: italic; font-size: 0.9rem; }
+    /* A queued prompt is a user bubble that hasn't happened yet: same shape,
+       dimmed, with a way out. It sits in the log rather than above the
+       composer so its position says what it means — next in line. */
+    .user.queued {
+      opacity: 0.62; border: 1px dashed #4c566a; background: #23272f;
+      display: flex; gap: 0.5rem; align-items: flex-start;
+    }
+    .user.queued .drop {
+      background: none; border: none; color: #9aa5b8; padding: 0 0.15rem;
+      font-size: 1rem; line-height: 1.2; cursor: pointer;
+    }
+    .user.queued .drop:hover { color: #ef8a95; background: none; }
+    button.queue { border-color: #4c566a; color: #9aa5b8; }
+    .thought { color: #7b8598; font-size: 0.9rem; }
+    /* Markdown, rendered from a token tree by ../markdown.ts. Paragraphs
+       keep their newlines (pre-wrap) because the parser keeps soft breaks:
+       in chat, a newline means a newline. */
+    .md > :first-child { margin-top: 0; }
+    .md > :last-child { margin-bottom: 0; }
+    .md p { margin: 0.5rem 0; white-space: pre-wrap; }
+    .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+      margin: 0.9rem 0 0.4rem; line-height: 1.3; font-weight: 600; color: #eceff4;
+    }
+    .md h1 { font-size: 1.25rem; } .md h2 { font-size: 1.12rem; } .md h3 { font-size: 1rem; }
+    .md h4, .md h5, .md h6 { font-size: 0.95rem; color: #d8dee9; }
+    .md ul, .md ol { margin: 0.5rem 0; padding-left: 1.4rem; }
+    .md li { margin: 0.15rem 0; }
+    .md blockquote {
+      margin: 0.5rem 0; padding-left: 0.8rem; border-left: 2px solid #3b4252;
+      color: #9aa5b8; white-space: pre-wrap;
+    }
+    .md hr { border: none; border-top: 1px solid #2c313c; margin: 0.9rem 0; }
+    .md code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em;
+      background: #14161a; border-radius: 4px; padding: 0.1em 0.32em;
+    }
+    .md pre.code {
+      margin: 0.55rem 0; background: #14161a; border: 1px solid #22262e; border-radius: 8px;
+      padding: 0.6rem 0.75rem; overflow-x: auto;
+    }
+    .md pre.code code { background: none; padding: 0; font-size: 0.85rem; line-height: 1.45; }
+    .md a { color: #88c0d0; }
+    .md strong { color: #eceff4; }
+    /* The thought bubble carries both classes on one element, so these are
+       descendant-free selectors (.thought strong, not .thought .md strong)
+       — headings and bold inside a thought stay as quiet as the thought. */
+    .thought strong, .thought h1, .thought h2, .thought h3 { color: inherit; font-size: inherit; }
     .note { color: #7b8598; font-size: 0.85rem; }
     .error { color: #ef8a95; white-space: pre-wrap; font-size: 0.9rem; }
     .tool {
@@ -68,20 +114,33 @@ class AcpChat extends SignalWatcher(LitElement) {
   override render(): TemplateResult {
     const n = notice.get();
     const t = turn.get();
+    const q = queued.get();
+    const busy = t === "thinking" || t === "cancelling";
     return html`
       <div class="log" id="log">
         ${n ? html`<div class="banner">${n.msg}<span class="hint">${n.hint}</span></div>` : nothing}
         ${entries.get().map((e) => this.#entry(e))}
+        ${q.map(
+          (text, i) => html`<div class="entry user queued">
+            ${text}
+            <button class="drop" title="don't send this" @click=${() => unqueue(i)}>×</button>
+          </div>`
+        )}
       </div>
       <div class="composer">
         <textarea
           id="input"
-          placeholder=${t === "gone" ? "the agent is gone — restart the helper and reload" : "ask the agent to do something in this folder…"}
+          placeholder=${t === "gone"
+            ? "the agent is gone — restart the helper and reload"
+            : busy
+              ? "type ahead — this goes when the turn ends"
+              : "ask the agent to do something in this folder…"}
           ?disabled=${t === "gone" || t === "starting"}
           @keydown=${this.#keydown}
         ></textarea>
-        ${t === "thinking" || t === "cancelling"
-          ? html`<button @click=${() => cancelTurn()} ?disabled=${t === "cancelling"}>stop</button>`
+        ${busy
+          ? html`<button class="queue" @click=${() => this.#send()}>queue</button>
+              <button @click=${() => cancelTurn()} ?disabled=${t === "cancelling"}>stop</button>`
           : html`<button class="allow" ?disabled=${t !== "idle"} @click=${() => this.#send()}>send</button>`}
       </div>
     `;
@@ -112,9 +171,9 @@ class AcpChat extends SignalWatcher(LitElement) {
       case "user":
         return html`<div class="entry user">${e.text}</div>`;
       case "agent":
-        return html`<div class="entry agent">${e.text.get()}</div>`;
+        return html`<div class="entry agent md">${renderMarkdown(e.text.get())}</div>`;
       case "thought":
-        return html`<div class="entry thought">${e.text.get()}</div>`;
+        return html`<div class="entry thought md">${renderMarkdown(e.text.get())}</div>`;
       case "note":
         return html`<div class="entry note">${e.text}</div>`;
       case "error":
