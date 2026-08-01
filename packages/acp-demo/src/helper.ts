@@ -28,15 +28,30 @@ const fail = (msg: string): never => {
 
 // ---- args
 
+const USAGE = "usage: fsio-acp-helper [dir] [--no-sandbox] [--fixture] [--agent <name>]";
+
 let rootArg: string | null = null;
 let wantSandbox = true;
 let wantFixture = false;
-for (const a of process.argv.slice(2)) {
+/** Narrow the allow-list to one entry. The page names no agent (it cannot
+ *  know what is installed), so the kind takes the first one it can resolve —
+ *  which makes "measure *this* agent" impossible once two are installed.
+ *  This is the operator's say, and it stays an allow-list lookup: a name,
+ *  never a path, same rule the wire follows. */
+let agentArg: string | null = null;
+const argv = process.argv.slice(2);
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i]!;
   if (a === "--no-sandbox") wantSandbox = false;
   else if (a === "--fixture") wantFixture = true;
-  else if (a.startsWith("-")) fail(`unknown flag ${a} — usage: fsio-acp-helper [dir] [--no-sandbox] [--fixture]`);
+  else if (a === "--agent") {
+    agentArg = argv[++i] ?? null;
+    if (!agentArg) fail(`--agent needs a name — ${USAGE}`);
+  } else if (a.startsWith("--agent=")) agentArg = a.slice("--agent=".length);
+  else if (a.startsWith("-")) fail(`unknown flag ${a} — ${USAGE}`);
   else rootArg = a;
 }
+if (wantFixture && agentArg) fail(`--fixture and --agent are two ways to say the same thing; pick one — ${USAGE}`);
 
 // The sandbox is the demo's safety sentence, so running without it is a
 // thing you have to say out loud — and the page is told (`sandboxed: false`
@@ -100,7 +115,11 @@ if (wantFixture && !fs.existsSync(FIXTURE.args[0]!)) {
   fail(`--fixture: the puppet is not built (expected ${FIXTURE.args[0]}). Run \`npm run build\`.`);
 }
 
-const catalogue: AgentEntry[] = wantFixture ? [FIXTURE] : AGENTS;
+if (agentArg && !AGENTS.some((a) => a.name === agentArg)) {
+  fail(`--agent ${JSON.stringify(agentArg)}: this helper serves ${AGENTS.map((a) => a.name).join(", ")}`);
+}
+
+const catalogue: AgentEntry[] = wantFixture ? [FIXTURE] : agentArg ? AGENTS.filter((a) => a.name === agentArg) : AGENTS;
 const installed = catalogue.filter((a) => resolveBin(a) !== null);
 const missing = catalogue.filter((a) => resolveBin(a) === null);
 

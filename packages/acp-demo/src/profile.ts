@@ -33,12 +33,31 @@
  *  inspectable (R1: the file in `.fsio/` is the whole policy). */
 const sbplString = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
+/** A regex literal. Unlike a path, a pattern that lost a character to
+ *  escaping would silently widen the wall, so a pattern carrying a quote or
+ *  backslash is refused outright rather than mangled into something that
+ *  compiles and means something else. These are static, in-repo values, so
+ *  this can only ever fire on a developer's own typo. */
+const sbplRegex = (s: string): string => {
+  if (/["\\]/.test(s)) throw new Error(`profile: refusing a scratch pattern containing a quote or backslash: ${s}`);
+  return `#"${s}"`;
+};
+
 export interface AgentProfileInputs {
   /** absolute, realpath'd dirs the agent may write its own state into.
    *  Empty for a "place" posture — placement needs no hole in the wall. */
   stateDirs: string[];
   /** the agent name, for the comment that says who the carve is for. */
   agent: string;
+  /** absolute, realpath'd scratch dirs outside $HOME that the agent's own
+   *  tooling hardcodes (F30). A separate category from `stateDirs` on
+   *  purpose: this is not the agent's state, it is a place its tools insist
+   *  on, and the profile should not blur the two when a human reads it. */
+  scratchDirs?: string[];
+  /** SBPL regexes for individual scratch files with unpredictable names
+   *  (F30). Emitted as `(regex #"…")` rather than `(subpath …)`, so the rule
+   *  matches one filename shape and not a subtree. */
+  scratchPatterns?: string[];
 }
 
 export function agentProfile(inputs: AgentProfileInputs): string {
@@ -52,6 +71,28 @@ export function agentProfile(inputs: AgentProfileInputs): string {
           `;; lives beside its state — its identity. Named, not inferred.`,
           ...inputs.stateDirs.map((d) => `(allow file-write* (subpath ${sbplString(d)}))`),
         ].join("\n");
+  const scratches = (inputs.scratchDirs ?? []).length
+    ? "\n\n" +
+      [
+        `;; ...and the scratch dirs ${inputs.agent}'s own tooling hardcodes.`,
+        `;; F30: this agent's Bash tool mkdirs a per-workspace dir under`,
+        `;; /tmp and does NOT read TMPDIR, so denying /private/tmp broke every`,
+        `;; Bash call at setup. One workspace's dir, never the /tmp/claude-<uid>`,
+        `;; root — that root holds an entry per workspace on this machine.`,
+        ...(inputs.scratchDirs ?? []).map((d) => `(allow file-write* (subpath ${sbplString(d)}))`),
+      ].join("\n")
+    : "";
+  const patterns = (inputs.scratchPatterns ?? []).length
+    ? "\n\n" +
+      [
+        `;; ...and the scratch FILES it names at random, matched by shape.`,
+        `;; F30: every Bash call writes /tmp/claude-<random>-cwd. Denying it`,
+        `;; does not stop the command — stdout arrives — but the shell exits 1,`,
+        `;; so the agent is told every command failed (R19: a denial that names`,
+        `;; the wrong cause). One filename shape, never a subtree.`,
+        ...(inputs.scratchPatterns ?? []).map((p) => `(allow file-write* (regex ${sbplRegex(p)}))`),
+      ].join("\n")
+    : "";
   return `(version 1)
 
 ;; acp-demo agent sandbox (fsio #18), agent: ${inputs.agent}.
@@ -76,7 +117,7 @@ export function agentProfile(inputs: AgentProfileInputs): string {
 ;; ...the bit bucket (no /dev/tty: this child is on a pipe, not a terminal),
 (allow file-write* (literal "/dev/null"))
 
-${carves}
+${carves}${scratches}${patterns}
 
 ;; Final word (last match wins): the protocol area inside ROOT stays
 ;; host-owned even though ROOT is writable. An agent that could edit .fsio
@@ -89,7 +130,10 @@ ${carves}
 /** The one honest line (R15), for the banner and for the page's session
  *  header. Says what the wall does NOT bound, because F24 made that a MUST
  *  in the threat model: reads and network are unbounded. */
-export function profileSummary(folderName: string, stateDirs: string[]): string {
+export function profileSummary(folderName: string, stateDirs: string[], scratchDirs: string[] = []): string {
   const state = stateDirs.length ? ` and its own state (${stateDirs.join(", ")})` : "";
-  return `writes: ${folderName}/ (not .fsio), a scratch dir${state} — nothing else. reads: everything you can read. network: on.`;
+  // Named, not summarised as "some scratch": a hole outside the granted
+  // folder is exactly the thing a human reading this line needs to see (R15).
+  const scratch = scratchDirs.length ? `, plus what its own tooling hardcodes (${scratchDirs.join(", ")})` : "";
+  return `writes: ${folderName}/ (not .fsio), a scratch dir${state}${scratch} — nothing else. reads: everything you can read. network: on.`;
 }
