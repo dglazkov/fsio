@@ -7,7 +7,10 @@ import type { Signal } from "@lit-labs/signals";
 /** boot — deciding; wizard — setup dialog; chat — the app. */
 export type Phase = "boot" | "wizard" | "chat";
 export const phase = signal<Phase>("boot");
-export const wizardStep = signal<1 | 2>(1);
+/** 1 run the helper · 2 pick the folder · 3 the agent. Step 3 only appears
+ *  when there is a choice to make or an install to do (#102): with exactly
+ *  one agent installed the page names it and goes. */
+export const wizardStep = signal<1 | 2 | 3>(1);
 
 /** Hard gate (non-Chromium browser): replaces the wizard outright. */
 export const gate = signal<{ msg: string; hint: string } | null>(null);
@@ -18,6 +21,23 @@ export const folder = signal<{ name: string } | null>(null);
 
 export type HelperState = "none" | "silent" | "alive" | "wrong-kind";
 export const helper = signal<HelperState>("none");
+
+/** One line of the helper's agent roster (#102) — read from the service
+ *  directory, never guessed. `asks` is the field that matters: it says
+ *  whether this agent will send the consent question this demo exists to
+ *  render, and it is measured (F29/F30), not marketing. */
+export interface AgentOffer {
+  name: string;
+  title: string;
+  install: string;
+  installed: boolean;
+  asks: boolean;
+}
+/** What the helper reports it can serve. Empty means "the helper published
+ *  a roster and it is empty"; `null` means it published none at all — an
+ *  older helper, which the page treats as "not supported" rather than as an
+ *  error (D25) and lets choose for itself. */
+export const agents = signal<AgentOffer[] | null>(null);
 
 /** What the host said about the agent it started (D30 rule 5: confinement
  *  and state posture are session facts the page READS, never assumes). */

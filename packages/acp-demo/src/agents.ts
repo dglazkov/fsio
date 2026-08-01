@@ -65,6 +65,17 @@ export interface AgentEntry {
    *  make, not this helper's (P3: a distinct rung wants a distinct
    *  gesture; P5: we are not the party that gets to grant it). */
   install: string;
+  /** Does this agent send `session/request_permission` before it edits?
+   *
+   *  Measured, never assumed — and the reason the roster exists at all
+   *  (#102). This demo's headline is that the agent's consent question
+   *  becomes page UI (R6), and **the default agent does not ask**: F29
+   *  counted 0 permission requests and 0 `fs/*` calls from pi-acp across a
+   *  driven session, because it reads and edits with its own hands. F30
+   *  counted them from the Claude adapter, which does ask. A human choosing
+   *  between the two is choosing whether the demo's own argument fires, so
+   *  the page says so before they pick. */
+  asks: boolean;
   state: StatePosture;
   /** extra env this agent needs beyond the measured floor (env.ts). */
   env?: Record<string, string>;
@@ -111,6 +122,8 @@ export const AGENTS: AgentEntry[] = [
     // or `fs/*` (#100). What it exercises is the transport, the framing, the
     // confinement facts and the live workspace — not the consent surface.
     install: "npm i -g pi-acp",
+    // F29: 0 `session/request_permission`, 0 `fs/*` across a driven session.
+    asks: false,
     state: {
       mode: "carve",
       homeDirs: [".pi"],
@@ -140,6 +153,11 @@ export const AGENTS: AgentEntry[] = [
     args: [],
     title: "Claude Code (ACP adapter)",
     install: "npm i -g @agentclientprotocol/claude-agent-acp",
+    // F30: it asks, and the page renders the card with the file named and
+    // three options. Caveat the roster cannot carry and the page copy must:
+    // only in manual permission mode, which is inherited from the
+    // operator's own Claude Code config.
+    asks: true,
     // Was "place" until it was actually run (F30, 2026-08-01). Placement
     // moves the state tree perfectly — fresh config, `sessions/`,
     // `projects/`, zero denials — and the agent still cannot log in, because
@@ -174,6 +192,44 @@ export const AGENTS: AgentEntry[] = [
 ];
 
 export const agentNames = (agents: AgentEntry[] = AGENTS): string[] => agents.map((a) => a.name);
+
+/** One roster line as the page sees it (#102).
+ *
+ *  Prose and names only. This rides `services.json`, which one file serves
+ *  every granted origin (D24), so **no paths** — not the resolved binary,
+ *  not a state dir. The page needs to know *that* an agent is here and what
+ *  it will do, never where it lives. */
+export interface RosterEntry {
+  name: string;
+  title: string;
+  /** printed verbatim when `installed` is false; the human runs it, we
+   *  never do (P3/P5). */
+  install: string;
+  installed: boolean;
+  asks: boolean;
+}
+
+/** What this machine can actually serve, right now.
+ *
+ *  Discovery is exactly this: **enumerate the allow-list and check whether
+ *  each entry is present.** It never scans PATH for unknown executables and
+ *  offers them — the allow-list is the boundary (#6, P3), and a chooser
+ *  full of things that merely look like agents is a remote-controlled exec
+ *  surface with a friendly face.
+ *
+ *  Cheap enough to call on a timer: one `access()` per entry per directory
+ *  on PATH. That is what lets an agent installed while the helper is
+ *  running appear in the page without a restart — the service directory
+ *  only republishes when the content actually changes (D24). */
+export function roster(agents: AgentEntry[] = AGENTS): RosterEntry[] {
+  return agents.map((a) => ({
+    name: a.name,
+    title: a.title,
+    install: a.install,
+    installed: resolveBin(a) !== null,
+    asks: a.asks,
+  }));
+}
 
 /** Look up a name from the wire. Returns null for anything not listed —
  *  callers turn that into a spawn failure the page can render. */

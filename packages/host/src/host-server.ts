@@ -214,6 +214,15 @@ export interface ServicesInput {
    *  Hub-confined kinds (`echo`, the transport diagnostic) are omitted —
    *  they may be served ungranted. */
   needsGrant?: string[];
+  /** per-kind detail, keyed by kind name (D31): transcribed into that
+   *  kind's `detail` and interpreted nowhere in this library. Names with no
+   *  registered kind are dropped — the document advertises what the host
+   *  serves, and detail without a kind is detail about nothing.
+   *
+   *  The privacy line of D24 applies and the library cannot enforce it:
+   *  one file serves every granted origin, so an embedder putting paths or
+   *  secrets in here has leaked them to all of them. */
+  kindDetail?: Record<string, Record<string, unknown>>;
   /** the consent endpoint, published only while a host serves one. */
   consent?: { url: string };
 }
@@ -357,7 +366,13 @@ function canonServices(d: Partial<ServicesDoc>): Omit<ServicesDoc, "rev"> {
   const kinds = (Array.isArray(d.kinds) ? d.kinds : [])
     .filter((k): k is ServiceKind => !!k && typeof k.name === "string")
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((k) => (k.needsGrant ? { name: k.name, needsGrant: true } : { name: k.name }));
+    .map((k) => ({
+      name: k.name,
+      ...(k.needsGrant ? { needsGrant: true } : {}),
+      // Transcribed, never interpreted (D31) — but it must be a JSON
+      // object, or the document stops being one shape for every reader.
+      ...(isPlainObject(k.detail) ? { detail: k.detail } : {}),
+    }));
   const ws = (Array.isArray(d.workspaces) ? d.workspaces : [])
     .filter((w): w is ServiceWorkspace => !!w && typeof w.name === "string")
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -371,6 +386,8 @@ function canonServices(d: Partial<ServicesDoc>): Omit<ServicesDoc, "rev"> {
     ...(url === null ? {} : { consent: { url } }),
   };
 }
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** Client-chosen text that goes back out in an error (status.json is read
  *  by humans in terminals and by pages): bounded, no control characters. */
@@ -841,7 +858,11 @@ export class HostServer {
         ...(this.namedWorkspaces ? [CAPABILITIES.WORKSPACES] : []),
         ...(this.servicesInput.capabilities ?? []),
       ],
-      kinds: named.map((name) => (needsGrant.has(name) ? { name, needsGrant: true } : { name })),
+      kinds: named.map((name) => ({
+        name,
+        ...(needsGrant.has(name) ? { needsGrant: true } : {}),
+        ...(this.servicesInput.kindDetail?.[name] !== undefined ? { detail: this.servicesInput.kindDetail[name] } : {}),
+      })),
       ...(this.servicesInput.workspaces ? { workspaces: this.servicesInput.workspaces } : {}),
       ...(this.servicesInput.consent ? { consent: this.servicesInput.consent } : {}),
     });

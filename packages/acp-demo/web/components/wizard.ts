@@ -5,8 +5,8 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { gate, phase, wizardStep, folder, helper, pickError } from "../state";
-import { pickFolder, onMac } from "../connection";
+import { agents, gate, phase, wizardStep, folder, helper, pickError, type AgentOffer } from "../state";
+import { chooseAgent, pickFolder, onMac } from "../connection";
 
 // The command that works TODAY. The terminal demo's one-liner
 // (`npx github:dglazkov/fsio#acp-demo`) needs an artifact branch this demo
@@ -52,6 +52,16 @@ class AcpWizard extends SignalWatcher(LitElement) {
     .row { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-top: 1rem; }
     .gate strong { color: #ef8a95; }
     .gate .hint { color: #d8b9bc; font-size: 0.9rem; margin-top: 0.4rem; }
+    .agent {
+      border: 1px solid #2c313c; border-radius: 8px; padding: 0.6rem 0.8rem;
+      margin: 0.5rem 0; display: flex; gap: 0.8rem; align-items: center;
+    }
+    .agent .who { flex: 1; min-width: 0; }
+    .agent .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; }
+    .agent .what { color: #9aa5b8; font-size: 0.85rem; margin-top: 0.1rem; }
+    .agent .asks { color: #a3be8c; }
+    .agent .hands { color: #d9b477; }
+    .agent .cmd { margin: 0.35rem 0 0; }
   `;
 
   override render(): TemplateResult {
@@ -84,8 +94,9 @@ class AcpWizard extends SignalWatcher(LitElement) {
       <div class="crumbs">
         <span class=${s === 1 ? "on" : ""}>1 · run the helper</span>
         <span class=${s === 2 ? "on" : ""}>2 · pick the folder</span>
+        <span class=${s === 3 ? "on" : ""}>3 · the agent</span>
       </div>
-      ${s === 1 ? this.#stepRun() : this.#stepPick()}`;
+      ${s === 1 ? this.#stepRun() : s === 2 ? this.#stepPick() : this.#stepAgent()}`;
   }
 
   #stepRun(): TemplateResult {
@@ -100,9 +111,10 @@ class AcpWizard extends SignalWatcher(LitElement) {
         <button class="small" @click=${() => void navigator.clipboard.writeText(CMD)}>copy</button>
       </div>
       <p class="fineprint">
-        You'll need an ACP agent installed — e.g. <code>npm i -g pi-acp</code>.
-        The helper starts it for you and won't start anything else: the page
-        can name an agent from the helper's list, never a path.
+        No ACP agent installed? Run it anyway — the helper starts without one,
+        and step 3 shows you what this machine has and how to get one. It will
+        not start anything that isn't on its own list: this page names an
+        agent, never a path.
       </p>
       <p class="fineprint">
         ${onMac
@@ -146,6 +158,69 @@ class AcpWizard extends SignalWatcher(LitElement) {
         : nothing}
       ${!err && f && h === "alive" ? html`<div class="status ok">helper found — starting the agent</div>` : nothing}
     `;
+  }
+
+  /** Step 3 (#102): what this machine has, and what each one will do.
+   *
+   *  Reached only when there is something to say — several agents to pick
+   *  between, or none at all. With exactly one installed the page names it
+   *  and never shows this. */
+  #stepAgent(): TemplateResult {
+    const roster = agents.get() ?? [];
+    const ready = roster.filter((a) => a.installed);
+    const rest = roster.filter((a) => !a.installed);
+    return html`
+      ${ready.length
+        ? html`<p class="explain">
+            This machine has ${ready.length} ACP agents. Pick the one to drive —
+            the page sends its <em>name</em>, and the helper looks that up in
+            its own allow-list.
+          </p>`
+        : html`<p class="explain">
+            No ACP agent on this machine yet. The helper is running and this
+            page is watching: install one in a terminal and it shows up here,
+            no restart, no reload.
+          </p>`}
+      ${ready.map((a) => this.#agent(a))}
+      ${rest.length
+        ? html`<p class="fineprint">${ready.length ? "Also known here, not installed:" : "The helper knows these:"}</p>
+            ${rest.map((a) => this.#agent(a))}`
+        : nothing}
+      <p class="fineprint">
+        fsio ships no agent on purpose: vendoring one costs ~118 MB of
+        dependencies, and an agent you installed is one you can also inspect,
+        update and revoke. Only want to see the permission card? Re-run the
+        helper with <code>--fixture</code> — that's a scripted puppet, not a
+        real agent, and it says so.
+      </p>
+    `;
+  }
+
+  /** One roster line. The `asks` sentence is the one that matters: this
+   *  demo is about the agent's consent question becoming page UI, and not
+   *  every agent sends one (F29/F30). Saying so before the choice beats
+   *  discovering it after a turn that edited a file silently. */
+  #agent(a: AgentOffer): TemplateResult {
+    return html`<div class="agent">
+      <div class="who">
+        <span class="name">${a.name}</span> — ${a.title}
+        <div class="what">
+          ${a.asks
+            ? html`<span class="asks">asks before it edits</span> — the permission card is this demo`
+            : html`<span class="hands">edits with its own hands</span> — you'll see the transport and the live
+                workspace, but no permission card`}
+        </div>
+        ${a.installed
+          ? nothing
+          : html`<div class="cmd">
+              <code>${a.install}</code>
+              <button class="small" @click=${() => void navigator.clipboard.writeText(a.install)}>copy</button>
+            </div>`}
+      </div>
+      ${a.installed
+        ? html`<button class="primary" @click=${() => void chooseAgent(a.name)}>Use this one</button>`
+        : nothing}
+    </div>`;
   }
 }
 

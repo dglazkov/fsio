@@ -573,7 +573,7 @@ transport-independent and hold whatever that lab settles.
   services.json             # host-owned capability document, temp+renamed
                             #   ONLY when its content changes:
                             #   {rev, protocol, capabilities: [name…],
-                            #    kinds: [{name, needsGrant?, …}],
+                            #    kinds: [{name, needsGrant?, detail?}],
                             #    workspaces: [{name, label?}],   # names only
                             #    consent?: {url}}
   consent/
@@ -617,6 +617,18 @@ Publishing rules:
 - The document is not a security mechanism (D20): it is advertisement, and
   every claim in it is re-judged at spawn time by resolution (D22) and the
   policy hook (D12).
+- A `kinds` entry MAY carry `detail`, a JSON object the embedder supplies
+  and the host transcribes verbatim
+  ([D31](DECISIONS.md#d31--a-kind-may-carry-embedder-detail-transcribed-never-interpreted-detected-by-presence)).
+  A host MUST NOT interpret it, MUST drop a `detail` that is not a JSON
+  object and one naming a kind it does not serve, and MUST move `rev` when
+  it changes. Its keys are a contract between one embedder and its own
+  client, so a client MUST detect it by **presence** and MUST read an absent
+  or unrecognized `detail` as "this host says nothing" rather than as an
+  error. It is subject to every rule above, the privacy line included: one
+  file serves every granted origin, so `detail` carries no paths and no
+  secrets. The `/acp` demo's agent roster is the first consumer
+  ([#102](https://github.com/dglazkov/fsio/issues/102)).
 
 **The initial capability names.** Stable and never reused
 ([D25](DECISIONS.md#d25--capabilities-are-feature-detected-names-protocol-is-the-on-disk-version));

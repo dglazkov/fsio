@@ -1364,6 +1364,55 @@ test("capabilities are feature-detected names, and an unknown one is not fatal (
   });
 });
 
+test("a kind's embedder detail is transcribed verbatim and never interpreted (D31)", async () => {
+  // The acp demo's agent roster (#102) is the first consumer: the embedder
+  // knows what a roster is, the library knows only that it is a JSON object
+  // it must carry unchanged and republish when it changes.
+  const roster = { agents: [{ name: "pi-acp", installed: true, asks: false }] };
+  await withHost({ services: { kindDetail: { echo: roster, ghost: { x: 1 } } } }, async (client, root) => {
+    const doc = (await client.services())!;
+    assert.deepEqual(doc.kinds.find((k) => k.name === "echo")?.detail, roster, "detail rides the kind it describes");
+    assert.ok(!doc.kinds.some((k) => k.name === "ghost"), "detail for a kind nobody serves advertises nothing");
+    // On disk as written, not as some canonical re-encoding of ours: a page
+    // parsing this must see exactly the object the embedder handed over.
+    const onDisk = JSON.parse(fs.readFileSync(path.join(root, ".fsio", "services.json"), "utf8"));
+    assert.deepEqual(onDisk.kinds.find((k: { name: string }) => k.name === "echo").detail, roster);
+  });
+});
+
+test("detail moves the revision when it changes, and only then (D24/D31)", async () => {
+  // The doorbell is what makes a live roster cost nothing: the helper
+  // re-scans PATH on a timer, and a scan that finds no news writes nothing.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
+  const server = new HostServer({ root });
+  const client = new FsioClient(new ShimDirectory(root, {}));
+  try {
+    await server.start();
+    await client.connect();
+    const detail = (installed: boolean) => ({ kindDetail: { echo: { agents: [{ name: "pi-acp", installed }] } } });
+
+    server.setServices(detail(false));
+    const rev0 = server.services().rev;
+    server.setServices(detail(false));
+    assert.equal(server.services().rev, rev0, "an unchanged re-scan must not move the doorbell");
+
+    server.setServices(detail(true));
+    const rev1 = server.services().rev;
+    assert.equal(rev1, rev0 + 1, "an agent appearing is news");
+    const fresh = (await client.services((await client.hostInfo()).info!.servicesRev))!;
+    assert.equal(fresh.rev, rev1);
+    assert.deepEqual(fresh.kinds.find((k) => k.name === "echo")?.detail, { agents: [{ name: "pi-acp", installed: true }] });
+
+    // Not an object is not detail. The document has one shape for every
+    // reader, and the library is the last place that can hold that line.
+    server.setServices({ kindDetail: { echo: ["pi-acp"] as unknown as Record<string, unknown> } });
+    assert.equal(server.services().kinds.find((k) => k.name === "echo")?.detail, undefined);
+  } finally {
+    await server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a kind registered after start() is advertised (D13/D24)", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-b1-"));
   const server = new HostServer({ root });

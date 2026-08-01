@@ -25,6 +25,7 @@ const BASE: AgentEntry = {
   args: [],
   title: "scratch fixture",
   install: "(built with this repo)",
+  asks: false,
   state: { mode: "place", env: "F30_STATE", why: "fixture keeps no state" },
 };
 
