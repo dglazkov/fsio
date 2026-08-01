@@ -58,7 +58,7 @@ Those branches are build output, not source: CI bundles each helper on every
 green `main` and force-pushes it (`npm run -w @fsio/<demo> bundle`), so the
 one-liner installs the same code the repo just tested. The pages deploy to
 Cloud Run on tag —
-[/terminal](https://fsio-terminal-demo-y7wypozrha-uc.a.run.app) is live;
+[/terminal](https://fsio-terminal-demo-141172503982.us-central1.run.app) is live;
 `fsio-acp-demo` gets its URL on its first tagged deploy.
 
 The `/acp` helper ships **no agent** ([#100](https://github.com/dglazkov/fsio/issues/100)):
