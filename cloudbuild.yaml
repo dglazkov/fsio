@@ -1,15 +1,27 @@
-# Cloud Build pipeline for the terminal-demo page (#16 S6; the #15
-# deploy-on-tag slot). Trigger: tag push matching v* — trigger `deploy-fsio`
-# lives in project fsio-503901, REGION us-west1 (the _REGION below is where
-# the service deploys, not where the trigger lives). Note `gcloud builds
-# triggers list` / `builds list` default to --region=global and show
-# NOTHING for this project — pass --region=us-west1 (a v0.2.0 release was
-# nearly re-deployed by hand chasing that empty listing). Manual smoke:
+# Cloud Build pipeline for the demo pages (#16 S6 for terminal-demo, #106 for
+# acp-demo; the #15 deploy-on-tag slot). Trigger: tag push matching v* —
+# trigger `deploy-fsio` lives in project fsio-503901, REGION us-west1 (the
+# _REGION below is where the services deploy, not where the trigger lives).
+# Note `gcloud builds triggers list` / `builds list` default to
+# --region=global and show NOTHING for this project — pass --region=us-west1
+# (a v0.2.0 release was nearly re-deployed by hand chasing that empty
+# listing). Manual smoke:
 #
 #   gcloud builds submit --config cloudbuild.yaml \
 #     --substitutions=_VERSION=manual-$(git rev-parse --short HEAD)
+#
+# Two demos, one config and one trigger, rather than a `_DEMO` substitution
+# and a second trigger: a tag is a release of the repo, and both pages are
+# built from the same commit of the same workspace. The two Dockerfiles share
+# a byte-identical build stage, so the second `docker build` is a layer-cache
+# hit on the first (same daemon, same context) — the workspace is installed
+# and built once. Each page still deploys to its OWN Cloud Run service:
+# different helper, different preconditions, and a shared host would mean
+# serving one of them from a subpath (a vite `base`, i.e. a build-time
+# commitment to a URL) for no gain.
 steps:
   - name: gcr.io/cloud-builders/docker
+    id: build-terminal-demo
     args:
       [
         "build",
@@ -20,7 +32,20 @@ steps:
         ".",
       ]
   - name: gcr.io/cloud-builders/docker
+    id: build-acp-demo
+    args:
+      [
+        "build",
+        "-f",
+        "packages/acp-demo/deploy/Dockerfile",
+        "-t",
+        "${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/acp-demo:${_VERSION}",
+        ".",
+      ]
+  - name: gcr.io/cloud-builders/docker
     args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/terminal-demo:${_VERSION}"]
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/acp-demo:${_VERSION}"]
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
@@ -29,6 +54,18 @@ steps:
         "deploy",
         "fsio-terminal-demo",
         "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/terminal-demo:${_VERSION}",
+        "--region=${_REGION}",
+        "--allow-unauthenticated",
+        "--quiet",
+      ]
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      [
+        "run",
+        "deploy",
+        "fsio-acp-demo",
+        "--image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/fsio/acp-demo:${_VERSION}",
         "--region=${_REGION}",
         "--allow-unauthenticated",
         "--quiet",

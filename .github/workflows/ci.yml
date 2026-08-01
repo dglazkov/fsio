@@ -30,16 +30,24 @@ jobs:
       - run: npm run build
       - run: npm test
 
-  # #16 S5: the npx-installable helper. Every push to main rebuilds the
-  # single-file bundle and force-pushes it (one orphan commit, no history)
-  # to the `terminal-demo` branch, which is what the demo page's one-liner
-  # installs: npx github:dglazkov/fsio#terminal-demo
+  # The npx-installable helpers (#16 S5, #106). Every push to main rebuilds
+  # each demo's bundle and force-pushes it (one orphan commit, no history) to
+  # a branch named after the demo, which is what that demo page's one-liner
+  # installs: npx github:dglazkov/fsio#terminal-demo, …#acp-demo.
+  #
+  # The branch name IS the package directory name, which is what lets one job
+  # serve both: the pair (workspace, branch) is a single matrix entry and
+  # nothing below is spelled twice.
   artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        demo: [terminal-demo, acp-demo]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -49,13 +57,14 @@ jobs:
       - run: npm i -g npm@11.6.1
       - uses: google/wireit@setup-github-actions-caching/v2
       - run: npm ci
-      - run: npm run -w @fsio/terminal-demo bundle
+      - run: npm run -w @fsio/${{ matrix.demo }} bundle
       - name: push artifact branch
         run: |
-          cd packages/terminal-demo/artifact-dist
-          git init -q -b terminal-demo
+          cd packages/${DEMO}/artifact-dist
+          git init -q -b "${DEMO}"
           git -c user.name=ci -c user.email=ci@fsio add -A
-          git -c user.name=ci -c user.email=ci@fsio commit -qm "terminal-demo artifact from ${GITHUB_SHA}"
-          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}" terminal-demo
+          git -c user.name=ci -c user.email=ci@fsio commit -qm "${DEMO} artifact from ${GITHUB_SHA}"
+          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${DEMO}"
         env:
+          DEMO: ${{ matrix.demo }}
           GITHUB_TOKEN: ${{ github.token }}

@@ -38,6 +38,38 @@ a grant is standing authority and the spawn policy is the per-request
 judgment, and execution needs both
 ([D23](spec/DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)).
 
+## The demos
+
+Two pages, two helpers, one shape: run a one-liner in the folder you want to
+share, open the page, grant that folder. Nothing is uploaded and there is no
+server in between — the page and the process talk through files in the folder
+you picked (P1). Both helpers are macOS-only for now (confinement is
+`sandbox-exec`); the pages run in any Chromium.
+
+```sh
+# /terminal — a sandboxed shell over your working folder
+npx github:dglazkov/fsio#terminal-demo
+
+# /acp — a coding agent on your machine, driven from the page
+npx github:dglazkov/fsio#acp-demo
+```
+
+Those branches are build output, not source: CI bundles each helper on every
+green `main` and force-pushes it (`npm run -w @fsio/<demo> bundle`), so the
+one-liner installs the same code the repo just tested. The pages deploy to
+Cloud Run on tag —
+[/terminal](https://fsio-terminal-demo-y7wypozrha-uc.a.run.app) is live;
+`fsio-acp-demo` gets its URL on its first tagged deploy.
+
+The `/acp` helper ships **no agent** ([#100](https://github.com/dglazkov/fsio/issues/100)):
+vendoring an ACP adapter costs ~118 MB of transitive dependencies, and an
+agent you installed is one you can also inspect, update and revoke. It starts
+without one anyway and publishes the roster it found — installed or not, and
+crucially *whether each one asks permission before it edits*, which is the
+thing this demo exists to show and which not every agent does. The page
+renders that list and you choose from it
+([D31](spec/DECISIONS.md#d31--a-kind-may-carry-embedder-detail-transcribed-never-interpreted-detected-by-presence)).
+
 ## Layout
 
 npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wireit)
@@ -53,6 +85,7 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `packages/workbench` — measurement workbench page (consumes `@fsio/client`)
 - `packages/bench` — node bench clients + protocol/lifecycle/client-conformance tests
 - `packages/terminal-demo` — /terminal demo helper: sandboxed working-folder shell (consumes `@fsio/host`)
+- `packages/acp-demo` — /acp demo: page + helper, a browser that is an ACP client driving a sandboxed local agent
 - `packages/fsiod` — the hub daemon and the `fsio` CLI: one granted folder,
   many workspaces (also consumes `@fsio/host`)
 
