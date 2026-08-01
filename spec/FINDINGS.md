@@ -876,6 +876,91 @@ comfortable answer.
 [#86](https://github.com/dglazkov/fsio/issues/86),
 [#76](https://github.com/dglazkov/fsio/issues/76).
 
+### F27 — a read wall costs 21 rules and holds the crown jewels, but the toolchain names its own price: git's identity and npm's cache are exactly what stays readable
+
+Measured 2026-07-31 (macOS 26.5/arm64, node 24.11.0, git 2.50.1;
+`node scripts/read-wall-lab.mjs`, ~2 min;
+[#90](https://github.com/dglazkov/fsio/issues/90), the leg F25/F26 left open —
+[#86](https://github.com/dglazkov/fsio/issues/86) open question 4).
+[F24](#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read)
+priced what the shipped wall does *not* hold; this prices what closing it
+costs. Every width is the shipped profile plus a read wall of increasing
+width — the only variable that changes. Rules were added only when a measured
+denial demanded one. Subject: the workload act 3 is about — a workspace with a
+git repo, a dependency, a compiler and a test.
+
+| | W0 shipped | W1 workspace only | W2 + toolchain | W3 + named user state |
+|---|---|---|---|---|
+| node runs | ok | **FAIL** | ok | ok |
+| read the workspace | ok | **FAIL** | ok | ok |
+| compile (tsc) | ok | **FAIL** | ok | ok |
+| run tests | ok | **FAIL** | ok | ok |
+| `git status` / `git commit` | ok | **FAIL** | **FAIL** | ok |
+| `npm ci --offline` | ok | **FAIL** | **FAIL** | ok |
+| `~/.ssh` (private keys) | reachable | — | **denied** | **denied** |
+| `~/.config`, `~/Documents`, `/etc/passwd` | reachable | — | **denied** | **denied** |
+| `~/.gitconfig` | reachable | — | denied | **reachable** |
+| `~/.npmrc` + `~/.npm` | reachable | — | denied | **reachable** |
+| profile size | 8 rules | 12 | 25 | **29** |
+
+- **The read wall exists and is affordable.** 21 rules over the shipped 8 buy
+  a working toolchain with `~/.ssh`, `~/Documents`, `~/.config` and
+  `/etc/passwd` all denied — the reach F24 found wide open. #86 worried that
+  the shell case produced "a false trade between confinement and utility";
+  for act 3's actual workload the trade is real and cheap. **The honest
+  consent sentence gets stronger**: not just "writes are limited to this
+  folder" but "reads are limited to this folder, your toolchain, and your git
+  and npm settings."
+- **What survives the wall is exactly the credential-bearing part.** The two
+  carve-outs W3 must make are not incidental config. `~/.npmrc` is where a
+  registry auth token lives; `~/.npm/_cacache` is a content-addressed store
+  of package bodies already fetched, private registries included; `~/.gitconfig`
+  routinely carries `[credential]` helpers and `url.*.insteadOf` rewrites. A
+  read wall authored from the toolchain's denials converges on *keeping the
+  secrets readable and denying the rest* — the opposite of the intuition, and
+  it matters most in act 3, where the brain is remote and anything readable
+  is anything that leaves.
+- **The wall's floor is far above the workspace.** W1 — workspace and scratch
+  only, the width the phrase "sandboxed to this folder" implies — does not
+  merely fail the toolchain: `/bin/sh` never starts. Denying
+  `(literal "/")`, the root directory every absolute path walk reads, aborts
+  the process with **SIGABRT before `main()` and no error text at all** (exit
+  134, empty stderr; the lab's own denial log named it — one line,
+  `file-read-data /`). A too-narrow read wall does not look broken, it looks
+  like nothing happened. R3/R18 apply to the read wall, and the failure is
+  worse than the write wall's because there is no process left to report it.
+- **The runtime lives under `$HOME`.** With a version manager, node is at
+  `~/.nvm/versions/node/<v>/` — so "deny `$HOME`" and "run node" are not
+  independent knobs. Same shape as F26's keystore collision (narrow the
+  profile, log the child out): the profile cannot be authored against a
+  mental model in which `$HOME` is user data and `/usr` is the system.
+- **Sizing, for the consent surface.** Of W3's 29 rules, 8 are the shipped
+  write wall, 4 the workspace and scratch, 13 runtime-and-system
+  infrastructure shared by any node service (F25's "base layer" again), and
+  **4 are the user state this particular toolchain names**. As with F25, the
+  per-subject delta is the small part, and it is the part a consent surface
+  has to show (R15).
+
+**Method trap, the third of this class.** Kernel Sandbox denials are stamped
+in the unified log when they **flush**, not when they occur, and the lag runs
+to several seconds — while a whole width here runs in ~2 s. Unbounded windows
+therefore reported one width's denials under the next (`~/.gitconfig` shown as
+denied in W3, where git demonstrably worked; `/dev/dtracehelper` carrying a
+running total of ×47 then ×97), and tight windows dropped denials the child
+had just reported synchronously (W2 showing 1 denial in a cell where git had
+printed EPERM). The lab now spaces widths by 10 s, holds each window open 8 s
+past its width, and prints every window next to its results so the artifact
+can be audited instead of trusted. Same class as F16's focus emulation and
+F26's local-time parsing: **an instrument that fails toward a plausible
+answer.** Denial counts in the table above are corroborated by the child's own
+exit codes, which is the signal that does not depend on the log at all.
+→ F23, F24, F25, F26,
+[D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
+[#90](https://github.com/dglazkov/fsio/issues/90); feeds
+[#86](https://github.com/dglazkov/fsio/issues/86),
+[#71](https://github.com/dglazkov/fsio/issues/71),
+[#74](https://github.com/dglazkov/fsio/issues/74).
+
 ## Open measurements
 
 - ~~Safe Browsing on vs. off (final F7 attribution).~~ Measured
@@ -896,6 +981,13 @@ comfortable answer.
   deny-default profile logs the child out; 8 environment variables
   suffice). What a *read* wall costs this subject is still unmeasured —
   every cell above left reads wide open.
+  → [#90](https://github.com/dglazkov/fsio/issues/90)
+- ~~Does the read wall exist, and what does it cost? (#86 open question
+  4.)~~ Measured 2026-07-31 → F27 (it exists, costs 21 rules over the
+  shipped 8, denies `~/.ssh`/`~/Documents`/`/etc/passwd` — and keeps
+  `~/.gitconfig` and `~/.npm` readable because git and npm name them).
+  Measured against a *toolchain*; what a read wall costs the **agent CLI**
+  of F26 is still unmeasured, and that subject reads far more widely.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - ~~The same for one MCP server (act 4): is #77's "its binary, its working
   state, and nothing else" true?~~ Measured 2026-07-31 → F25 (true, and
@@ -923,6 +1015,8 @@ node scripts/service-reach-lab.mjs           # F25 shell vs service posture (~1 
 node scripts/agent-reach-lab.mjs            # F26 agent CLI under confinement
                                             # (needs the claude CLI + a config
                                             #  dir; --workspace/--config/--slot)
+node scripts/read-wall-lab.mjs              # F27 read-wall cost matrix (~2 min;
+                                            #  --widths W0,W1,W2,W3  --keep)
 node scripts/confinement-lab.mjs --launchd   # F23/F24 child-confinement matrix
                                              # (~30 s; without --launchd it
                                              #  skips the two launchd cases,
