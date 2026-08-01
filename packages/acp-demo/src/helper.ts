@@ -245,10 +245,11 @@ fsio ACP demo · serving ${rootReal}${
   nothing. It asks permission and has no hands: every file it reads or writes
   goes through the page. It exists to make the permission card and the fs/*
   handlers actually run (#100).
-    try:  "go"      propose an edit, ask, write when you allow it
-          "refuse"  reach outside the folder and read the refusals back
-          "many"    three separate asks in one turn
-          "read"    a read, which needs no card — you granted the folder`
+    try:  "go"        propose an edit, ask, write when you allow it
+          "refuse"    reach outside the folder and read the refusals back
+          "many"      three separate asks in one turn
+          "read"      a read, which needs no card — you granted the folder
+          "markdown"  what the page renders, and the four things it won't`
     : ""
 }
   ${

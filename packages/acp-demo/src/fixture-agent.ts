@@ -40,6 +40,8 @@
 //   "refuse"            — reach outside the folder; report each refusal
 //   "many"              — three permission asks in one turn
 //   "read"              — read-only: no ask, no write
+//   "markdown"          — every construct the page renders, plus the four it
+//                         must refuse to render (touches no files)
 import process from "node:process";
 
 // ---- JSON-RPC plumbing (both directions: this peer asks, and is asked)
@@ -98,6 +100,10 @@ const update = (u: Record<string, unknown>): void => notify("session/update", { 
 const say = (text: string): void => update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: text + "\n" } });
 
 const think = (text: string): void => update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text } });
+
+/** Used only to hold a chunk boundary open long enough for a human to see
+ *  the mid-stream state (the markdown scenario's unterminated fence). */
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 interface Edit {
   path: string;
@@ -255,10 +261,67 @@ async function scenarioRead(): Promise<void> {
   else say(`Could not read ${NOTES}: ${r.why}`);
 }
 
+/** Everything the page's markdown renderer is supposed to do, and the four
+ *  things it is supposed to refuse, in one deterministic turn.
+ *
+ *  A real agent emits markdown constantly, so the renderer would get
+ *  exercised — but never the same way twice, and never the hostile cases at
+ *  all. The refusals are the reason this scenario is worth its lines: a
+ *  `javascript:` link and a `<script>` tag must arrive as *readable text*,
+ *  and that is a claim about a page holding a folder handle. `src/markdown.ts`
+ *  asserts it in Node; this is how a human sees it.
+ *
+ *  Streamed in pieces, and deliberately splitting a code fence across two
+ *  chunks: an unterminated fence is the normal mid-stream state, and it
+ *  should render as code rather than flash as raw backticks. */
+async function scenarioMarkdown(): Promise<void> {
+  think("Rendering check — no files are touched by this one.");
+  say(`# Markdown check
+
+This paragraph has **bold**, *italic*, \`inline code\`, and a
+soft line break that should stay a line break.
+
+## What should render
+- a bullet list
+- with \`read_text_file\` and \`write_text_file\` in it — snake_case, *not* italics
+- and [a real link](https://github.com/dglazkov/fsio)
+
+1. ordered too
+2. second item
+
+> A blockquote, for the look of it.
+
+---
+`);
+  // The fence opens here and closes in the NEXT chunk: while these two are
+  // apart, the page is holding an unterminated fence.
+  say(`Here is a code block, streamed in two pieces:
+
+\`\`\`ts
+export function greet(name: string): string {`);
+  await sleep(700);
+  say(`  return \`hello \${name}\`;
+}
+\`\`\`
+
+## What should NOT render
+
+None of these four may become clickable or disappear — you should be able to
+read every one of them as plain text:
+
+- a script tag: <script>alert(1)</script>
+- an image handler: <img src=x onerror=alert(1)>
+- a javascript link: [click me](javascript:alert(1))
+- a data link: [click me too](data:text/html,<script>alert(1)</script>)
+
+If any of those four vanished or turned blue, that is a bug worth stopping for.`);
+}
+
 function pickScenario(text: string): () => Promise<void> {
   const t = text.toLowerCase();
   if (t.includes("refuse")) return scenarioRefuse;
   if (t.includes("many")) return scenarioMany;
+  if (t.includes("markdown")) return scenarioMarkdown;
   if (t.includes("read")) return scenarioRead;
   return scenarioEdit;
 }
