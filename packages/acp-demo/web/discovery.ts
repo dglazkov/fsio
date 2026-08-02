@@ -13,7 +13,8 @@
 // the page already holds this folder, and `listSessions()` is D18 discovery
 // that the terminal demo has been using since #58. What was missing was not
 // permission but a reason — /acp shipped without a picker on the grounds
-// that one wanted a transcript story first, and D32 supplied it.
+// that one wanted a transcript story first, and #113's sticky sessions
+// supplied it.
 import { OUT_LOG_RE } from "@fsio/common";
 import type { FsioClient } from "@fsio/client";
 import { adoptableIds, peekConversation, startedAt, type Peek } from "../src/discovery.js";

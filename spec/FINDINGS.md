@@ -615,481 +615,77 @@ chunk after an idle window waits for a watch event (~50 ms, F2) or the
 [#70](https://github.com/dglazkov/fsio/issues/70),
 [#71](https://github.com/dglazkov/fsio/issues/71).
 
-### F23 — child confinement is transitive to any depth and cannot be re-entered in either direction; setuid binaries become unexecutable
+**The confinement measurements moved out.** F23 through F28 measured
+Seatbelt and two agent CLIs. All six are real, reproducible and durable, and
+**the protocol does not stand on any of them** — which is the test for this
+shelf. A second implementation of fsio, on another substrate, would need
+none of it: there is no confinement field anywhere on the wire, and
+`sandboxed` is a kind's own `SpawnResult` extra under
+[D13](DECISIONS.md#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry).
+What they *are* ground for is the confinement library and the agent demo,
+so that is where they live now
+([#132](https://github.com/dglazkov/fsio/issues/132)). Each number below is
+spent and is never reused.
 
-Measured 2026-07-31 (macOS 26.5/arm64;
-`node scripts/confinement-lab.mjs --launchd`;
-[#86](https://github.com/dglazkov/fsio/issues/86) OQ6 — "transitive
-confinement, or a stated limit?"). Method: the shipped profile
-(`packages/terminal-demo/src/profile.ts`) and the shipped argv shape
-(`sandbox.ts` `sandboxArgv` — the invocation sessions really use, D12's
-no-drift discipline), a scratch ROOT, and a canary directory named in **no**
-`-D` parameter. Every case asks one question: did a file appear at the
-canary path? **8 escape attempts, 0 escapes.**
+### F23 — moved: the wall is transitive, cannot be re-entered, and setuid dies
 
-| attempt | result |
-|---|---|
-| direct child writes outside ROOT (baseline) | confined — EPERM |
-| grandchild (`sh -c` inside `sh -c`) | confined |
-| depth 4 through another interpreter (perl → sh → sh → touch) | confined |
-| detached child, parent exits before the write | confined |
-| re-enter `sandbox-exec` with `(allow default)` | `sandbox_apply: Operation not permitted` |
-| re-enter `sandbox-exec`, same profile, `ROOT=/` | `sandbox_apply: Operation not permitted` |
-| `launchctl submit` (launchd spawns for the child) | rc=1, no canary |
-| `launchctl bootstrap` of a plist written *inside* ROOT | `Bootstrap failed: 5`, no canary |
+8 escape attempts, 0 escapes; `sandbox_apply` fails even when narrowing.
+→ `packages/confine/MEASUREMENTS.md`
 
-- **Transitive by inheritance, at every depth and across detachment.** The
-  policy rides the process, so `fork`/`exec` carries it and an orphan keeps
-  it. Act 5's mirror hall (an fsio peer spawning the claude CLI as its
-  subagent) inherits confinement by construction — R13 is a property, not a
-  gap to document.
-- **One-shot: `sandbox_apply` fails in the *safe* direction too.** A
-  confined process cannot re-enter `sandbox-exec` even to **narrow** itself
-  (`(deny default)` → same EPERM). This is the load-bearing result for the
-  hub: a profile must be composed into **one** policy and applied by the
-  spawner, because no layering is available afterwards, and a nested fsio
-  host cannot confine its own children below its own reach — it can only
-  pass its confinement down.
-- **launchd is not a spawn proxy out.** Both routes an unprivileged child
-  has to ask launchd to spawn on its behalf failed under the profile,
-  including the realistic one (write the plist into ROOT — which the child
-  *may* write — then bootstrap it into `gui/$UID`).
-- **setuid/setgid binaries are unexecutable under any Seatbelt profile.**
-  `/bin/ps` (4755), `/usr/bin/top` (4555), `/usr/bin/crontab` (4755),
-  `/usr/bin/sudo` (4511) all fail exec with EPERM; non-setuid tools
-  (`id`, `whoami`, `ssh`, `lsof`) run. The control isolates it to Seatbelt
-  rather than to fsio's posture: `/bin/ps` fails identically under
-  `-p '(version 1)(allow default)'` and runs unsandboxed. A privilege-
-  escalation route is closed for free, and the cost lands on ordinary
-  usability — `ps` in a demo shell reports "Operation not permitted", and
-  no environment fix reaches it (the R2 lever does not apply here; only
-  dropping the sandbox would).
-→ [D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
-[D22](DECISIONS.md#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry),
-[#86](https://github.com/dglazkov/fsio/issues/86); feeds
-[#71](https://github.com/dglazkov/fsio/issues/71),
-[#77](https://github.com/dglazkov/fsio/issues/77).
+### F24 — moved: it is a *write* wall — the environment and every read cross it
 
-### F24 — the wall is a *write* wall: a confined child inherits the host's entire environment (ssh-agent socket included) and reads every file the user can read
+47 of 48 variables and 4 of 4 canary secrets reached the child;
+`SSH_AUTH_SOCK` and `~/.ssh` included. → `packages/confine/MEASUREMENTS.md`
 
-Measured 2026-07-31, same lab and run as F23
-([#86](https://github.com/dglazkov/fsio/issues/86) OQ4 — "does the read wall
-exist, and what does it cost?" — plus the env-policy baseline #86 asked for
-as a falsifiable test: not "we intended to scrub", but the bytes the child
-got). Canary secrets were exported into the parent and the child's real
-`env` was diffed against them.
+### F25 — moved: a stdio MCP server runs deny-default in 15 rules, 5 its own
 
-| what crosses | measured |
-|---|---|
-| environment variables | **47 of 48** reached the child |
-| canary secrets (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, one control) | **4 of 4** reached the child |
-| `SSH_AUTH_SOCK` | inherited; `ssh-add -l` inside the sandbox reaches the agent and gets a protocol answer |
-| `HOME`, `SHELL`, `TMPDIR`, 21 `PATH` entries | inherited verbatim, including a PATH entry under `~` |
-| `~/.ssh/id_ed25519` | readable (411 B) |
-| `~/.gitconfig`, `~/.config/gh/hosts.yml`, `/etc/passwd`, every sibling project under `~/Documents` | readable |
-| `~/Library/Messages` | denied — **by TCC, not by Seatbelt** |
-| network egress (`curl https://example.com`) | HTTP 200, deliberate (the demo allows it: `git pull`, `npm install`) |
+Same 14 tools, no network — categorically tighter than a shell at any
+profile size. → `packages/confine/MEASUREMENTS.md`
 
-- **The honest consent sentence is about writes.** "Sandboxed to this
-  folder" is true of modification and false of disclosure: a private key,
-  every credential the environment carries, and every sibling repo are all
-  in reach, and network egress is on, so read reach *is* exfiltration
-  reach. #86's success criterion is "the sentence consent can honestly
-  say" — this finding is what makes that sentence checkable, and the spec's
-  threat model now states it
-  ([What the child sandbox does not bound](PROTOCOL.md#what-the-child-sandbox-does-not-bound)).
-- **Env policy has no baseline to improve on — it is pass-everything.**
-  Both halves of the R4/R17 program (place child state, then scrub what
-  remains) start from zero here; `SSH_AUTH_SOCK` is the sharpest single
-  item, because agent forwarding is a *signing capability*, not a
-  configuration value.
-- **Part of the read wall is already held by someone else.** The
-  TCC-protected set (Messages, Photos, Calendar, …) is denied to the child
-  without fsio doing anything — the same "do not duplicate a wall another
-  party enforces" shape R8 states for the browser's edit boundary, with the
-  OS as the other party.
-- **Unmeasured, deliberately:** what a read wall would *cost* in practice
-  (R2 friction on a real toolchain) — that needs the act-2/act-4 field-test
-  re-runs #86 lists, not this lab.
-→ F23,
-[D20](DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it),
-[#86](https://github.com/dglazkov/fsio/issues/86); feeds
-[#71](https://github.com/dglazkov/fsio/issues/71),
-[#76](https://github.com/dglazkov/fsio/issues/76),
-[#6](https://github.com/dglazkov/fsio/issues/6).
+### F26 — moved: placement moves a child's state but not its identity
 
-### F25 — a stdio MCP server runs under a deny-default profile in 15 rules, 5 of which are the service's reach; the same server under the shell posture reads everything
+The claude CLI's credential is in the login Keychain, so a deny-default
+profile logs it out. → the agent demo's own `MEASUREMENTS.md`
 
-Measured 2026-07-31 (macOS 26.5/arm64, node v24.11.0;
-`node scripts/service-reach-lab.mjs`;
-[#90](https://github.com/dglazkov/fsio/issues/90) act-4 leg, testing
-[#77](https://github.com/dglazkov/fsio/issues/77)'s claim that "an MCP
-server is narrower than a shell"). Subject:
-`@modelcontextprotocol/server-filesystem`, a real stdio MCP server,
-deliberately credential-free. Method: build the deny-default profile the
-way a profile author would have to — start from nothing, add only rules a
-*measured* denial demands (denials read from the unified log; SBPL
-`(trace)` no longer produces a file on current macOS). Three rounds of
-`deny default` → run → read denials → add.
+### F27 — moved: a read wall costs 21 rules and keeps the crown jewels readable
 
-| | P1 — shell posture (`allow default` + write wall) | P2 — service posture (`deny default`) |
-|---|---|---|
-| MCP handshake, `tools/list` | ok, 14 tools | ok, **14 tools — identical** |
-| read inside workspace | ok | ok |
-| `~/.ssh` | reachable | **EPERM** |
-| `~/.gitconfig`, `/etc/passwd` | reachable | **EPERM** |
-| `~/Documents` (sibling projects) | reachable | **EPERM** |
-| DNS / network | reachable | **denied** |
-| profile size | 5 rules | 15 rules |
+`~/.gitconfig` and `~/.npmrc` are what the toolchain names; W1 aborts before
+`main()`. → `packages/confine/MEASUREMENTS.md`
 
-- **#77's claim is true, and the difference is categorical rather than one
-  of degree.** The same server, doing the same work with the same 14
-  tools, runs with `deny default` and no network at all. That is not
-  available to a shell at any profile size — a shell is a universal
-  executor, so its allow-list is decoration
-  ([#86](https://github.com/dglazkov/fsio/issues/86)'s framing, now with a
-  measurement behind it). The unit of the mechanism being a *named
-  service* (R10, [D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace))
-  is what buys the tighter posture; nothing else in the design does.
-- **The profile decomposes, and the per-service part is small.** Of 15
-  rules, **9 are node-runtime infrastructure** (`/System/Library`,
-  `/usr/lib`, `sysctl-read`, `/dev/urandom`, one `mach-lookup`, …) shared
-  by every node-based service, and **5 are this service's reach** — its
-  binary, its code, its workspace — of which 3 are parameters. So a
-  profile mechanism wants a **runtime base layer plus a per-service
-  delta**, composed into one policy before the spawn
-  ([D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered)),
-  and the thing a user or consent surface reads is the 5-rule delta, not
-  the 15.
-- **Two walls fired on the same read, and they are not redundant.** The
-  server refused `~/.gitconfig` under *both* postures with its own
-  allowed-directories check — an application-level error a driver can
-  relay ("Access denied - path outside allowed directories"), which is
-  exactly R9's legible-to-a-non-human refusal. Seatbelt refuses the same
-  read with `EPERM`. Keep both: the server's wall is *legible but
-  bypassable* (it is the server's own code), Seatbelt's is *enforcement
-  but opaque*. R8's "do not duplicate a wall another party enforces" needs
-  the refinement — do not duplicate another party's wall for
-  **enforcement**, but a second wall that exists for **legibility** is
-  not duplication.
-- **Install-time reach is not run-time reach.** The subject was installed
-  with npm before measurement; `npx`-style invocation would need network
-  at every start, which is exactly the reach P2 denies. A service profile
-  this tight implies the service is *installed*, not fetched per spawn —
-  a constraint `fsio expose` (#77) inherits.
-- **Unmeasured, and it is the important one:** a *credentialed* server
-  (act 4's actual product — the `github` server holding a token). R12
-  says the mechanism must tolerate credentials as a deliberate act; this
-  subject carries none, so the credential path is untested.
-  → [#90](https://github.com/dglazkov/fsio/issues/90)
-→ F23, F24,
-[D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace),
-[D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
-[#77](https://github.com/dglazkov/fsio/issues/77),
-[#90](https://github.com/dglazkov/fsio/issues/90); feeds
-[#71](https://github.com/dglazkov/fsio/issues/71),
-[#86](https://github.com/dglazkov/fsio/issues/86).
+### F28 — moved: a second agent keeps its identity *in* its state dir
 
-### F26 — placement moves a child's state but not its identity: the agent CLI's credential lives in the OS keystore, so a deny-default profile silently logs it out
+So placement and login are one knob, and the demo declares posture per
+agent. → the agent demo's own `MEASUREMENTS.md`
 
-Measured 2026-07-31 (macOS 26.5/arm64, claude CLI 2.1.220;
-`node scripts/agent-reach-lab.mjs`;
-[#90](https://github.com/dglazkov/fsio/issues/90) act-2 leg). The deliberate
-re-run of the organic field test in
-[#18](https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080),
-whose accidental result produced "placement over denial" (R4/R17). Subject:
-the claude CLI, one headless turn per cell, in a scratch workspace with an
-isolated config dir. Denials from the unified log; no credential contents
-were read in either location.
+### F29 — the `/acp` page's own consent numbers, moved to the demo that made it
 
-| cell | posture | result | distinct denials |
-|---|---|---|---|
-| 0 | no sandbox, config dir in workspace | ok | 0 |
-| A | shipped profile, config dir in workspace (#18's fix) | ok | 2 (both benign) |
-| A′ | shipped profile, **default** `~/.claude` | **ok, exit 0** | 7 — incl. `~/.claude/projects/…`, `.claude.json.lock`, `.claude.json.tmp.*` |
-| Ak | cell A + `(deny mach-lookup)` | **"Not logged in · Please run /login", exit 1** | 12 — incl. `com.apple.SecurityServer` ×3, `com.apple.securityd.xpc` |
-| B | R17 slot (`~/.fsio/state/<ws>/<svc>/`), carve exactly that wide | **"Not logged in", exit 1** — state tree written | 3 (all benign) |
-| At | cell A + the agent spawns a child (`Bash(ls)`) | ok | 2 (both benign) |
-| C | cell A + synthesized 8-variable environment | **ok — identical** | 2 (both benign) |
+A measurement of a page we wrote, driven by a puppet we wrote, filed on the
+slowest shelf. It measured our own fast layer, which is what
+[PROCESS.md](https://github.com/dglazkov/fsio/blob/main/PROCESS.md) rule 2a
+exists to keep off this one: a second implementation of this protocol, on
+another substrate, would need none of it.
 
-- **Placement works, for state.** Pointed at either the in-workspace dir or
-  R17's slot, the child writes its whole tree there — config, backups,
-  `projects/<ws>/` transcripts, `sessions/`, memory — with **zero
-  state-related denials**. R17's carve is exactly wide enough, and needs
-  nothing outside itself.
-- **Placement does not carry identity, and R17's strongest claim is
-  false.** R17 said transcript and token "get the same answer: the slot."
-  They do not. The credential lives in the **login Keychain** (item
-  `Claude Code-credentials`, created 2025-09-17 — i.e. long before this
-  lab); a stale `.credentials.json` sitting in the placed config dir was
-  *removed by the CLI during the run* and was never the source of auth. A
-  fully-populated slot still reports "Not logged in" (cell B).
-- **The keystore is reached by mach-lookup, so a deny-default profile logs
-  the child out.** Cell Ak isolates it: denying mach-lookup produces
-  `com.apple.SecurityServer` and `com.apple.securityd.xpc` denials and the
-  identical "Not logged in" failure. This puts
-  [F25](#f25--a-stdio-mcp-server-runs-under-a-deny-default-profile-in-15-rules-5-of-which-are-the-services-reach-the-same-server-under-the-shell-posture-reads-everything)
-  in direct tension with act 2: **the tight service posture that makes an
-  MCP server safe would silently break a keystore-backed agent.** "Narrow
-  the profile" and "let the child keep its credentials" are not
-  independent knobs, and #86's conflict list gains one it did not have.
-- **The refusal is legible but blames the wrong party.** "Please run
-  /login" is exactly R9's relayable, non-human-readable-refusal shape — and
-  it is *misleading*: the user who follows it will log in successfully and
-  fail again next run, because the cause is the profile, not the session.
-  A mechanism that only *applies* policy cannot say this; the host has to
-  interpret denials to name the real cause.
-- **#18's accident, reproduced exactly — and it is silent.** Cell A′ shows
-  the original denial set, and the run still **exits 0 with a correct
-  answer**. In headless mode nothing surfaces: the turn succeeds, the
-  transcript is simply lost, so resume breaks later with no error at the
-  time of the loss. R3 ("a broken confinement must look broken") applies to
-  *state placement* too, and today it does not hold.
-- **The environment is almost entirely unnecessary.** Cell C ran on 8
-  synthesized variables (`PATH`, `HOME`, `TERM`, `LANG`, `USER`,
-  `LOGNAME`, `SHELL`, `TMPDIR`) plus `CLAUDE_CONFIG_DIR` and behaved
-  identically. None of the other ~39 inherited variables — including
-  [F24](#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read)'s
-  canary secrets and `SSH_AUTH_SOCK` — are load-bearing for this child.
-  Synthesize-then-add is affordable for the act-2 subject, which is the
-  concrete answer #71's env-policy slice needed.
-- **Transitivity holds on a real workload.** Cell At: the agent used its
-  own Bash tool to spawn a child; it stayed confined and succeeded, and the
-  CLI's permission layer did not contradict the wall (R6). Every cell also
-  shows `forbidden-exec-sugid` (×3–5) — F23's setuid denial, hit by a real
-  agent, with no effect on the outcome.
+What it recorded is a test. The counts and the refusal strings are asserted
+on every push by the demo's fixture-agent suite, which is where a demo's
+measurement of itself belongs. One line of it was never a measurement at
+all but a lesson the code owed — that an `agent_message_chunk` is a
+*fragment*, not a line, and that the agent owns its terminators — and that
+now sits as a comment beside the concatenation it cost. The half that is
+about a real agent rather than ours is
+[#100](https://github.com/dglazkov/fsio/issues/100) and F30.
 
-**Method traps, each of which cost a round.** (1) The harness is itself a
-Claude Code session exporting 8 `CLAUDE_*` markers; inherited, they steer
-the subject — the first A′ run wrote nothing and reported zero denials. The
-lab now scrubs `CLAUDE*`/`ANTHROPIC*` before every cell. (2) `log show
---start` parses **local** time; an ISO/UTC stamp puts the window hours in
-the future and returns nothing, which reads exactly like "no denials" — the
-first three cells all reported 0 for this reason. Same class as F16's
-focus-emulation trap: an instrument that fails silently toward the
-comfortable answer.
-→ F23, F24, F25,
-[D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
-[#18](https://github.com/dglazkov/fsio/issues/18),
-[#90](https://github.com/dglazkov/fsio/issues/90); feeds
-[#71](https://github.com/dglazkov/fsio/issues/71),
-[#86](https://github.com/dglazkov/fsio/issues/86),
-[#76](https://github.com/dglazkov/fsio/issues/76).
-
-### F27 — a read wall costs 21 rules and holds the crown jewels, but the toolchain names its own price: git's identity and npm's cache are exactly what stays readable
-
-Measured 2026-07-31 (macOS 26.5/arm64, node 24.11.0, git 2.50.1;
-`node scripts/read-wall-lab.mjs`, ~2 min;
-[#90](https://github.com/dglazkov/fsio/issues/90), the leg F25/F26 left open —
-[#86](https://github.com/dglazkov/fsio/issues/86) open question 4).
-[F24](#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read)
-priced what the shipped wall does *not* hold; this prices what closing it
-costs. Every width is the shipped profile plus a read wall of increasing
-width — the only variable that changes. Rules were added only when a measured
-denial demanded one. Subject: the workload act 3 is about — a workspace with a
-git repo, a dependency, a compiler and a test.
-
-| | W0 shipped | W1 workspace only | W2 + toolchain | W3 + named user state |
-|---|---|---|---|---|
-| node runs | ok | **FAIL** | ok | ok |
-| read the workspace | ok | **FAIL** | ok | ok |
-| compile (tsc) | ok | **FAIL** | ok | ok |
-| run tests | ok | **FAIL** | ok | ok |
-| `git status` / `git commit` | ok | **FAIL** | **FAIL** | ok |
-| `npm ci --offline` | ok | **FAIL** | **FAIL** | ok |
-| `~/.ssh` (private keys) | reachable | — | **denied** | **denied** |
-| `~/.config`, `~/Documents`, `/etc/passwd` | reachable | — | **denied** | **denied** |
-| `~/.gitconfig` | reachable | — | denied | **reachable** |
-| `~/.npmrc` + `~/.npm` | reachable | — | denied | **reachable** |
-| profile size | 8 rules | 12 | 25 | **29** |
-
-- **The read wall exists and is affordable.** 21 rules over the shipped 8 buy
-  a working toolchain with `~/.ssh`, `~/Documents`, `~/.config` and
-  `/etc/passwd` all denied — the reach F24 found wide open. #86 worried that
-  the shell case produced "a false trade between confinement and utility";
-  for act 3's actual workload the trade is real and cheap. **The honest
-  consent sentence gets stronger**: not just "writes are limited to this
-  folder" but "reads are limited to this folder, your toolchain, and your git
-  and npm settings."
-- **What survives the wall is exactly the credential-bearing part.** The two
-  carve-outs W3 must make are not incidental config. `~/.npmrc` is where a
-  registry auth token lives; `~/.npm/_cacache` is a content-addressed store
-  of package bodies already fetched, private registries included; `~/.gitconfig`
-  routinely carries `[credential]` helpers and `url.*.insteadOf` rewrites. A
-  read wall authored from the toolchain's denials converges on *keeping the
-  secrets readable and denying the rest* — the opposite of the intuition, and
-  it matters most in act 3, where the brain is remote and anything readable
-  is anything that leaves.
-- **The wall's floor is far above the workspace.** W1 — workspace and scratch
-  only, the width the phrase "sandboxed to this folder" implies — does not
-  merely fail the toolchain: `/bin/sh` never starts. Denying
-  `(literal "/")`, the root directory every absolute path walk reads, aborts
-  the process with **SIGABRT before `main()` and no error text at all** (exit
-  134, empty stderr; the lab's own denial log named it — one line,
-  `file-read-data /`). A too-narrow read wall does not look broken, it looks
-  like nothing happened. R3/R18 apply to the read wall, and the failure is
-  worse than the write wall's because there is no process left to report it.
-- **The runtime lives under `$HOME`.** With a version manager, node is at
-  `~/.nvm/versions/node/<v>/` — so "deny `$HOME`" and "run node" are not
-  independent knobs. Same shape as F26's keystore collision (narrow the
-  profile, log the child out): the profile cannot be authored against a
-  mental model in which `$HOME` is user data and `/usr` is the system.
-- **Sizing, for the consent surface.** Of W3's 29 rules, 8 are the shipped
-  write wall, 4 the workspace and scratch, 13 runtime-and-system
-  infrastructure shared by any node service (F25's "base layer" again), and
-  **4 are the user state this particular toolchain names**. As with F25, the
-  per-subject delta is the small part, and it is the part a consent surface
-  has to show (R15).
-
-**Method trap, the third of this class.** Kernel Sandbox denials are stamped
-in the unified log when they **flush**, not when they occur, and the lag runs
-to several seconds — while a whole width here runs in ~2 s. Unbounded windows
-therefore reported one width's denials under the next (`~/.gitconfig` shown as
-denied in W3, where git demonstrably worked; `/dev/dtracehelper` carrying a
-running total of ×47 then ×97), and tight windows dropped denials the child
-had just reported synchronously (W2 showing 1 denial in a cell where git had
-printed EPERM). The lab now spaces widths by 10 s, holds each window open 8 s
-past its width, and prints every window next to its results so the artifact
-can be audited instead of trusted. Same class as F16's focus emulation and
-F26's local-time parsing: **an instrument that fails toward a plausible
-answer.** Denial counts in the table above are corroborated by the child's own
-exit codes, which is the signal that does not depend on the log at all.
-→ F23, F24, F25, F26,
-[D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered),
-[#90](https://github.com/dglazkov/fsio/issues/90); feeds
-[#86](https://github.com/dglazkov/fsio/issues/86),
-[#71](https://github.com/dglazkov/fsio/issues/71),
-[#74](https://github.com/dglazkov/fsio/issues/74).
-
-### F28 — a second agent keeps its identity *in* its state dir, so placement and login are the same knob; the denial surfaces as a protocol error that names the wrong cause
-
-Measured 2026-08-01 (macOS 26.5/arm64, node 24.11.0, pi-acp 0.0.32 /
-`@earendil-works/pi-coding-agent` 0.82.1), spawning the agent exactly as
-`packages/acp-demo` does — `sandbox-exec` with the shipped agent profile,
-pipes, synthesized environment — and driving two ACP requests per cell:
-`initialize`, then `session/new`. No model turn was taken in any cell (no
-quota spent, and none needed: the failure lands before inference).
-
-| cell | posture | `initialize` | `session/new` |
-|---|---|---|---|
-| N | no sandbox, inherited environment | ok | ok |
-| E | no sandbox, synthesized 8-variable environment | ok | ok |
-| W | write wall (shipped profile), **no state carve** | **ok** | **fails** — JSON-RPC `-32603` |
-| Wc | write wall + `~/.pi` carved writable | ok | ok |
-
-- **The identity/state split has a second answer, and it is the opposite
-  one.** [F26](#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out)
-  found the claude CLI's credential in the login Keychain, with its state
-  freely placeable. This agent keeps `auth.json` in `~/.pi/agent`, in the
-  same directory as `sessions/` and `models-store.json` — so its
-  placement variable (`PI_CODING_AGENT_DIR`) moves the credential too, and
-  pointing it at an empty slot is indistinguishable from logging out. Two
-  subjects, two incompatible postures: **the mechanism cannot hold one
-  state policy.** `packages/acp-demo/src/agents.ts` therefore declares
-  posture per agent (`place` | `carve`) as a fact about the child, and
-  R17's slot becomes the answer for the agents that can use it rather
-  than the answer.
-- **The denial is loud, and wrong about its cause — R19's second
-  instance.** Cell W answers `session/new` with `{code: -32603, message:
-  "Internal error: Cannot call write after a stream was destroyed"}`. No
-  `EPERM`, no path, no mention of a policy; the same stderr line, and
-  nothing else. A page relaying that text tells the human about a stream.
-  Compared with F26's cell A′ (exit 0, transcript silently lost) this is
-  an improvement bought by *structure*: the write failed inside a request
-  the human had made, so the protocol had somewhere to put the error —
-  but the cause still has to be supplied by the host, which is the only
-  party that knows what it denied.
-- **The environment floor holds on a second subject.** Cell E: `PATH`,
-  `HOME`, `TERM`, `LANG`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR` — the same
-  eight F26 measured — ran the agent identically to full inheritance.
-  Synthesize-then-add (R4) is now two-for-two, and `packages/acp-demo`
-  ships it as the default rather than inheriting `process.env`.
-- **`initialize` proves nothing about a profile.** Every cell passes it,
-  including the broken one: the handshake touches no state. A helper that
-  preflights an agent by initializing it would report a green chain and
-  hand the user a session that dies on its first real request.
-
-**Reproduction.** The mechanism is the repo's: run
-`node packages/acp-demo/dist/helper.js <folder>` and drive it with a client
-(the B1 suite's rig, or the demo page). Cell W is the shipped code with the
-`homeDirs` entry removed from `agents.ts`; cell E is the default, and cell N
-requires passing `from` into `synthesizeEnv`.
-→ F24, F26,
-[D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
-[#18](https://github.com/dglazkov/fsio/issues/18); feeds
-[#86](https://github.com/dglazkov/fsio/issues/86),
-[#71](https://github.com/dglazkov/fsio/issues/71),
-[#77](https://github.com/dglazkov/fsio/issues/77).
-
-### F29 — the consent surface fires: 5 permission asks, 10 `fs/*` calls, 2 rejections that wrote nothing — and an `agent_message_chunk` is a fragment, not a line
-
-Measured 2026-08-01 (macOS 26.5/arm64, Chrome; the shipped `/acp` page, the
-helper run with `--fixture`, a human answering every card; the page's own
-`report.json`). Subject: the **puppet agent**
-(`packages/acp-demo/src/fixture-agent.ts`) — a scripted ACP speaker that asks
-permission and has no hands, so every file it touches travels as an `fs/*`
-request. Written because
-[#100](https://github.com/dglazkov/fsio/issues/100) established that no
-installed agent exercises this half: pi-acp reads and edits itself and asks
-nobody, so the same page measured on the same day scored 52 `session/update`
-notifications, 3 prompts, 1 file change, **zero** `session/request_permission`
-and **zero** `fs/*`.
-
-| | pi-acp (#100's measurement) | puppet, same page, same day |
-|---|---|---|
-| `session/request_permission` | 0 | **5** |
-| answered allow / reject | — | 3 / 2 |
-| `fs/*` | 0 | **10** (7 read, 3 write) |
-| files changed through the page's grant | 0 | 3 |
-| containment refusals, with text | 0 | 4 |
-
-- **The consent property holds in practice, not just in assertion.** Both
-  rejections are followed in the log by the next request with no write
-  between them — `permission answered: reject` → nothing. P5's "the party
-  asking is not the party deciding" is now a measured behavior of the
-  shipped page rather than a claim in a comment.
-- **R9's refusals survive contact, and name the boundary *and* the folder.**
-  The exact strings, produced in the browser by `containedRelative()` and
-  read back out of the agent's transcript for the first time:
-  `refused: /etc/passwd is outside the folder this page was granted
-  (/Users/…/fsio-acp)`; `refused: .fsio is the transport's own directory,
-  owned by the helper`; `path must be absolute: NOTES.md`. Each is
-  actionable by the receiving agent, which is what "written to be relayed"
-  had always asserted and nothing had ever tested.
-- **An `agent_message_chunk` is a *fragment*, not a line — the agent owns
-  its terminators.** This cost a bug. A client is correct to concatenate
-  consecutive chunks into one flowing block (the page does, `web/agent.ts`),
-  so an agent emitting one chunk per line with no trailing newline gets a
-  transcript with every line welded to the next
-  (`…says back.✓ somewhere outside…`). The rule is not ACP-specific
-  guesswork — it follows from "chunk", and it will bite any agent this repo
-  writes. Regression-tested in `test-fixture-agent.ts`.
-- **A read needs no card.** The `read` scenario drew no permission request
-  at all: the human already granted the folder, and re-asking per read would
-  be exactly the prompt fatigue P3 says to fight with scope rather than
-  breadth.
-- **What this does *not* measure.** The puppet writes its own permission
-  card, so "does the card carry enough to decide on" is answered here only
-  for a card we authored. Whether a *real* agent's request carries the tool,
-  the file and the diff — and whether its own permission layer contradicts
-  the sandbox (F26 cell At found it did not, for a different agent) — still
-  needs a real agent that asks, which is #100's remaining half.
-→ [D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
-F24, F26,
-[#100](https://github.com/dglazkov/fsio/issues/100),
-[#18](https://github.com/dglazkov/fsio/issues/18); feeds
-[#86](https://github.com/dglazkov/fsio/issues/86).
-
+This number is spent and is never reused
+([#130](https://github.com/dglazkov/fsio/issues/130)).
 ### F30 — a real agent does ask, but only in a mode you cannot set without importing the operator's whole config; and its tooling hardcodes two paths under /tmp that TMPDIR never names
 
 Measured 2026-08-01 (macOS 26.5/arm64, Chrome; the shipped `/acp` page and
 helper; `@agentclientprotocol/claude-agent-acp` 0.64.0, which bundles
 `@anthropic-ai/claude-agent-sdk` 0.3.220 and its own `cli.js`). The
-[#100](https://github.com/dglazkov/fsio/issues/100) leg that
-[F29](#f29--the-consent-surface-fires-5-permission-asks-10-fs-calls-2-rejections-that-wrote-nothing--and-an-agent_message_chunk-is-a-fragment-not-a-line)
-could not answer, because the puppet writes its own card.
+[#100](https://github.com/dglazkov/fsio/issues/100) leg a scripted puppet
+could not answer, because a puppet writes its own card.
 
-**The headline: R6 has a real consumer.** In manual permission mode the
+**The headline: the consent question has a real consumer.** In manual
+permission mode the
 adapter sends `session/request_permission`, the page renders it, and a human
 answers it:
 
@@ -1105,19 +701,22 @@ wrote is legible enough to decide on.
 
 - **Placement authenticates as nobody.** Login is two pieces in two places:
   the token in the login Keychain (reachable — the profile is `allow default`,
-  so F26 cell Ak's fatal mach-lookup denial does not apply here) and the
+  so the fatal mach-lookup denial measured on the CLI does not apply here)
+  and the
   account binding `oauthAccount` inside `~/.claude.json`. A placed
   `CLAUDE_CONFIG_DIR` moves the state tree perfectly — fresh config,
   `sessions/`, `projects/`, zero denials — and writes a **389-byte**
   `.claude.json` where the real one is **62 KB**. The child holds a key and
   does not know which lock it fits; `session/prompt` fails "Authentication
-  required". F26 measured this on the CLI (cell B); this is the same failure
-  on the adapter, in the shipped demo rather than a lab. The entry's posture
-  is now `carve ~/.claude`.
+  required". The same failure was measured on the CLI itself
+  (the agent demo's own `MEASUREMENTS.md`, subject 1 cell B); this is it on the
+  adapter, in the shipped demo rather than a lab. The entry's posture is now
+  `carve ~/.claude`.
 - **The carve is `~/.claude`; the account file is `~/.claude.json`, beside
   it.** Auth works anyway because it only needs to *read* that file, and
-  reads were never bounded (F24). **The write wall is what makes this posture
-  viable at all** — F27's read wall would break it.
+  reads were never bounded — the wall is a write wall
+  (`packages/confine/MEASUREMENTS.md`). **That is what makes this posture
+  viable at all**; the read wall priced in the same file would break it.
 - **Two hardcoded `/tmp` paths, neither derived from TMPDIR.** `profile.ts`
   asserted that "some tools hardcode /tmp" is a *shell-tool* habit and an
   agent gets told its scratch dir via TMPDIR. False. (a) The Bash tool mkdirs
@@ -1126,8 +725,8 @@ wrote is legible enough to decide on.
   unable to inspect the project at all. (b) Every Bash call also writes
   `/tmp/claude-<random hex>-cwd`, directly in `/tmp`. Denying (b) does **not**
   stop the command — stdout arrives intact — but zsh exits 1, so the agent is
-  told every command it ran failed. That is R19 in miniature: a denial that
-  reports the wrong cause, and a tool lying about its own success is worse
+  told every command it ran failed. That is the interpret-denials problem in
+  miniature: a denial that reports the wrong cause, and a tool lying about its own success is worse
   than one plainly blocked. Both are now per-agent declarations
   (`scratch` / `scratchPatterns`), scoped to one workspace's dir and one
   filename shape — never the `/tmp/claude-<uid>` root, which holds an entry
@@ -1135,7 +734,8 @@ wrote is legible enough to decide on.
 - **`fs/*` stayed at zero in every run.** The adapter honored the permission
   gate and then wrote the file with its own hands. Consent and access are
   independent for it: it asks the client *whether*, never *to*. So the page's
-  `fs/*` handlers still have no real-world consumer — only the puppet (F29).
+  `fs/*` handlers still have no real-world consumer — only a scripted
+  puppet.
 
 **Method note, and the reason this entry exists in this shape.** The first
 run appeared to show the agent editing without asking, and that was written
@@ -1148,10 +748,10 @@ isolate its configuration and authenticate it at the same time.** Placement
 gives a clean room with no identity; carving gives identity and imports the
 policy. Every behavioral measurement of it is therefore entangled with the
 machine it ran on, and a result from one laptop does not transfer. That
-constrains F26's whole approach, and it is the finding most likely to matter
-later.
-→ [D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
-F24, F26, F27, F29,
+constrains the whole placement approach, and it is the finding most likely
+to matter later.
+→ `packages/confine/MEASUREMENTS.md`,
+the agent demo's own `MEASUREMENTS.md`,
 [#100](https://github.com/dglazkov/fsio/issues/100); feeds
 [#86](https://github.com/dglazkov/fsio/issues/86),
 [#71](https://github.com/dglazkov/fsio/issues/71).
@@ -1167,48 +767,49 @@ F24, F26, F27, F29,
   self-batched; backlog ≤3).
   → [#4](https://github.com/dglazkov/fsio/issues/4)
 - ~~Is child confinement transitive, and what does a confined child still
-  hold?~~ Measured 2026-07-31 → F23 (transitive at every depth,
-  non-re-enterable, setuid exec denied) and F24 (full env inheritance,
+  hold?~~ Measured 2026-07-31 → `packages/confine/MEASUREMENTS.md` (transitive at every depth,
+  non-re-enterable, setuid exec denied; full env inheritance,
   read-the-world, egress on).
   → [#86](https://github.com/dglazkov/fsio/issues/86)
-- ~~The act-2 field test, run deliberately.~~ Measured 2026-07-31 → F26
+- ~~The act-2 field test, run deliberately.~~ Measured 2026-07-31 → the agent demo's own `MEASUREMENTS.md`
   (state placement works; identity lives in the OS keystore, so a
   deny-default profile logs the child out; 8 environment variables
   suffice). Its read-wall remainder is folded into the open item below.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - ~~Does the read wall exist, and what does it cost? (#86 open question
-  4.)~~ Measured 2026-07-31 → F27 (it exists, costs 21 rules over the
+  4.)~~ Measured 2026-07-31 → `packages/confine/MEASUREMENTS.md` (it exists, costs 21 rules over the
   shipped 8, denies `~/.ssh`/`~/Documents`/`/etc/passwd` — and keeps
   `~/.gitconfig` and `~/.npm` readable because git and npm name them),
   against a *toolchain*. Its remainder is the open item below.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
 - ~~The same for one MCP server (act 4): is #77's "its binary, its working
-  state, and nothing else" true?~~ Measured 2026-07-31 → F25 (true, and
+  state, and nothing else" true?~~ Measured 2026-07-31 → `packages/confine/MEASUREMENTS.md` (true, and
   categorical: deny-default in 15 rules, 5 of them the service's).
   → [#90](https://github.com/dglazkov/fsio/issues/90)
-- **What a read wall costs the *agent CLI*** — F27 priced one against a
-  toolchain, and that subject reads far more widely; every F26 cell left
-  reads wide open. **Deferred, not blocked:** act 2 runs unsandboxed for
+- **What a read wall costs the *agent CLI*** — the read wall was priced
+  against a *toolchain* (`packages/confine/MEASUREMENTS.md`), and an agent reads far more widely; every
+  agent cell measured so far left reads wide open. **Deferred, not blocked:** act 2 runs unsandboxed for
   now ([#96](https://github.com/dglazkov/fsio/issues/96)), so nothing on
   the demo track waits on this. It is #86 open question 4's remainder.
   → [#86](https://github.com/dglazkov/fsio/issues/86)
 - **How a credentialed child receives its credential — two existence
   questions, not a survey.** The acquisition channels are closed by the
   kernel (inherit-at-spawn, `file-read*`, IPC endpoint, network fetch)
-  and F24–F27 priced all four, so more subjects can only yield new
-  *instances*, which F25 already showed are profile parameters. What is
-  genuinely open: (1) does F25's discovery procedure — deny-default, read
-  denials, widen — **terminate** on a credentialed child, or can a
-  credential denial fail to name itself (F26's near-miss: logged, but the
-  child blamed the wrong party)? (2) does the **borrowed-dotfile** mode
-  (`~/.aws`, `~/.config/gh`) occur in practice — the one mode with no
-  mechanism-level fix, since carving another tool's dotfile is what R2
-  forbids? Answerable with already-installed servers; stop at the first
-  hit or when every channel seen is already priced. **Deferred (p3)**
-  behind spending F25–F27 on #71.
+  and `packages/confine/MEASUREMENTS.md` priced all four, so more subjects can only yield new
+  *instances*, which the MCP-server measurement already showed are profile
+  parameters. What is genuinely open: (1) does that discovery procedure —
+  deny-default, read denials, widen — **terminate** on a credentialed
+  child, or can a credential denial fail to name itself (the agent CLI's
+  near-miss: logged, but the child blamed the wrong party)? (2) does the
+  **borrowed-dotfile** mode (`~/.aws`, `~/.config/gh`) occur in practice —
+  the one mode with no mechanism-level fix, since carving another tool's
+  dotfile is what the fix-it-in-the-environment rule forbids? Answerable
+  with already-installed servers; stop at the first hit or when every
+  channel seen is already priced. **Deferred (p3)** behind spending those
+  measurements on #71.
   → [#90](https://github.com/dglazkov/fsio/issues/90)
-- **The daemon's own environment under launchd versus a shell launch.** F24
-  measured what a child *inherits*; what fsiod itself is handed when
+- **The daemon's own environment under launchd versus a shell launch.**
+  `packages/confine/MEASUREMENTS.md` measured what a child *inherits*; what fsiod itself is handed when
   launchd starts it is the other half, and nobody has looked.
   → [#71](https://github.com/dglazkov/fsio/issues/71)
 
@@ -1224,13 +825,15 @@ npm run bench -- /tmp/fsio-bench --poll 5 --uplink dirname
 node packages/bench/firehose.mjs /tmp/fsio-bench --lines 3000000 --slow  # F12
 npm run bg-lab   # F16/F17 (one grant click; ~18 min; raw JSON beside ~/.fsio-harness)
 node scripts/hub-scan-lab.mjs   # F22 host idle-cost matrix (~15 min, no browser)
-node scripts/service-reach-lab.mjs           # F25 shell vs service posture (~1 min)
-node scripts/agent-reach-lab.mjs            # F26 agent CLI under confinement
+# the four confinement labs; their numbers live with what they measure
+# (packages/confine/MEASUREMENTS.md, and the agent demo's own)
+node scripts/service-reach-lab.mjs           # shell vs service posture (~1 min)
+node scripts/agent-reach-lab.mjs            # agent CLI under confinement
                                             # (needs the claude CLI + a config
                                             #  dir; --workspace/--config/--slot)
-node scripts/read-wall-lab.mjs              # F27 read-wall cost matrix (~2 min;
+node scripts/read-wall-lab.mjs              # read-wall cost matrix (~2 min;
                                             #  --widths W0,W1,W2,W3  --keep)
-node scripts/confinement-lab.mjs --launchd   # F23/F24 child-confinement matrix
+node scripts/confinement-lab.mjs --launchd   # child-confinement matrix
                                              # (~30 s; without --launchd it
                                              #  skips the two launchd cases,
                                              #  which mutate launchd state)

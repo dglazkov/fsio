@@ -1,7 +1,7 @@
 // acp-demo page (#18): a browser page that IS an ACP client. Conversation
 // on the left, the live folder on the right, one directory handle powering
 // both — and the agent's own permission prompts rendered as page UI rather
-// than drawn inside a terminal (R6).
+// than drawn inside a terminal.
 //
 // Self-reports into <folder>/.fsio/client/<clientId>/{log.txt,report.json}
 // for the cooperative verification loop (TESTING.md: the page reports, the

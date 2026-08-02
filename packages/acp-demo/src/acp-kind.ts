@@ -20,7 +20,7 @@
 // and `fs/read_text_file` arrive as agent→client *requests*, and the party
 // that should answer them is the one with the human and the directory
 // handle. That is the demo — the agent's permission prompt becomes page UI
-// (R6) instead of a redraw inside a terminal nobody can style, and the
+// instead of a redraw inside a terminal nobody can style, and the
 // agent's file reads are served by the page through the grant the human
 // already made.
 //
@@ -38,9 +38,10 @@ import { agentProfile } from "./profile.js";
 import { spawnAgent, type AgentProcess } from "./sandbox.js";
 
 /** How many stderr lines to keep for `acp/diagnostics`. An agent's stderr
- *  is the only channel that carries "your profile denied me" (R19), so the
- *  page must be able to show it — a demo whose failures are invisible is
- *  the failure mode F26 named. */
+ *  is the only channel that carries "your profile denied me", so the page
+ *  must be able to show it. A host that only *applies* policy cannot name
+ *  the cause of a denial, and a demo whose failures are invisible is the
+ *  failure mode MEASUREMENTS.md names. */
 const STDERR_KEEP = 200;
 const STDERR_LINE_MAX = 2000;
 /** SIGTERM → this long → SIGKILL, on session close. */
@@ -54,13 +55,14 @@ export interface AcpKindOptions {
   fsioDir: string;
   /** realpath of the child's scratch dir (becomes TMPDIR, writable). */
   tmp: string;
-  /** where per-agent state goes for a "place" posture. Interim: R17 wants
-   *  the host-owned slot `~/.fsio/state/<workspace>/<service>/`, which needs
-   *  #71 and a profile carve exactly that wide. */
+  /** where per-agent state goes for a "place" posture. Interim: the
+   *  destination is a host-owned slot `~/.fsio/state/<workspace>/<service>/`,
+   *  which needs #71 and a profile carve exactly that wide (#86). */
   stateRoot: string;
   /** confine with sandbox-exec. `false` must be a deliberate caller choice
    *  (non-macOS, tests) and is reported to the page as `sandboxed: false` —
-   *  never inferred, never silent (R3). */
+   *  never inferred, never silent — a broken confinement must look
+   *  broken. */
   sandbox: boolean;
   /** allow-list override (tests point at a fixture agent). */
   agents?: AgentEntry[];
@@ -120,7 +122,8 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
 
     // ---- the profile: written per session, inside the folder the page can
     // read. The policy confining the agent is inspectable from the same
-    // page that is driving it (R1) — `acp/info` returns this path.
+    // page that is driving it — `acp/info` returns this path, so the policy
+    // is readable from inside the folder it bounds.
     const profileDir = path.join(opts.fsioDir, "profiles");
     const profilePath = path.join(profileDir, `${ctx.sessionId}.sb`);
     const sandbox: SandboxConfig | null = opts.sandbox
@@ -151,7 +154,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
       child = spawnAgent({ file: bin, args: entry.args, env, cwd: opts.root, sandbox });
     } catch (e) {
       // Fail-closed: a sandbox that cannot be applied is a spawn that does
-      // not happen (R3). 1002, with the reason, in the page.
+      // not happen. 1002, with the reason, in the page.
       throw new Error(`refusing to run ${entry.name} unconfined: ${e instanceof Error ? e.message : String(e)}`);
     }
 
@@ -243,7 +246,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
 
       methods: {
         /** Who is running, under what, and where the policy file is — the
-         *  page reads that file through the same folder handle (R1). */
+         *  page reads that file through the same folder handle. */
         "acp/info": () => ({
           agent: entry.name,
           title: entry.title,

@@ -59,7 +59,7 @@ export const helper = signal<HelperState>("none");
 /** One line of the helper's agent roster (#102) — read from the service
  *  directory, never guessed. `asks` is the field that matters: it says
  *  whether this agent will send the consent question this demo exists to
- *  render, and it is measured (F29/F30), not marketing. */
+ *  render, and it is measured (F30, #100), not marketing. */
 export interface AgentOffer {
   name: string;
   title: string;
@@ -73,8 +73,8 @@ export interface AgentOffer {
  *  error (D25) and lets choose for itself. */
 export const agents = signal<AgentOffer[] | null>(null);
 
-/** What the host said about the agent it started (D30 rule 5: confinement
- *  and state posture are session facts the page READS, never assumes). */
+/** What the host said about the agent it started. Confinement and state
+ *  posture are session facts the page READS, never assumes (#18). */
 export interface AgentFacts {
   agent: string;
   title: string;
@@ -132,7 +132,7 @@ export interface ToolEntry {
   detail: Signal.State<string>;
 }
 /** The reason this demo exists: the agent's own consent question, rendered
- *  by the page that can also show you the file it is about (R6). */
+ *  by the page that can also show you the file it is about. */
 export interface PermissionEntry {
   kind: "permission";
   id: string;
@@ -151,7 +151,7 @@ export interface PermissionEntry {
    *  clicked, so `answer` is set for a conversation it drove, and stays null
    *  for one it did not — where the honest thing is to say it is not
    *  knowable from here, rather than inferring it from what the agent did
-   *  next (a guess dressed as a fact, D32's words). */
+   *  next — a guess dressed as a fact. */
   historic?: true;
 }
 export interface NoteEntry {
@@ -236,7 +236,7 @@ export interface Conv {
    *  here instead means the page keeps the one thing it has that the human
    *  cannot get back. */
   readonly queued: Signal.State<string[]>;
-  /** What the host said about the agent it started (D30 rule 5). */
+  /** What the host said about the agent it started (read from the host, never assumed). */
   readonly facts: Signal.State<AgentFacts | null>;
   /** Last snapshot of `acp/diagnostics`. Polled, and deliberately kept after
    *  the agent dies: the kind's methods vanish at exit (#98), so the last

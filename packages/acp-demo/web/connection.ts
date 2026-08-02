@@ -4,7 +4,7 @@
 // conversations.ts — one file per lifetime, since #120 gave the page N of
 // them and one folder.
 //
-// Sticky sessions (#113/D32) are mostly here, and they are three separate
+// Sticky sessions (#113) are mostly here, and they are three separate
 // pieces of memory doing three separate jobs:
 //
 //   the folder    — a handle in IndexedDB plus `revisit()`, exactly the
@@ -18,6 +18,21 @@
 //                   `pagehide` DETACHES rather than closing, so the agents
 //                   keep running and a returning page attaches to each with
 //                   replay. Only an explicit close stops an agent.
+//
+// That last line is the part this page strains P3 on, and it is worth
+// saying out loud rather than leaving in the button's implementation.
+// Durability of a grant is supposed to be something the human gestured
+// for, and a session surviving a closed tab is a running process the
+// page's absence no longer stops. So ending a conversation is load-bearing,
+// not a convenience: without a real end gesture, sticky means "a process
+// nobody can kill from the page", which is strictly worse than what came
+// before. N conversations sharpen that rather than soften it — the page can
+// now be holding five agents nobody is watching — which is why the tab's
+// "×" ends rather than walks away, and why the "+" menu exists to show what
+// is still running (#120). Note what is deliberately *not* made sticky —
+// an unanswered permission comes back as a question, never as an inherited
+// yes. The consent gesture does not survive the refresh; only the request
+// does.
 import { FsioClient } from "@fsio/client";
 import { log, reporter, step } from "./reporter";
 import {
@@ -308,7 +323,7 @@ export async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer
     // can name is exactly the state #115 produced and exactly the state a
     // second browser profile, an incognito window, or a cleared IndexedDB
     // produces on purpose. Starting a second conversation beside a live one
-    // is the silent fork D32 rule 1 forbids; the difference between doing it
+    // is that same silent fork (#113); the difference between doing it
     // and not is one directory listing.
     if (await offerRunning(root)) return;
 

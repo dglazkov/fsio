@@ -1,6 +1,6 @@
 // What this demo adds to @fsio/confine, and nothing the library already
 // tests. The wall itself — ROOT writable, .fsio denied, the outside denied,
-// last-match-wins, F23's three properties — lives in
+// last-match-wins, the three posture properties — lives in
 // packages/confine/src/test-posture.ts, run against the same sandbox-exec.
 //
 // Two things are this demo's own and are tested here: the two holes a shell

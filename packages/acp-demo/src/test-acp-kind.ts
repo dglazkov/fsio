@@ -9,7 +9,8 @@
 //
 // The agent here is a fixture (test-fake-agent.ts), never a real one: these
 // tests must not need an installed agent, a model key, or a network.
-// Confinement is off (`sandbox: false`, said out loud — R3), which is also
+// Confinement is off (`sandbox: false`, said out loud, never inferred),
+// which is also
 // what makes the suite runnable on CI's Linux leg; the profile itself is
 // tested in test-sandbox.ts.
 import test from "node:test";
@@ -179,7 +180,7 @@ test("a DATA frame with two messages is refused, and the agent never sees it", a
 
 // ------------------------------------------------ session facts the page reads (D13 result fields)
 
-test("the spawn result states who is running and whether it is confined (#96's shape, R3)", async () => {
+test("the spawn result states who is running and whether it is confined (#96's shape)", async () => {
   await withAcp(async (rig) => {
     const info = await rig.session.ready;
     assert.equal(info.kind, "acp");
@@ -201,13 +202,13 @@ test("acp/info reports the policy path, argv, and the exact env the child got", 
       assert.deepEqual(result["argv"], [process.execPath, fixture]);
       assert.ok((result["pid"] as number) > 0);
       const keys = result["env"] as string[];
-      // F26's measured floor plus the placement variable — and nothing else.
-      // The sharp item is the point (F24 measured that full inheritance
-      // hands a child the ssh-agent socket): synthesized env is the only
+      // The measured floor plus the placement variable — and nothing else.
+      // The sharp item is the point (full inheritance hands a child the
+      // ssh-agent socket): synthesized env is the only
       // lever that can withhold it, and a sandbox is not that lever.
       assert.ok(!keys.includes("SSH_AUTH_SOCK"), `SSH_AUTH_SOCK leaked into the agent's env: ${keys.join(",")}`);
       assert.ok(!keys.includes("AWS_SECRET_ACCESS_KEY"));
-      assert.ok(keys.includes("FAKE_STATE"), "the placement variable must be set (R4: placement, not carve-out)");
+      assert.ok(keys.includes("FAKE_STATE"), "the placement variable must be set — placement, not carve-out");
       for (const k of keys) assert.ok(([...ENV_FLOOR] as string[]).includes(k) || k === "FAKE_STATE", `unexpected env var ${k}`);
     },
     { env }
@@ -270,7 +271,8 @@ test("the agent's exit becomes the session's exit, and takes the kind's methods 
     // The sharp edge, pinned rather than worked around: `exit()` stops
     // delivery to the kind (D13), so `acp/diagnostics` is gone at exactly
     // the moment a page most wants the stderr tail — a crashed agent's
-    // "EPERM writing …" is the R19 material, and it is unreachable
+    // "EPERM writing …" is the name-the-real-cause material, and it is
+    // unreachable
     // post-mortem. A page must hold its last snapshot; the API gap is
     // filed separately, not papered over here.
     await assert.rejects(rig.session.request("acp/diagnostics", undefined, { timeoutMs: 3000 }), (e: unknown) => {
@@ -280,7 +282,7 @@ test("the agent's exit becomes the session's exit, and takes the kind's methods 
   });
 });
 
-// ------------------------------------------------ sticky sessions (D18/D32, #113)
+// ----------------------------------------------------- sticky sessions (D18, #113)
 
 test("detach leaves the agent running, and a reattach replays what it said as history", async () => {
   await withAcp(async (rig) => {
@@ -319,7 +321,7 @@ test("detach leaves the agent running, and a reattach replays what it said as hi
 
     // Same process, same conversation: the kind survived the client, so its
     // methods still answer and the pid has not moved. This is why a
-    // reattached page does not re-handshake (D32) — nothing restarted.
+    // reattached page does not re-handshake (#113) — nothing restarted.
     assert.equal((await s2.request<Record<string, unknown>>("acp/info")).result["pid"], pid);
 
     s2.sendData(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "echo" }));

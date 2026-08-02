@@ -1,4 +1,4 @@
-// The rules a returning page follows (resume.ts, #113/D32), tested in Node
+// The rules a returning page follows (resume.ts, #113), tested in Node
 // because they are the parts that decide whether a refresh is honest: where
 // the human's turns go back in, which permission cards are still owed an
 // answer, and whose JSON-RPC ids are whose.
@@ -230,7 +230,7 @@ test("past: anchors are only trustworthy against the generation they were counte
   assert.equal(anchorsAlign({ gen: 0 }, 0), true);
   // The folder kept a tail that starts later than the page was counting
   // from. The turns are all still shown — losing them is the one outcome
-  // worse than misplacing them — but the view says so (#57, D32's ceiling).
+  // worse than misplacing them — but the view says so (#57).
   assert.equal(anchorsAlign({ gen: 0 }, 3), false);
   assert.equal(anchorsAlign({ gen: 3 }, 0), false);
 });

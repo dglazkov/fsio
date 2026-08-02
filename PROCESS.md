@@ -15,8 +15,8 @@ format. The only way to tell them apart is to have been there.
 
 **How it happened.** The records were built for a linear exploration —
 measure, decide, write it down, never renumber. The work has not been
-linear. Directions got parked (the hub, fsiod), directions did not pan
-out (season two), and the demos made a few hundred small choices that
+linear. Directions got parked (the hub, fsiod), directions moved out of
+this repo (season two), and the demos made a few hundred small choices that
 were never protocol questions. None of that had anywhere to go, because
 the records were the only shelf in the building. So demo choices became
 D-entries, demo needs became a nineteen-entry requirements namespace for
@@ -31,7 +31,7 @@ touched.
   labs, 70 of decision, 48 of threat model — **2,344 lines of record
   around 408 lines of code**, and not one line of it shipped as a
   library.
-- **R1–R19**: nineteen requirements for an unbuilt mechanism, cited ~106
+- **Nineteen requirement numbers**: for an unbuilt mechanism, cited ~106
   times from shipped code and tests, defined only in the body and
   comments of one issue.
 - **D30 and D32**: one demo's decisions in the protocol decision log,
@@ -146,7 +146,8 @@ shape to watch for.
 **3. If code or spec cites it, it lives in a file.** A number, a name, or
 a rule that anything outside an issue references must have a home in the
 repository. Context, argument, and history stay in issues; authority does
-not. R1–R19 spent months cited from shipped code while living only in
+not. Nineteen requirement numbers spent months cited from shipped code
+while living only in
 [#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments,
 which is how you get a reader who cannot tell a real constraint from a
 remembered one.
@@ -253,26 +254,54 @@ list of what the rules would touch.
 | what | where | rule |
 |---|---|---|
 | ~~the confinement mechanism, written twice~~ **extracted** | `packages/confine`; the demos keep their posture and their failure policy | 6 — done ([#134](https://github.com/dglazkov/fsio/issues/134)) |
-| R1–R19: nineteen requirements specifying that library in advance, ~106 citations resolving to nothing | issue [#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments | 3, 6 — the citations are what should go |
-| F23–F28: Seatbelt and agent-CLI ground, 427 lines | `spec/FINDINGS.md` | one shelf — moves with the library |
-| F29 measures the shipped `/acp` page | `spec/FINDINGS.md` | 2a |
 | four confinement labs, 928 lines | `scripts/{confinement,read-wall,service-reach,agent-reach}-lab.mjs` | 2a — they were labs for demos |
 | D29, three rules at three altitudes, 70 lines | `spec/DECISIONS.md` | 1, 6 |
 | 48 lines of Seatbelt mechanism in the threat model chapter | `spec/PROTOCOL.md` | 1 |
-| D30, D32 are demo decisions; `common/src/protocol.ts:132` cites D32 | `spec/DECISIONS.md`, protocol layer | 1, 2 |
-| the hub (D19–D28) and season two are parked or dead, stated nowhere | `spec/DECISIONS.md` | 5 |
+
+Five of the nine rows have since come off this list, and the three issues
+that took them off are each worth a sentence, because in none of the three
+was the work the shape this table predicted.
+
+[#130](https://github.com/dglazkov/fsio/issues/130) — D30 and D32 were one
+demo's decisions in the protocol decision log, and F29 measured a page we
+wrote. All three were *second copies*: the demo's own code already stated
+every rule of D30 and D32 in its own voice, beside the code that keeps
+them. So what actually moved was the little nobody had written down twice,
+and what is left at each number is a line saying it is spent.
+
+[#131](https://github.com/dglazkov/fsio/issues/131) — the hub and season
+two now say their own status, once, at the cluster (rule 5). The hub note
+is narrower than this row assumed: the *direction* is parked, but D20,
+D22–D26 shipped anyway and are cited from `common`, `host`, `client` and
+the demos today, so a blanket "D19–D28 are parked" would have made a reader
+discount five live decisions. Only D19 and D21 are purely the pivot.
+Season two moved to its own repo rather than dying.
+
+[#132](https://github.com/dglazkov/fsio/issues/132) — the confinement
+cluster, in slices. The six findings moved to what they are ground for (the
+wall's to `packages/confine`, the two agent CLIs' to the demo that has to
+choose between them), and the ~104 requirement citations were **removed
+rather than housed**, which is the row above stating its own remedy: each
+one now says what the requirement says, and points at
+[#86](https://github.com/dglazkov/fsio/issues/86) where they actually live.
+Nothing was renamed into a file to make the citations resolve — that was
+tried once and reverted, and it is the second failure mode listed above.
+
+The rest is tracked from
+[#133](https://github.com/dglazkov/fsio/issues/133).
 
 Nothing in `spec/` changed to produce this document, deliberately. A first
 attempt did — a `**Scope.**` line on all 62 D and F entries saying what
-each binds, and a file to house R1–R19 so their citations would resolve.
+each binds, and a file to house those nineteen numbers so their citations
+would resolve.
 Both were reverted. Labelling the ball is not moving it, and building a
 home for a dangling reference is not removing the reference. Under these
 rules the layer a thing sits in *is* its scope, so the label was
 redundant; and the R-citations go with the extraction rather than ahead
 of it.
 
-Note how much of the list is one subject. Confinement accounts for six of
-the nine rows: 427 lines of findings, 463 of requirements, 928 of labs, 70
+Note how much of the list is one subject. Confinement is now every
+remaining row: 427 lines of findings, 463 of requirements, 928 of labs, 70
 of decision, 48 of threat model, and 408 lines of the actual mechanism —
 **2,344 lines of record around 408 lines of code**, none of it shipped as
 a library. That ratio is rule 6's argument, made by counting.
@@ -287,8 +316,8 @@ does, the ratio is worse than it was, not better.
 ## Settled
 
 - **Confinement is a library.** Not protocol, not a demo's, not a
-  specification. The extraction is the work; R1–R19 and the requirements
-  framing go with it, and what survives is whatever the two existing
+  specification. The extraction is the work; the requirement numbers and
+  the framing go with it, and what survives is whatever the two existing
   implementations already agree on.
 - **One shelf for findings, protocol-only.** Ground the protocol does not
   stand on moves out with the thing that stands on it.
@@ -308,7 +337,12 @@ does, the ratio is worse than it was, not better.
   the protocol's reference implementation, which is a different
   relationship than a confinement library has. Unresolved, and the answer
   probably differs per entry.
-- **What happens to F23–F28's numbers when they move.** Numbers are
-  stable and never reused; whether that means they keep their F-numbers
-  in a new home, or retire and leave the numbers spent, is a convention
-  call nobody has made.
+- ~~**What happens to a number when its entry moves.**~~ Settled by
+  [#130](https://github.com/dglazkov/fsio/issues/130) and
+  [#132](https://github.com/dglazkov/fsio/issues/132), in practice rather
+  than by argument: the number **retires where it was**, leaving one line
+  that says what moved, where it went, and that the number is spent. The
+  material itself goes unnumbered into whatever it is ground for. That
+  keeps two things true at once — numbers are never reused, and a citation
+  written before the move still resolves to something that explains
+  itself.

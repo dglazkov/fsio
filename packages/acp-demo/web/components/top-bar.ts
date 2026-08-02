@@ -1,11 +1,12 @@
 // The bar: who is running, in which folder, behind which wall — and a
 // popover with the transport's own numbers.
 //
-// The confinement badge is not decoration. D30 rule 5 makes confinement a
-// *session fact the page reads* (`sandboxed`, `confinement`), so an
+// The confinement badge is not decoration. Confinement is a *session fact
+// the page reads* (`sandboxed`, `confinement`), never one it asserts, so an
 // unconfined agent says so here, in the same place a confined one does.
-// R3's rule with a UI: a demo whose safety sentence is hardcoded in the
-// page would keep saying it after the safety went away.
+// That is the never-silently-unconfined rule with a UI: a demo whose safety
+// sentence is hardcoded in the page would keep saying it after the safety
+// went away.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
@@ -90,7 +91,7 @@ class AcpTopBar extends SignalWatcher(LitElement) {
       ${adopted.get()
         ? html`<span class="joined" title="This page joined a conversation that was already in progress and had no record of it (#117). Everything above the note in the transcript is the agent's half only — what was typed into it lived in a browser record this one does not have.">joined in progress</span>`
         : resumed.get()
-          ? html`<span class="resumed" title="This page reattached to a session that was already running — the agent kept going while the tab was gone (D32).">resumed</span>`
+          ? html`<span class="resumed" title="This page reattached to a session that was already running — the agent kept going while the tab was gone.">resumed</span>`
           : nothing}
       <span class="spacer"></span>
       <span class="turn">

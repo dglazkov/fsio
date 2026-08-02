@@ -23,7 +23,7 @@
 //             record is KEPT, and the conversation goes back to being one
 //             the folder knows about and this page doesn't — findable in
 //             the "+" menu, by this page or any other.
-//   pagehide— the same walk-away, for every open conversation at once. D32's
+//   pagehide— the same walk-away, for every open conversation at once. #113's
 //             answer to "what does a refresh mean", unchanged by tabs.
 //
 // The hazard the terminal demo taught (#120's own list): two tabs must never
@@ -147,7 +147,7 @@ function setQueued(c: Conv, list: readonly string[]): void {
 /** `agent` is the name the human chose, or null to let the helper pick —
  *  which is what a helper too old to publish a roster gets. Either way the
  *  wire carries a **name**, never a path: the allow-list is host-side and
- *  judges it again (D30 rule 4). */
+ *  judges it again (agents.ts, #6). */
 export async function openNew(root: FileSystemDirectoryHandle, name: string | null): Promise<void> {
   const client = getClient();
   if (!client) return;
@@ -175,8 +175,8 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
     facts = (await s.request<Record<string, unknown>>("acp/info")).result;
   } catch (e) {
     // A refusal from the host — no agent on PATH, an unknown name, a
-    // sandbox that could not be applied (D30 rule 5: it fails, it does not
-    // quietly run unconfined). The message is written to be read by a
+    // sandbox that could not be applied (it fails, it does not quietly
+    // run unconfined). The message is written to be read by a
     // human, so show it as one.
     const msg = e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e);
     notice.set({ msg: "the helper refused to start an agent", hint: msg });
@@ -202,7 +202,7 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
     io.push({ kind: "note", text: `${init.agentName} ${init.agentVersion} is listening in ${root.name}/` });
     reporter.event("acp-ready", { session: c.id, agent: init.agentName, version: init.agentVersion, sessionId: c.agent.sessionId });
     step("agent ready");
-    // From here the session is worth coming back to (D32): the record is
+    // From here the session is worth coming back to (#113): the record is
     // what makes the next load a reattach instead of a fresh start.
     begin(c, {
       sessionId: s.id,
@@ -226,7 +226,7 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // The F28 shape: `initialize` passes and `session/new` fails, with a
+    // The measured shape: `initialize` passes and `session/new` fails, with a
     // message that names a stream rather than a policy. Show the agent's
     // own words AND what the page knows about the wall it is behind.
     const conf = c.facts.get();
@@ -279,7 +279,7 @@ function saysSessionIsGone(e: unknown): boolean {
  *
  *  Three sources, tried in that order, and the order is the honesty:
  *
- *    a record of our own   — the whole human half, woven back in (D32).
+ *    a record of our own   — the whole human half, woven back in (#113).
  *    the folder            — the agent's half only, and the page says so
  *                            for the rest of the conversation's life (#117).
  *    nothing               — it is not there. Say that, don't start one.
@@ -491,7 +491,7 @@ function newConnection(s: FsioSession, c: Conv): AcpConnection {
   });
 }
 
-/** `acp/info` → this conversation's facts (D30 rule 5: read, never
+/** `acp/info` → this conversation's facts (read from the host, never
  *  assumed). Returns the agent's cwd, which is also what `fs/*` containment
  *  is judged against. */
 function readFacts(c: Conv, facts: Record<string, unknown>): string {
@@ -763,7 +763,7 @@ export async function leaveConv(id: string): Promise<void> {
   log(`left ${c.id} running — rejoin it from the “+” menu`);
 }
 
-/** Page teardown (#113/D32), for every conversation at once. One word
+/** Page teardown (#113), for every conversation at once. One word
  *  changed here once and it inverted the demo's whole answer to "what does a
  *  refresh mean": `close()` asked the helper to kill the agent, and it
  *  obliged — measured, six milliseconds after the notification landed.

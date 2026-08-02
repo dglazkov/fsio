@@ -187,7 +187,7 @@ ownership of the *sweep*.
 **Alternatives rejected.** Client-owned cleanup (races host writes, F8).
 Shared files with locking (no usable cross-runtime file locks in the File
 System Access API). Copying the reports out to a host-owned slot at
-shutdown (`~/.fsio/state/…`, R17/[#71](https://github.com/dglazkov/fsio/issues/71))
+shutdown (`~/.fsio/state/…`, [#71](https://github.com/dglazkov/fsio/issues/71))
 — keeps the folder pristine and is where this should end up, but the slot
 does not exist yet and the folder is where the reader is already looking.
 A `--keep-reports` flag off by default (every cooperative run has to
@@ -637,6 +637,28 @@ works for both live and dead predecessors).
 **Findings.** F8 (one writer per file), F16 (why the refresh case can't
 wait out the silence window), F13 (serialized commits bound the fenced
 client's stranded chunks to a handful).
+
+**The hub is parked.** Nobody is working the direction, and `track: hub`'s
+sequence is not running. `packages/fsiod` exists and is tested, which makes
+the daemon read as further along than it is: it is the parked direction's
+code, not something the shipped host depends on. Stated once, here, rather
+than as a tombstone on each entry
+([#131](https://github.com/dglazkov/fsio/issues/131)).
+
+Parked is a claim about the *direction*, not a verdict on the decisions
+below, and the difference matters because much of what was designed for the
+hub shipped anyway. [D24](#d24--the-service-directory-is-the-origin-facing-capability-document)'s
+service directory, [D25](#d25--capabilities-are-feature-detected-names-protocol-is-the-on-disk-version)'s
+feature-detected capability names, [D22](#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)'s
+"names, never paths", [D20](#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)'s
+split between what a transport folder carries and where authority lives,
+and [D23](#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)'s
+wire-facing half (`needsGrant`, the consent endpoint, the no-grant error)
+are all cited from `common`, `host`, `client` and the demos today.
+[D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored)
+never involved the daemon at all and has been amended twice since. The two
+entries that are purely the pivot are D19 and D21. A reader can check this
+the same way it was checked: `grep` the entry number under `packages/`.
 
 ## D19 — the hub pivot: one transport folder as a socket, workspaces as resources
 
@@ -1102,13 +1124,12 @@ ceiling replay may grow into), #71 (the daemon inherits all four rules).
 Rules 1–3 were written for scrollback, where every byte on disk is owed
 to a live reader and anything else is exhaust. That is exactly wrong for
 a session whose out log is a *conversation*: nobody will ever ack it, and
-its value starts after the session is over. The contradiction was on the
-record and load-bearing —
-[D32](#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)
-rule 2 says the agent's half of the transcript "rode the folder, so the
-folder is where it is read back from" and deliberately keeps no
-browser-side copy, while the demo helper deleted the folder at `Ctrl-C`
-and `fresh: true` deleted it at start. Both were true in the repo and
+its value starts after the session is over. The contradiction was
+load-bearing and had shipped: a page reading the agent's half of a
+conversation back out of the out log — it rode the folder, so the folder
+is where it is read back from (P2), and no browser-side copy is kept —
+while the same repo's helper deleted that folder at `Ctrl-C` and
+`fresh: true` deleted it at start. Both were true in the repo and
 only one could stay. It cost a real conversation: a 572 KB agent session,
 recovered by hand from that file after
 [#115](https://github.com/dglazkov/fsio/issues/115), was gone minutes
@@ -1135,8 +1156,9 @@ posture). That is the argument for the bound being tight rather than
 "keep everything". The reciprocal obligation is on the reader: a stored
 transcript is a file any co-tenant can write, with none of the
 provenance live replay has, so it is parsed defensively and rendered as
-text — never re-issued as requests (D32 rule 3, which holds here a
-fortiori). [P1](PRINCIPLES.md) and P2 are what this serves — the
+text — never re-issued as requests, which is what any replayed frame is
+already owed and holds here a fortiori.
+[P1](PRINCIPLES.md) and P2 are what this serves — the
 conversation about a project stays with the project, and it is read back
 from the medium it rode. [P3](PRINCIPLES.md) is what it strains, and the
 strain is real but narrow: no new rung and no new gesture (the page
@@ -1144,7 +1166,8 @@ already holds the handle), which is precisely why the retention bound and
 the defensive read are load-bearing rather than hygiene.
 
 **Alternatives rejected (rule 4).** The host-owned slot
-`~/.fsio/state/<workspace>/<service>/` that R17 and
+`~/.fsio/state/<workspace>/<service>/` that
+[#86](https://github.com/dglazkov/fsio/issues/86) and
 [#71](https://github.com/dglazkov/fsio/issues/71) point at (keeps the
 workspace clean and matches where the Claude CLI puts history; costs new
 machinery, a second grantable place, and a new rung for a page to read
@@ -1156,15 +1179,14 @@ a clock we do not have). Retention on by default (the generic host serves
 workbench echoes and shells, where rules 1–2 are right and a durable copy
 is a liability; an embedder whose sessions carry a conversation asks for
 it, and by asking accepts what the paragraph above says). Persisting the
-transcript browser-side instead (D32 already rejected it: a second source
-of truth that drifts). Note the asymmetry that leaves, settled in
-[D32](#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)'s
-[#123](https://github.com/dglazkov/fsio/issues/123) amendment: what is
-rejected here is a browser copy of the half the folder *has*. The human's
-half never rode the folder and has no other copy, so the page keeps it —
-bounded by what this folder kept, and with the opposite privacy trade
-(private to the origin, invisible to a co-tenant, invisible in the
-project) stated there rather than inherited from here.
+transcript browser-side instead (a second source of truth that drifts).
+Note the asymmetry that last one leaves, and that this entry deliberately
+does not settle: what is rejected here is a browser copy of the half the
+folder *has*. A half that never rode the folder has no other copy, so a
+client keeping one is making a different trade with different consequences
+— private to the origin, invisible to a co-tenant, invisible in the
+project — and it is that client's to state, not this rule's to inherit
+([#123](https://github.com/dglazkov/fsio/issues/123)).
 
 ## D27 — reach attaches to the grant, not the workspace
 
@@ -1188,7 +1210,7 @@ stands.
 the profile mechanism's requirements from the narrative's acts and left
 the attachment question as its sharpest fork (open question 2): season
 two needs the same workspace to have different reach depending on who is
-asking (R14), which one-profile-per-workspace cannot express. The
+asking, which one-profile-per-workspace cannot express. The
 walkthrough of a team-facing product drafted in the then-NARRATIVE.md
 (since spun out of this repo) settled it by exercise: at no beat did anyone want policy attached to the *place* —
 the owner consents to "Alice may use test-runner in workspace fsio," a
@@ -1199,11 +1221,16 @@ answers #86's "profiles, shapes, roster entries, and MCP servers are one
 concept wearing four hats" — the concept is the named service, and the
 grant is where reach binds to it.
 
-*2026-07-31:* that walkthrough has since moved out of this repo. The
-decision stands on fsio-native ground regardless: two *origins* granted
-the same workspace (F21's independent grants) already need per-asker
-reach — R14 is the multi-origin case stated generally, with or without
-a cloud layer above the transport.
+**Season two has moved.** The team-facing product that walkthrough belonged
+to lives in its own repository now
+([#78](https://github.com/dglazkov/fsio/issues/78)) — not parked and not
+abandoned, just no longer this repo's to track, so nothing here should be
+read as waiting on it
+([#131](https://github.com/dglazkov/fsio/issues/131)). This decision stands
+on fsio-native ground regardless: two *origins* granted the same workspace
+(F21's independent grants) already need per-asker reach, which is the
+multi-origin case of the same requirement, stated generally and with or
+without a cloud layer above the transport.
 
 **Alternatives rejected.** Profile-per-workspace (D22 as written —
 cannot say "same workspace, different reach per asker"; forces season
@@ -1270,7 +1297,7 @@ normative for fsiod's profile mechanism:
    intersection is computed *before* spawn and emitted as one policy. A
    design that applies a second sandbox to an already-sandboxed process is
    not merely wasteful; it does not work
-   ([F23](FINDINGS.md#f23--child-confinement-is-transitive-to-any-depth-and-cannot-be-re-entered-in-either-direction-setuid-binaries-become-unexecutable)).
+   ([F23](FINDINGS.md#f23--moved-the-wall-is-transitive-cannot-be-re-entered-and-setuid-dies)).
 2. **Confinement is transitive, and that is the stated answer to act 5.**
    Descendants at any depth, including detached ones that outlive their
    parent, inherit the policy. A spawned agent that spawns its own
@@ -1295,7 +1322,7 @@ attempts, 0 escapes, including launchd as a spawn proxy), and
 voluntary self-narrowing is unavailable too. That kills layering as an
 implementation strategy and simultaneously removes act 5's worry. The
 same run priced what the wall does *not* hold
-([F24](FINDINGS.md#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read)):
+([F24](FINDINGS.md#f24--moved-it-is-a-write-wall--the-environment-and-every-read-cross-it)):
 full environment inheritance and read-the-world, which is why the
 mechanism's remaining content — env placement and scrubbing, the read
 wall — is where #86's design session still has work, and is deliberately
@@ -1314,111 +1341,21 @@ profile-content slice, #76, #77, and act 5 (#44). Platform note: measured
 on macOS/Seatbelt; a future Linux backend must be re-measured against
 these three rules before they are assumed to hold there.
 
-## D30 — ACP is payload: the host frames, the browser is the client
+## D30 — the `acp` kind's design, moved to the demo that made it
 
-**Decision.** The `acp` session kind
-([#18](https://github.com/dglazkov/fsio/issues/18), first real consumer of
-[D13](#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry))
-carries a coding agent's stdio, and the two JSON-RPC layers are kept apart
-by five rules:
+Five rules about one demo's session kind: the framing contract, the
+transport-only `acp/*` prefix, the browser as the ACP client, the host-side
+allow-list, and confinement as a session fact the page reads. None of it
+was protocol. `PROTOCOL.md` never depended on this entry, and the demo's
+own code had already stated all five in its own voice, at the files that
+implement them — so what sat here was a second copy of a demo's design, one
+layer slower, reading as binding on everything.
 
-1. **One DATA frame is exactly one complete ACP message**, both directions.
-   The agent speaks newline-delimited JSON on a pipe, so the host does the
-   reassembly (downlink) and refuses any frame containing more than one line
-   (uplink) — a page can never observe half a message, and can never smuggle
-   a second one into the agent's stdin. Stdout lines that are not a JSON
-   object (version notices, installer chatter) are diverted to diagnostics
-   and **never delivered**.
-2. **`acp/*` RPC methods are transport-level only.** `acp/info` (who is
-   running, under what policy, with which environment) and
-   `acp/diagnostics` (counters, stderr tail) answer questions about the
-   session. No ACP method is ever answered host-side: RPC frames are
-   fsio's control plane ([D10](#d10--json-rpc-20-control-plane-over-rpc-frames)),
-   ACP rides DATA, and nothing crosses.
-3. **The browser is the ACP client.** `session/request_permission` and
-   `fs/read_text_file` arrive as agent→client *requests*, and the party that
-   answers them is the one holding the human and the directory handle. That
-   is the point of the demo, not an implementation detail: the agent's
-   permission prompt becomes page UI (R6) instead of a redraw inside a
-   terminal, and its file reads are served through the grant the human
-   already made.
-4. **The page names an agent from a host-side allow-list, never a path.**
-   `{kind: "acp", agent: "pi-acp"}` is a name looked up in `agents.ts`;
-   naming none selects the first entry installed on this machine. Nothing
-   from the wire becomes argv or environment ([#6](https://github.com/dglazkov/fsio/issues/6)'s
-   allow-list, first entry).
-5. **Confinement and state posture are session facts the page reads.** The
-   spawn result carries `sandboxed`, the one-line `confinement` sentence,
-   and the agent's declared state posture; the session's actual policy file
-   is written to `.fsio/profiles/<session>.sb`, inside the folder the page
-   already holds — the policy is inspectable from the page it confines
-   (R1). A sandbox that cannot be applied fails the spawn (`1002`) rather
-   than degrading to an unconfined agent (R3, the `deadPty` precedent).
-
-`acp/info` also returns the agent's **absolute cwd**, which is a deliberate
-exception to [D22](#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)'s
-"names, never paths": ACP's `session/new` requires an absolute cwd, and the
-ACP client here is the page. The rule exists so a client cannot learn the
-layout of workspaces it was never granted; this client is holding a handle
-to this exact folder, so the path is a label for a capability it already
-has, not a disclosure. A multi-tenant host serving `acp` would owe the same
-question a different answer.
-
-**Context.** #18 asked which of two routes the ACP demo should take: a plain
-`{kind: "shell", pty: false}` plus a browser wrapper, or a registered kind.
-Transport-wise both work — the pty path already carried an agent CLI
-([F26](FINDINGS.md#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out)'s
-subject) — so the question is where the *non-transport* obligations live:
-the allow-list, the synthesized environment
-([F28](FINDINGS.md#f28--a-second-agent-keeps-its-identity-in-its-state-dir-so-placement-and-login-are-the-same-knob-the-denial-surfaces-as-a-protocol-error-that-names-the-wrong-cause)
-cell E, F26 cell C), the per-agent state posture, and the framing contract.
-All four are host-side facts about a child process, and none of them can be
-enforced from a page. A kind is where they go.
-
-Deliberately unchanged: `@fsio/host` gains nothing. The kind is registered
-by the demo's own helper (`packages/acp-demo`), which is what D13 claimed
-the registry was for — "stdio-shaped bridge over files, bring your own
-semantics" — and the claim is now tested by something other than `echo`.
-
-**Alternatives rejected.** ACP over RPC frames (the host becomes an ACP
-router, and two protocols share one id space — the confusion this decision
-exists to prevent; also rejected once already in D10: bytes stay raw).
-Line reassembly in the browser (every consumer re-implements a buffer, and
-the malformed-input policy ends up in UI code — where "the agent printed an
-npm notice" becomes a parse error in a chat pane). The host answering
-`session/request_permission` (it would put consent where the human is not —
-P5: never your own bouncer). Carve-by-default for agent state (F26/F28:
-posture is a fact about the child, and guessing it wrong either logs the
-agent out or silently loses its transcripts). Inheriting `process.env` as
-the shell demo does (F24 measured what that hands a child; an agent has no
-human watching it, and the sandbox is a write wall — the environment is the
-only lever that can withhold the ssh-agent socket).
-
-**Measured caveat on rule 3, and it is the one that matters.** The payoff —
-the agent's consent question as page UI — is the *agent's* to offer, and
-the first field test (2026-08-01, pi-acp 0.0.32 through the shipped page,
-three turns, a real file edit) produced **zero** `session/request_permission`
-requests and **zero** `fs/*` requests: pi-acp calls `requestPermission` only
-for extension UI, edits files with its own hands, and answered "read
-/etc/passwd" without involving the client at all. The client implements
-both, and both stayed unexercised. Two consequences, neither of which
-changes the decision. (1) R6's demo needs an agent that asks
-([#100](https://github.com/dglazkov/fsio/issues/100)) — the mechanism
-composing with a consent surface it does not own presupposes the surface
-exists. (2) Nothing in this design bounds an agent's *reads*: the profile
-is a write wall (F24) and the page's `fs/*` refusals bound only what the
-page does on the agent's behalf. The demo's copy says so.
-
-**Findings.** F28 (measured, this design's subject), F24/F26 (environment
-and state posture), F12 (downlink headroom for token streams). Depends on
-D13, D10, D6. Known gap, filed rather than papered over: `exit()` stops
-delivery to the kind, so `acp/diagnostics` — the stderr tail that says
-*why* an agent died — is unreachable exactly post-mortem
-([#98](https://github.com/dglazkov/fsio/issues/98)); a page must hold its
-last snapshot. Backpressure remains D13's caveat
-([#10](https://github.com/dglazkov/fsio/issues/10)): token streams fit,
-file dumps do not.
-
+It lives where a demo keeps its reasoning: in those code comments and in
+[#18](https://github.com/dglazkov/fsio/issues/18). This number is spent and
+is never reused
+([PROCESS.md](https://github.com/dglazkov/fsio/blob/main/PROCESS.md) rules
+1 and 2, [#130](https://github.com/dglazkov/fsio/issues/130)).
 ## D31 — a kind may carry embedder detail: transcribed, never interpreted, detected by presence
 
 **Decision.** Each entry of `services.json`'s `kinds` gains an optional
@@ -1445,10 +1382,9 @@ keeps one shape for every reader). Four rules follow:
    and rings no doorbell.
 4. **Advertisement is not authorization.** A name read out of `detail` and
    sent back on a spawn is judged again by whatever judged it before — for
-   the `acp` kind, the host-side allow-list
-   ([D30](#d30--acp-is-payload-the-host-frames-the-browser-is-the-client)
-   rule 4). Nothing here widens what a page may ask for; it only lets the
-   page ask *knowingly*.
+   a kind that starts child processes, its own host-side allow-list.
+   Nothing here widens what a page may ask for; it only lets the page ask
+   *knowingly*.
 
 **Context.** [#102](https://github.com/dglazkov/fsio/issues/102). The `/acp`
 page could not see which agents the machine had. Roster knowledge reached
@@ -1457,8 +1393,10 @@ spawn refusal lists the alternatives — and with none installed the helper
 exited before the page loaded anything, which put the one message a
 newcomer most needs in a terminal that had already quit. A roster is a list
 of *records* (name, title, install line, present or not, and whether that
-agent sends a permission request at all — F29/F30 measured that the demo's
-default agent does not), and `capabilities` is a flat list of names, so the
+agent sends a permission request at all — F30 and
+[#100](https://github.com/dglazkov/fsio/issues/100) measured that the
+demo's default agent does not), and `capabilities` is a flat list of names,
+so the
 document had nowhere to put it. D24 already takes exactly this posture
 toward `workspaces` and `needsGrant`: the embedder supplies what the library
 cannot know.
@@ -1483,297 +1421,32 @@ anything by, and every future kind's detail would want the same favor. A
 capability name per detail shape (spends a name from a registry meant for
 facilities, on a payload no other peer will ever implement).
 
-**Findings.** [F29](FINDINGS.md#f29--the-consent-surface-fires-5-permission-asks-10-fs-calls-2-rejections-that-wrote-nothing--and-an-agent_message_chunk-is-a-fragment-not-a-line)
-and [F30](FINDINGS.md#f30--a-real-agent-does-ask-but-only-in-a-mode-you-cannot-set-without-importing-the-operators-whole-config-and-its-tooling-hardcodes-two-paths-under-tmp-that-tmpdir-never-names)
-supply the roster's `asks` field — the one entry in it that is a measured
-claim rather than a label, and the reason a chooser is worth having at all.
+**Findings.** [F30](FINDINGS.md#f30--a-real-agent-does-ask-but-only-in-a-mode-you-cannot-set-without-importing-the-operators-whole-config-and-its-tooling-hardcodes-two-paths-under-tmp-that-tmpdir-never-names)
+and [#100](https://github.com/dglazkov/fsio/issues/100) supply the roster's
+`asks` field — the one entry in it that is a measured claim rather than a
+label, and the reason a chooser is worth having at all.
 Depends on D24, D25, D13. Feeds
 [#106](https://github.com/dglazkov/fsio/issues/106) (the demoable
 one-liner) and [#107](https://github.com/dglazkov/fsio/issues/107) (probing,
 which would fill the same field with richer facts and does not change this
 shape).
 
-## D32 — a session ends when the human ends it: refresh detaches, reattach does not re-handshake
+## D32 — the `/acp` page's session lifetime, moved to the demo that made it
 
-**Decision.** The `/acp` page's session outlives the page. `pagehide` sends
-`detach` ([D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client))
-instead of `close`; a returning page finds the session with `listSessions()`
-and takes it over with `attachSession(id, {replay: true})`; and the only
-thing that stops the agent is an explicit "end session" control that calls
-`close()` and says so. Six rules make that safe:
+Six rules and two amendments about what a refresh means for one demo's
+page: `detach` rather than `close`, no second handshake, the agent's half
+read back from the folder while the page carries the human's, a replayed
+request that never acts, epoch-partitioned ids, and never leaving the agent
+blocked. `PROTOCOL.md` cited this entry once — as a precedent for stored
+transcripts — and that MUST now stands on its own reasoning; nothing else
+in the protocol depended on it. The demo's own code states all six rules
+beside the code that keeps them.
 
-1. **A reattached connection sends no handshake.** Not `initialize`, not
-   `session/new`, not `session/load`. The agent's ACP connection is to the
-   helper's child-process stdio, which never broke — the page detached from
-   the *fsio uplink*, three layers up, and the agent never observed a
-   disconnect. A second `initialize` is undefined territory, `session/new`
-   would silently start a second conversation while abandoning the first
-   (the worst outcome, because it looks like it worked), and `session/load`
-   is for resuming into an agent process that *did* die. The page keeps
-   using the ACP session id it already had.
-2. **The agent's half of the transcript comes back from the folder; the
-   page carries only the human's half.** Replay re-emits the out stream, so
-   re-running the same `session/update` handlers rebuilds every message,
-   tool call and question the agent produced (P2 — it rode the folder, so
-   the folder is where it is read back from). Prompts rode the *uplink*,
-   which is not replayed, so each one is persisted with an anchor — the
-   count of DATA frames consumed when it was sent — and woven back in at
-   that position.
-3. **A replayed request never acts.** The downlink carries the agent's
-   `fs/*` calls as well as its words; re-running a write approved an hour
-   ago, against a folder that has moved on, is the worst thing this page
-   could do. A request the page already answered is history and gets
-   silence. One it never answered is a request the agent is *still* blocked
-   on: a `session/request_permission` comes back as a live card, because
-   answering it writes the response the agent has been holding for since
-   before the refresh; an `fs/*` call comes back **refused**, because the
-   page cannot prove its predecessor's answer never landed and an error
-   ("ask again") is recoverable where a blind write is not.
-4. **Replayed and live must be distinguishable at the frame level**, which
-   is a client-library obligation, not a page one: `FsioSession` brackets
-   the re-emission with a `replay` event carrying the segment generation.
-   Without it the two are the same `data` callback and rule 3 is
-   unimplementable.
-5. **Writer epochs partition the JSON-RPC id space.** The agent may still
-   answer a request the *previous* page sent, and that response arrives live
-   on this connection. Ids are seeded from the attach grant's epoch, so an
-   old reply can never settle a new request. The one id that is deliberately
-   inherited is a `session/prompt` left in flight across the gap: the
-   returning page adopts it, so the turn that outlived the tab ends in the
-   UI instead of spinning forever.
-6. **The page must not leave the agent blocked, whatever it decides.** Rules
-   3 and 5 are the whole of that promise: every outstanding request either
-   comes back answerable or is answered with an error.
-
-**Context.** [#113](https://github.com/dglazkov/fsio/issues/113). Reloading
-`/acp` used to cost the folder, the agent choice, and the agent — measured:
-`closeOnPagehide()`'s notification wins the race against document teardown,
-the child dies 6 ms later, and the session directory is gone 500 ms after
-that. So "the agent dies on a refresh" was never a limitation inherited from
-the transport; it was a request the page made. The host was already prepared
-for the other answer —
-[D17](#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill) marks
-a registered kind detached rather than killing it, exactly as it does a
-shell — and
-[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client) already
-had discovery, takeover and replay, which
-[#58](https://github.com/dglazkov/fsio/issues/58) built the terminal demo's
-session picker on. The folder half of this is that same machinery ported:
-handle in IndexedDB, `granted` reconnects silently, `prompt` offers the one
-click
-[F15](FINDINGS.md#f15--browser-write-access-is-gated-per-session-and-cannot-be-automated-one-gesture-unlocks-the-whole-session)
-requires, `denied` forgets.
-
-**Why sticky rather than a clean conversation with a note.** The cheap
-option — restore the folder, remember the agent, start a fresh session and
-say so — is honest and small, and it was rejected because it answers the
-wrong question. What a person means by refreshing a chat is "put me back",
-and a demo whose whole claim is that the folder carries a real session
-should demonstrate a session that survives the page. It also cashes a
-promise the transport had already made and nothing here was collecting.
-
-**The principle this strains.** [P3](PRINCIPLES.md) — trust is a noun, and
-durability of a grant is supposed to be something the human gestured for.
-A session that survives a closed tab is a running process the page's absence
-no longer stops, which is why the "end session" control is load-bearing
-rather than a convenience: without a real end gesture, sticky means "a
-process nobody can kill from the page", which is strictly worse than what
-came before. Note what is *not* made sticky: an unanswered permission comes
-back as a question, never as an inherited yes. The consent gesture does not
-survive the refresh — only the request does.
-
-**The ceiling, stated rather than discovered.** Replay reads the head
-segment only
-([D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored),
-[#57](https://github.com/dglazkov/fsio/issues/57)), so a conversation past
-the rotation size comes back as a suffix and prompt anchors recorded against
-the longer stream overshoot. The page detects it (the generation moved),
-says so in the transcript, and puts the orphaned turns at the end —
-misplaced, not lost. For chat volumes that is a long way off, and the day it
-is not is the day #57 gets pulled.
-
-**Out of scope, deliberately.** Surviving a *helper* restart: the demo
-helper runs `fresh: true` and wipes `.fsio` on start, so a restarted helper
-has no sessions to inherit and the returning page falls back to the wizard.
-Resuming into a *new* agent process — that is what ACP's `session/load` is
-for, it is gated on an agent advertising `loadSession`, and it is per-agent
-([#125](https://github.com/dglazkov/fsio/issues/125) is where that gets
-measured rather than guessed — this line said #103 until #119, which is
-the puppet agent, not this).
-
-**Amended ([#119](https://github.com/dglazkov/fsio/issues/119)).** The
-paragraph above gave a policy as if it were a constraint. `fresh: true`
-wiping the transcript was a choice, and a wrong one: it deleted the very
-file rule 2 names as where the agent's half is read back from.
-[D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored)
-rule 4 keeps ended sessions' out logs under `.fsio/transcripts/`, past both
-the `Ctrl-C` sweep and `fresh`. What is *still* out of scope is unchanged
-and is the part that was never policy: the agents are the helper's
-children, so no amount of retention makes a live session survive its exit.
-A helper restart can offer the conversation back to *read* — the same
-frames through the same `session/update` handlers, no live agent, no
-protocol change — and resuming it into a new agent process remains gated
-on `session/load` ([#125](https://github.com/dglazkov/fsio/issues/125)).
-The expectation people bring from
-`claude --resume` is transcript-shaped; what this decision built is
-process-shaped; rule 4 closes the gap from the cheap end.
-
-**Amended — rule 2 outlives the session
-([#123](https://github.com/dglazkov/fsio/issues/123)).** Rule 2 splits a
-conversation in two and says where each half is read back from. Since the
-amendment above the folder's half survives the session; the page's half did
-not. The sticky record was *deleted* when the session ended — on the
-human's "end session", on the agent's exit, and on a revisit that found the
-session gone — and every one of those is correct for a record that is
-**state**: it names a session that is not there, and a page that acted on it
-would attach to nothing. None of them is a reason to delete the human's own
-words, which exist in no other place and become worth reading at exactly the
-moment they stop being state. So the record is **demoted, not deleted**:
-what pointed at the live session (the ACP session id, the cwd, the queue,
-the turn in flight) goes, and `{prompts, answers, agentName, gen}` moves to
-a `past:<session-id>` key that the read-only view weaves into the transcript
-with the same `promptsBefore` the live page uses. A past conversation this
-browser drove is now whole; one it did not is what it always was.
-
-Three things this had to decide rather than assume.
-
-**The bound is the folder's.** D26 rule 4 bounds what the *folder* keeps;
-IndexedDB in the origin is not that folder and needs its own sentence. The
-one that keeps the folder in charge: as many as the folder keeps, keyed by
-session id, dropped once the folder has demonstrably moved past them. Two
-enforcements — the newest N (10, the folder's own N; the byte half is not
-mirrored, a record being the human's typing against the transcript's
-megabytes), and a prune on every read of `.fsio/transcripts/`. That prune
-may not read "absent" as "stale": archiving happens at the sweep, which lags
-the end of the session, so for a minute "not yet" and "never" look
-identical. What separates them is a *newer* transcript — session ids sort by
-start time — and only from the folder the record belongs to, since one
-origin can hold conversations from several folders and opening the second is
-not a verdict on the first. The result is a satellite: it cannot outnumber
-the transcripts it annotates, and it cannot outlive them.
-
-**Keeping the human's words browser-side is the opposite trade from keeping
-the agent's in the folder, not that trade extended.** D26 rule 4's stated
-cost is that a transcript is readable by every origin ever granted the
-folder. This copy is the reverse: private to the origin, invisible to a
-co-tenant — and invisible to the human too, since it is in IndexedDB and not
-in their project. Neither is obviously the safer one, and the answered
-permission cards sharpen it, since "what I clicked" is arguably more
-sensitive than "what I typed". What settles it is that the alternative on
-offer was never "keep it somewhere better", it was *destroying it*: the
-words rode the uplink, nothing logged them, and the page holds the only copy
-there has ever been. Writing them into `.fsio/` beside the agent's half is
-the symmetrical option and is rejected below.
-
-**A permission card may show its verdict only for a conversation this
-browser drove.** #119 had every historic card say "what was answered isn't
-in the folder's copy" — honest, and still what a transcript from another
-browser gets. With `answers` demoted rather than deleted the verdict is
-knowable for a session this browser answered, and the card carries that
-distinction rather than blurring it: the answered card says where the answer
-came from, the unanswerable one says both that the folder does not have it
-and that this browser does not either. Inferring it from what the agent did
-next stays refused.
-
-**Alternatives rejected (this amendment).** Writing the human's half into
-`.fsio/transcripts/<id>/` beside the agent's (symmetrical, and readable
-afterwards by any browser — but it inverts the trade above without being
-asked to, publishing what someone typed *and what they clicked on a consent
-card* to every origin that has ever held the folder, which is the change in
-kind D26 rule 4 flagged as its reason for a tight bound; if it is ever
-wanted it is a gesture, not a default). Keeping the record whole and simply
-not deleting it (the next load would take it down the reattach path for a
-session that is gone — the record's job as state really does end, and only
-its contents outlive it). An unbounded browser-side archive (nothing would
-ever say how much of someone's typing this origin is holding, or when it
-stops). Bounding it by age instead of by the folder (a clock the page has
-no reason to trust over the authority it already reads on every connect).
-
-**Amended — the record is a shortcut, the folder is the index
-([#117](https://github.com/dglazkov/fsio/issues/117)).** The decision above
-made the browser's record the *only* route back to a running conversation.
-That is one route too few, and it was never the transport's limitation: the
-sessions are in the folder, `listSessions()` is
-[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client)
-discovery, and [#58](https://github.com/dglazkov/fsio/issues/58) built the
-terminal demo's picker on exactly that. `/acp` shipped without one on the
-grounds that a session picker wanted a transcript story first; rule 2 is
-that story, so the reason is spent. So: **before starting a conversation,
-the page asks the folder whether one is already running.** Any `acp` session
-in `running` state that the record does not name is offered — with the agent
-it is running, when it started, whether it is detached, and a line of what
-it last said, all read out of the session directory the page already holds a
-handle to (no new capability, [P3](PRINCIPLES.md)). Picking one rebuilds the
-record, which is what makes this a recovery path rather than a convenience.
-[#115](https://github.com/dglazkov/fsio/issues/115) reached this state
-through a bug and was recovered by reading `out.00000000.log` in DevTools to
-extract the ACP session id and hand-writing an IndexedDB record; a second
-browser profile, an incognito window, a different origin (localhost against
-the deployed page — separate IndexedDB by design) or cleared site data reach
-it with no bug at all.
-
-Three things that rebuild has to say out loud, because the alternative is a
-transcript with a hole in it and no sign there was ever anything there.
-
-**A rejoined conversation is honestly half a one.** Rule 2 splits the
-transcript and puts the human's half in the page; the record that held it is
-precisely what is missing. The agent's half comes back entire and the human's
-side starts at the moment of joining — stated at the top of the transcript,
-where the missing part would have been, and carried in the record as a
-durable `adopted` flag rather than a banner the next refresh forgets. The
-flag survives demotion (#123) too: a reader opening that conversation later
-is looking at a document whose beginning no browser holds.
-
-**With no `answers`, "never answered" and "answered by someone else" are the
-same observation.** Rule 3 treats a replayed request id it has never seen as
-outstanding, which is exactly right for a page coming back to its own
-session and inexact here — the map is empty by construction. The card stays
-**live**, because the agent may genuinely be parked on it and that is the
-recovery worth having; what changes is the claim beside it, which says the
-verdict is unknowable from here. Answering one that was already settled
-sends a response to an id the agent has resolved, which the control plane
-already says to drop. Rendering a guess as a fact is the thing rule 3's
-sibling in #123 refused, and it stays refused.
-
-**The cwd arrives after the frames do.** A rejoined session is constructed
-before `acp/info` answers, because replay runs inside the attach grant. An
-empty cwd normalizes to `/`, which would turn `fs/*` containment into a
-check that always passes — so every path is refused until the host says
-where the agent is rooted. Milliseconds of "ask again", against a
-containment wall that silently opens.
-
-**Alternatives rejected (this amendment).** Reattaching to the only running
-session automatically when the record is missing (it is the same silent
-takeover rule 1 forbids in the other direction — the human may be looking at
-that conversation in another window, and D18 attach is a takeover that
-fences them). Offering only `detached: true` sessions (D18 rejected that
-gate for shells; a held session is a legitimate takeover and saying so is
-what the row is for). Hiding a session whose ACP id is no longer in the
-retained stream (it is running, it is in the folder, and "there is something
-here this page cannot rejoin" is the fact a human needs before starting a
-second conversation beside it — so the row is shown and the button is not).
-Suppressing the offer after "leave it running and start a new one" by
-forgetting the session (it is remembered as passed-over for the visit
-instead: a decision about one session, not a decision to stop seeing the
-folder).
-
-**Alternatives rejected.** Persisting the whole transcript in IndexedDB
-(the folder already has the agent's half, and a browser-cached copy would be
-a second source of truth that drifts — which is an argument about the
-*agent's* half only, and is why the amendment above keeps the human's half,
-of which there is no other copy at all). Cancelling every outstanding request
-at `detach` (simple, and it throws away the reason to be sticky at all — an
-agent that stops working the moment you close the tab has not survived
-anything). Inferring which permission cards were already answered from
-whether the agent spoke afterwards (a guess dressed as a fact; the answered
-ids are cheap to carry and exact). Gating reattach on `detached: true`
-(D18 already rejected it for shells, for the same reason: the D17 silence
-window would make a refresh cost three minutes).
-
-**Findings.** F15 (the re-grant gesture), F16 (why a backgrounded tab's
-silence is not death), F11 (torn reads during replay).
-Depends on [D6](#d6--one-writer-per-file-one-cleanup-owner),
-[D17](#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill),
-[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client),
-[D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored),
-[D30](#d30--acp-is-payload-the-host-frames-the-browser-is-the-client).
+It lives where a demo keeps its reasoning: in those code comments and in
+[#113](https://github.com/dglazkov/fsio/issues/113),
+[#117](https://github.com/dglazkov/fsio/issues/117),
+[#119](https://github.com/dglazkov/fsio/issues/119) and
+[#123](https://github.com/dglazkov/fsio/issues/123). This number is spent
+and is never reused
+([PROCESS.md](https://github.com/dglazkov/fsio/blob/main/PROCESS.md) rules
+1 and 2, [#130](https://github.com/dglazkov/fsio/issues/130)).

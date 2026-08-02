@@ -77,7 +77,7 @@ test("profile: a pattern carrying a quote or backslash is refused, not escaped",
   assert.throws(() => sandboxProfile({ ...base, carves: [{ why: "w", patterns: ["^/private/tmp/a\\\\b$"] }] }), /refusing a pattern/);
 });
 
-test("summary: names the holes and says what the wall does not bound (F24)", () => {
+test("summary: names the holes and says what the wall does not bound", () => {
   const s = profileSummary("my-project", ["/Users/x/.claude", "/private/tmp/claude-501/-Users-x-proj"]);
   assert.match(s, /writes: my-project\/ \(not \.fsio\)/);
   assert.match(s, /\/Users\/x\/\.claude/);

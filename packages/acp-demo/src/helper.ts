@@ -4,7 +4,7 @@
 // Run it in your working folder, pick that folder in the demo page, and the
 // page becomes an ACP client driving a real coding agent — the agent's
 // stdio riding DATA frames over the filesystem, no server, no websocket, no
-// extension. The agent's permission prompts arrive as page UI (R6).
+// extension. The agent's permission prompts arrive as page UI.
 //
 // This is demo-specific code consuming @fsio/host as a library; the generic
 // CLI lives in packages/host/src/fsio-host.ts, and the terminal demo (whose
@@ -55,7 +55,7 @@ if (wantFixture && agentArg) fail(`--fixture and --agent are two ways to say the
 
 // The sandbox is the demo's safety sentence, so running without it is a
 // thing you have to say out loud — and the page is told (`sandboxed: false`
-// in the spawn result, D13 extra fields). R3: never silently unconfined.
+// in the spawn result, D13 extra fields). Never silently unconfined.
 if (wantSandbox && process.platform !== "darwin") {
   fail(`confinement here is sandbox-exec (macOS); got ${process.platform}. Re-run with --no-sandbox to drive an UNCONFINED agent anyway.`);
 }
@@ -76,10 +76,10 @@ if (rootReal.startsWith("/private/tmp") || rootReal.startsWith(tmpReal)) {
 
 // ---- the agent's two dirs outside the folder: scratch and placed state.
 //
-// Interim, deliberately, exactly as terminal-demo's placement is: R17's
-// destination is the host-owned slot `~/.fsio/state/<workspace>/<service>/`,
+// Interim, deliberately, exactly as terminal-demo's placement is: the
+// destination is a host-owned slot `~/.fsio/state/<workspace>/<service>/`,
 // which needs #71 and a profile carve exactly that wide. What matters
-// already is that state is *placed* and not carved out of $HOME (R4), and
+// already is that state is *placed* and not carved out of $HOME, and
 // that the scratch dir the child gets as TMPDIR is ours, not the user's.
 const demoDir = path.join(tmpReal, "fsio-acp-demo");
 const scratch = path.join(demoDir, "scratch");
@@ -102,12 +102,13 @@ const FIXTURE: AgentEntry = {
   args: [path.join(import.meta.dirname, "fixture-agent.js")],
   title: "PUPPET — a scripted test agent, not a real one",
   install: "(built with this repo; re-run the helper with --fixture)",
-  // Asking is the entire reason it exists (F29: 5 asks, 10 `fs/*`).
+  // Asking is the entire reason it exists: 5 permission asks and 10 `fs/*`
+  // calls across the scripted run, measured in test-fixture-agent.ts.
   asks: true,
   state: {
     mode: "place",
     env: "FSIO_FIXTURE_STATE",
-    why: "the puppet keeps no state; a placed dir it never writes to leaves the profile with no carve at all (R4/R17).",
+    why: "the puppet keeps no state; a placed dir it never writes to leaves the profile with no carve at all.",
   },
 };
 
@@ -169,7 +170,7 @@ const server = new HostServer({
   // is right that a session pointing at a dead pid is not attachable and
   // right to sweep the plumbing; it was wrong that the out log is plumbing.
   // For this demo that file IS the conversation — the agent's half of it,
-  // which D32 rule 2 deliberately does not persist browser-side because
+  // which the page deliberately does not persist browser-side because
   // "it rode the folder, so the folder is where it is read back from"
   // (P2). The folder now keeps its side of that bargain.
   //
@@ -248,7 +249,7 @@ if (wantSandbox) {
 const rosterTimer = setInterval(publishRoster, 3000);
 
 // ---- banner: the second UI surface — what to do next, and the honest
-// safety sentence (F24: it is a *write* wall; reads and network are not
+// safety sentence (it is a *write* wall; reads and network are not
 // bounded, and saying otherwise would be the dishonest version).
 
 const folderName = path.basename(rootReal);

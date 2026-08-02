@@ -116,7 +116,7 @@ grants, the (principal × service × workspace) triple
 confirmation-as-policy
 ([D12](spec/DECISIONS.md#d12--spawn-policy-is-a-host-side-hook-confirmation-is-an-async-policy)),
 and the measured-confinement discipline
-([F23](spec/FINDINGS.md#f23--child-confinement-is-transitive-to-any-depth-and-cannot-be-re-entered-in-either-direction-setuid-binaries-become-unexecutable)–[F26](spec/FINDINGS.md#f26--placement-moves-a-childs-state-but-not-its-identity-the-agent-clis-credential-lives-in-the-os-keystore-so-a-deny-default-profile-silently-logs-it-out))
+([packages/confine/MEASUREMENTS.md](packages/confine/MEASUREMENTS.md))
 — stays, because it stands on fsio-native ground: two *origins*
 granted the same workspace already need per-asker reach, and a
 chatty agent already needs consent that survives its cadence.

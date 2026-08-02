@@ -835,7 +835,7 @@ as non-carvable.
 
 The child sandbox is a **write** wall, and its measured shape is narrower
 than the sentence "sandboxed to this folder" implies
-([F24](FINDINGS.md#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read),
+([F24](FINDINGS.md#f24--moved-it-is-a-write-wall--the-environment-and-every-read-cross-it),
 `scripts/confinement-lab.mjs`). Under the shipped posture a confined child
 still holds: the host's **entire environment** (47 of 48 variables,
 including every exported credential and `SSH_AUTH_SOCK` — agent forwarding
@@ -852,7 +852,7 @@ Two consequences are normative for consent surfaces:
   shell is sandboxed" is not.
 - What the sandbox *does* hold is worth stating too, because it is stronger
   than usually assumed
-  ([F23](FINDINGS.md#f23--child-confinement-is-transitive-to-any-depth-and-cannot-be-re-entered-in-either-direction-setuid-binaries-become-unexecutable),
+  ([F23](FINDINGS.md#f23--moved-the-wall-is-transitive-cannot-be-re-entered-and-setuid-dies),
   [D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered)):
   the write wall is inherited by every descendant at any depth, survives
   detachment, cannot be widened from inside, and is not escapable by asking
@@ -980,8 +980,8 @@ Four rules bound its life:
    unlike live replay, whose frames came from a stream the host was
    writing — so it MUST be parsed defensively and rendered as text,
    never acted on: replaying one MUST NOT re-issue the requests it
-   contains (the rule [D32](DECISIONS.md#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)
-   already states for replayed frames, which holds here a fortiori).
+   contains — the rule a client already owes any replayed frame, which
+   holds a fortiori for a file whose writer it cannot identify.
 
 ## Open questions
 

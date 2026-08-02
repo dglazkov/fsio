@@ -1,4 +1,4 @@
-// The ACP client role, played by the page (D30 rule 3).
+// The ACP client role, played by the page ([#18](https://github.com/dglazkov/fsio/issues/18)).
 //
 // Two of the things an ACP client owes an agent are things only this side
 // can do, and together they are the demo:
@@ -6,27 +6,27 @@
 //   `session/request_permission` — the agent asks whether it may act. The
 //   page renders the question as UI, next to the file it is about, and the
 //   human answers there. Nothing in the terminal, nothing the agent drew
-//   itself, no ambient yes. (R6; P5: the party asking is not the party
+//   itself, no ambient yes. (P5: the party asking is not the party
 //   deciding.)
 //
 //   `fs/read_text_file` / `fs/write_text_file` — the agent asks the *page*
 //   to touch a file, and the page serves it through the directory handle
 //   the human granted. A path outside the folder is refused here, in the
-//   browser, with an error the agent can relay (R9). There is no profile to
+//   browser, with an error the agent can relay. There is no profile to
 //   author for this rung — the browser is the sandbox
-//   ([#74](https://github.com/dglazkov/fsio/issues/74)'s rung 2, R8: don't
+//   ([#74](https://github.com/dglazkov/fsio/issues/74)'s rung 2: don't
 //   duplicate a wall another party enforces).
 //
 // Both are the agent's choice to use, and that is the honest caveat: an
 // agent that reads files with its own hands is bounded by the Seatbelt
-// profile, which is a *write* wall (F24) — it reads the world. Measured in
+// profile, which is a *write* wall — it reads the world. Measured in
 // the first field test: pi-acp answered "read /etc/passwd" without ever
 // calling `fs/read_text_file`, and edited a file without asking. What these
 // handlers bound is what the page does **on the agent's behalf**; what the
 // profile bounds is what the child may write. Neither one bounds reads, and
 // no wording here should suggest otherwise.
 //
-// ---- coming back (#113/D32)
+// ---- coming back ([#113](https://github.com/dglazkov/fsio/issues/113))
 //
 // A refreshed page reattaches to a session that never stopped, and the
 // agent never knew. That makes this file the place where two rules live:
@@ -183,7 +183,7 @@ export class AgentSession {
   /** initialize + session/new. Capabilities are a promise: only claim the
    *  `fs` methods because they are implemented below.
    *
-   *  There is deliberately no reattach counterpart to this (D32). The
+   *  There is deliberately no reattach counterpart to this. The
    *  handshake belongs to the agent *process*, and a refresh does not
    *  restart it — the agent has been talking to the same stdio pipe the
    *  whole time and never saw a disconnect. A second `initialize` is
@@ -344,6 +344,15 @@ export class AgentSession {
     const u = (params?.["update"] ?? {}) as Record<string, unknown>;
     const type = String(u["sessionUpdate"] ?? "");
     switch (type) {
+      // A chunk is a *fragment*, not a line — the agent owns its
+      // terminators. Concatenating consecutive chunks into one flowing
+      // block is the correct client behavior, and it cost a bug to learn
+      // that it is also unforgiving: an agent emitting one chunk per line
+      // with no trailing newline gets a transcript with every line welded
+      // to the next (`…says back.✓ somewhere outside…`). The rule follows
+      // from the word "chunk" rather than from anything ACP-specific, and
+      // it will bite any agent written in this repo. Regression-tested in
+      // test-fixture-agent.ts.
       case "agent_message_chunk":
       case "agent_thought_chunk": {
         const kind = type === "agent_message_chunk" ? "agent" : "thought";
@@ -421,11 +430,11 @@ export class AgentSession {
     // From a transcript (#119, #123): the question is in the folder, the
     // answer never was. Two different unknowables, and the card has to carry
     // the difference rather than blur it. A conversation *this browser*
-    // drove kept what was clicked (D32 rule 2's record, demoted rather than
-    // deleted), so the verdict is knowable — from here, on this machine, and
-    // nowhere else. One it did not drive stays unanswerable, and the
-    // alternative to saying so is inferring the answer from what the agent
-    // did next, which D32 already refused as a guess dressed as a fact.
+    // drove kept what was clicked (the sticky record, demoted rather than
+    // deleted when the session ended), so the verdict is knowable — from
+    // here, on this machine, and nowhere else. One it did not drive stays
+    // unanswerable, and the alternative to saying so is inferring the
+    // answer from what the agent did next: a guess dressed as a fact.
     if (this.#history) {
       const known = permissionVerdict(this.#history.past?.answers ?? {}, origin.id);
       this.#push({
@@ -598,7 +607,7 @@ export class AgentSession {
 
   /** Absolute path → path relative to the granted folder, or a refusal.
    *  The rule and its tests live in `../src/paths.ts` (Node-testable);
-   *  here it becomes a JSON-RPC error the agent can relay (R9). */
+   *  here it becomes a JSON-RPC error the agent can relay. */
   #contain(abs: string): string {
     // No cwd yet (#117: a conversation joined in progress, before `acp/info`
     // has said where it is rooted). `containedRelative("", …)` would treat

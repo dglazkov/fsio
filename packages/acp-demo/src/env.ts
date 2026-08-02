@@ -3,12 +3,13 @@
 // terminal-demo hands a shell `process.env` and then steers three variables
 // out of $HOME. That is right for a shell — the user is sitting at it, and
 // their environment is the thing they asked for. It is wrong for an agent:
-// nobody is watching, the child talks to the network by design, and F24
-// measured what full inheritance carries (the whole environment, including
-// `SSH_AUTH_SOCK`).
+// nobody is watching, the child talks to the network by design, and full
+// inheritance was measured to carry the whole environment, including
+// `SSH_AUTH_SOCK` (packages/confine/MEASUREMENTS.md).
 //
-// So this helper does what #86's env program (R4/R17) says: **synthesize,
-// place, then add by exact name.** The floor below is F26's measured one —
+// So this helper does what #86's env program says: **synthesize,
+// place, then add by exact name.** The floor below is the measured one
+// (MEASUREMENTS.md) —
 // eight variables ran an agent CLI identically to 48-variable inheritance —
 // and it was re-measured here against a second subject: pi-acp completes
 // `initialize` + `session/new` under exactly these eight (2026-08-01).
@@ -19,7 +20,7 @@
 import os from "node:os";
 import type { AgentEntry } from "./agents.js";
 
-/** F26's floor: PATH/HOME/TERM/LANG/USER/LOGNAME/SHELL/TMPDIR. */
+/** The measured floor: PATH/HOME/TERM/LANG/USER/LOGNAME/SHELL/TMPDIR. */
 export const ENV_FLOOR = ["PATH", "HOME", "TERM", "LANG", "USER", "LOGNAME", "SHELL", "TMPDIR"] as const;
 
 export interface EnvInputs {

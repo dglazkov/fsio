@@ -103,7 +103,7 @@ const writing = new Map<string, Promise<void>>();
  *  key. Last-writer-wins loses whichever window's clicks came second — and
  *  what it loses is the human's answers to the agent's consent questions,
  *  which exist NOWHERE else: they rode the uplink, and the folder never saw
- *  them (D18, D32 rule 2). Measured, not theorised: three permission cards
+ *  them (D18, #113). Measured, not theorised: three permission cards
  *  answered `allow` on the wire came back as two open questions on the next
  *  load, because a second window wrote its pre-answer copy over them.
  *
@@ -144,8 +144,8 @@ export async function loadRecord(sessionId: string): Promise<StickyRecord | null
  *  to stop treating the record as *state*: it names a session that is not
  *  there, and a page that acted on it would attach to nothing. None of them
  *  is a reason to throw away the human's own words, which exist nowhere else
- *  — the folder has the agent's half and never had this one (D18, D32 rule
- *  2). So what is dropped is everything that pointed at the live session,
+ *  — the folder has the agent's half and never had this one (D18, #113).
+ *  So what is dropped is everything that pointed at the live session,
  *  and what is kept is the half that is now simply history.
  *
  *  `held` is the live record when the page is driving that conversation;

@@ -75,13 +75,13 @@ test("the published roster carries no paths (D24: one file serves every granted 
 });
 
 test("every shipped entry declares whether it asks — the field the chooser turns on", () => {
-  // Measured, not assumed (F29/F30). A missing declaration would render as
+  // Measured, not assumed (F30, #100). A missing declaration would render as
   // "edits with its own hands" in the page, which is a claim about consent
   // and must never be a default someone forgot to set.
   for (const a of AGENTS) {
     assert.equal(typeof a.asks, "boolean", `${a.name} must declare asks`);
     assert.ok(a.install.length > 0, `${a.name} must carry an install line for the page to print`);
   }
-  assert.equal(AGENTS.find((a) => a.name === "pi-acp")?.asks, false, "F29 measured 0 permission requests from pi-acp");
+  assert.equal(AGENTS.find((a) => a.name === "pi-acp")?.asks, false, "#100 measured 0 permission requests from pi-acp");
   assert.equal(AGENTS.find((a) => a.name === "claude-agent-acp")?.asks, true, "F30 measured the card it sends");
 });

@@ -3,7 +3,7 @@
 //
 // Two things on a chip that a shell tab would not need, both because an
 // agent is not a shell. `asking` is the load-bearing one: this whole demo
-// exists because the agent's consent question becomes page UI (R6), and a
+// exists because the agent's consent question becomes page UI (#18), and a
 // question asked in a background tab is that demo failing silently. `unread`
 // is the quieter version of the same point — with one conversation the page
 // WAS the notification.
