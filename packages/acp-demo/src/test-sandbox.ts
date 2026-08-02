@@ -1,7 +1,7 @@
 // What this demo's profile adds to @fsio/confine, and nothing the library
 // already tests. The wall itself — the granted folder writable, .fsio denied
-// under last-match-wins, the outside denied, reads unbounded, F23's three
-// properties, carve and pattern mechanics — lives in
+// under last-match-wins, the outside denied, reads unbounded, the three
+// posture properties, carve and pattern mechanics — lives in
 // packages/confine/src/test-posture.ts, run against the same sandbox-exec.
 //
 // What is this demo's own is the claim "an agent is not a shell" (#18's
@@ -52,7 +52,7 @@ const sandboxedSh = (script: string, over: Partial<SandboxConfig> = {}): Promise
     });
   });
 
-test("agent profile: a declared state dir is writable, and only it (F26's posture)", { skip: !darwin }, async () => {
+test("agent profile: a declared state dir is writable, and only it", { skip: !darwin }, async () => {
   const ok = await sandboxedSh(`echo s > "${state}/session.json"`);
   assert.equal(ok.code, 0, ok.out);
   // A sibling of the carved dir gets nothing: the carve is a named dir, not

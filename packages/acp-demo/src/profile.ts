@@ -19,7 +19,7 @@
 //
 // What did NOT change is the load-bearing part, and it is worth saying
 // plainly because the demo's safety sentence depends on it: this is a
-// **write** wall (F24). The agent reads everything the user can read and
+// **write** wall. The agent reads everything the user can read and
 // talks to the network — it must, inference is remote — so the honest
 // sentence is @fsio/confine's `profileSummary`, not "the agent is
 // sandboxed".

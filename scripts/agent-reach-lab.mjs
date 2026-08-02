@@ -10,7 +10,8 @@
 // denial" (R4/R17); this lab measures it on purpose.
 //
 // Instrument: the unified log (SBPL `(trace)` no longer produces a file on
-// current macOS), same as F23/F25. Nothing reads any credential's contents:
+// current macOS), same as the confinement and service labs. Nothing reads
+// any credential's contents:
 // the lab reports which PATHS appeared and their sizes, never bytes.
 //
 // Method note for the finding: the subject and the harness are the same
@@ -61,7 +62,7 @@ function writeProfile(name, { slotCarve = false, noKeystore = false } = {}) {
   let body = SHIPPED;
   if (noKeystore) {
     // Does the child's identity come from the OS keystore rather than from
-    // any directory a profile can place? F25's service posture is
+    // any directory a profile can place? The service lab's posture is
     // deny-default, so it denies every mach-lookup by construction; this
     // clause isolates that one variable against the working cell A.
     body += `
@@ -228,7 +229,7 @@ if (has("Ap"))
 
 if (has("At"))
   results.push(await cell({
-    name: "At", title: "cell A + the agent spawns a child (Bash ls) — F23 transitivity on a real workload",
+    name: "At", title: "cell A + the agent spawns a child (Bash ls) — transitivity on a real workload",
     profile: writeProfile("demo"), configDir: CONFIG, env: fullEnv({ CLAUDE_CONFIG_DIR: CONFIG }),
     prompt: TOOL_PROMPT, tools: "Bash(ls:*)",
   }));

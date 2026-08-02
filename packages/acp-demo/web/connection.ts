@@ -555,7 +555,7 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // The F28 shape: `initialize` passes and `session/new` fails, with a
+    // The measured shape: `initialize` passes and `session/new` fails, with a
     // message that names a stream rather than a policy. Show the agent's
     // own words AND what the page knows about the wall it is behind.
     const conf = agentFacts.get();

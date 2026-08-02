@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Read-wall lab (#90, the leg F25/F26 left open — #86's open question 4).
+// Read-wall lab (#90, the leg the service and agent labs left open — #86's
+// open question 4).
 //
-// F24 priced what the shipped wall does NOT hold: it is a WRITE wall, and a
+// The confinement lab priced what the shipped wall does NOT hold: it is a
+// WRITE wall, and a
 // confined child reads every file the user can read. #86 lists "does the read
 // wall exist, and what does it cost" as the open question where the acts
 // collide — act 1/2 want read-the-world (that is what makes a shell and an
@@ -14,7 +16,8 @@
 // the real posture) plus a read wall of increasing width. W0 is the shipped
 // posture unchanged; W1..W3 differ from it only in what they may READ.
 //
-// Method, same as F25: start from nothing and add only rules a MEASURED denial
+// Method, same as the service lab: start from nothing and add only rules a
+// MEASURED denial
 // demanded, reading denials from the unified log (SBPL `(trace)` no longer
 // produces a file on current macOS). Every rule below the divider in W2/W3 got
 // there because a battery cell failed without it — the count is the honest
@@ -96,7 +99,7 @@ fs.cpSync(path.join(ws, "node_modules"), modulesBackup, { recursive: true });
 // width above it. The comments name which cell demanded it.
 const READ_WALL_HEAD = `
 ;; ---------------------------------------------------------------- read wall
-;; Everything above is the shipped posture (F24: a write wall). Below is the
+;; Everything above is the shipped posture (a write wall). Below is the
 ;; only variable this lab changes.
 (deny file-read*)
 
@@ -150,7 +153,7 @@ const W3_USER_STATE = `
 `;
 
 const WIDTH_DEFS = {
-  W0: { title: "shipped posture — no read wall (F24 control)", body: SHIPPED },
+  W0: { title: "shipped posture — no read wall (control)", body: SHIPPED },
   W1: { title: "read wall: the workspace and scratch, nothing else", body: SHIPPED + READ_WALL_HEAD },
   W2: { title: "W1 + the toolchain (node, system, developer tools)", body: SHIPPED + READ_WALL_HEAD + W2_TOOLCHAIN },
   W3: { title: "W2 + the user state the toolchain names", body: SHIPPED + READ_WALL_HEAD + W2_TOOLCHAIN + W3_USER_STATE },
@@ -171,7 +174,7 @@ const BATTERY = [
   { name: "npm ci --offline", cmd: "npm ci --offline --no-audit --no-fund --silent" },
 ];
 
-// The F24 crown jewels: what the wall is FOR. Probed from inside each width by
+// The crown jewels: what the wall is FOR. Probed from inside each width by
 // the child itself, so the answer is the child's, not the harness's.
 const JEWELS = [
   ["~/.ssh (private keys)", `require("fs").readdirSync(process.env.HOME+"/.ssh")`],
@@ -184,7 +187,8 @@ const JEWELS = [
 ];
 
 /** `log show --start` parses LOCAL time — an ISO/UTC stamp silently returns
- *  nothing, which reads exactly like "no denials" (F26's method trap). */
+ *  nothing, which reads exactly like "no denials" (the agent lab's method
+ *  trap). */
 const logStamp = (d) => {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
@@ -196,7 +200,8 @@ const logStamp = (d) => {
  *  under the next: ~/.gitconfig showed as denied in W3, where git demonstrably
  *  worked, and `/dev/dtracehelper` carried the running total (×47, then ×97).
  *  `log show` stamps have one-second resolution, so the gap must exceed it.
- *  Same class as F26's local-time trap and F16's focus emulation: an instrument
+ *  Same class as the agent lab's local-time trap and F16's focus emulation:
+ *  an instrument
  *  that fails toward a plausible answer. Each window is printed with its width
  *  so the artifact can be audited rather than trusted. */
 const denialsBetween = (t0, t1) =>

@@ -74,9 +74,9 @@ process.env["SHELL_SESSIONS_DISABLE"] = "1";
 process.env["HISTFILE"] = path.join(tmpReal, "fsio-terminal-demo-history");
 
 // Same treatment for the agent CLI (#18's act), and here the stakes are
-// higher than a history file: F26 cell A′ measured the default `~/.claude`
-// under this exact profile and the run **exits 0 with a correct answer**
-// while its transcript writes are denied. Nothing surfaces — the loss is
+// higher than a history file. Measured under this exact profile: with the
+// default `~/.claude`, the run **exits 0 with a correct answer** while its
+// transcript writes are denied. Nothing surfaces — the loss is
 // discovered later, when resume finds no session. R3 ("a broken
 // confinement must look broken") applies to state placement too, so this
 // is a fix and not a nicety.
@@ -86,12 +86,12 @@ process.env["HISTFILE"] = path.join(tmpReal, "fsio-terminal-demo-history");
 // user's working folder, land in their repo, and be co-tenant-readable
 // (D20) — and this demo promises the folder back pristine on exit.
 // One flat dir is enough: the CLI partitions transcripts by workspace
-// itself (`projects/<ws>/`, F26).
+// itself (`projects/<ws>/`).
 //
 // Interim, deliberately. The destination R17 wants is the host-owned slot
 // `~/.fsio/state/<workspace>/<service>/`, which needs #71 and a profile
 // carve exactly that wide. Note also what placement does NOT move: the
-// credential lives in the login Keychain (F26), reached by mach-lookup —
+// credential lives in the login Keychain, reached by mach-lookup —
 // allowed here only because this profile is `allow default`. A deny-default
 // profile would log the child out no matter where its state sits.
 process.env["CLAUDE_CONFIG_DIR"] = path.join(tmpReal, "fsio-terminal-demo-agent-state");
@@ -149,8 +149,8 @@ await new Promise<void>((resolve, reject) => {
 // The safety sentence comes from @fsio/confine rather than being written
 // here, and it is longer than the line it replaced on purpose: the old one
 // said "sandboxed… network on; writes outside denied" and never mentioned
-// that reads are unbounded, which is the half F24 made a MUST in the threat
-// model. `/private/tmp` is named because it is a real hole outside the
+// that reads are unbounded, which is the half the threat model makes a
+// MUST. `/private/tmp` is named because it is a real hole outside the
 // folder; the profile's other carve, `/dev/tty`, is the terminal the user is
 // already looking at, so naming it would be noise rather than disclosure.
 const folderName = path.basename(rootReal);
