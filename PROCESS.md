@@ -252,7 +252,7 @@ list of what the rules would touch.
 
 | what | where | rule |
 |---|---|---|
-| the confinement mechanism, written twice | `terminal-demo` + `acp-demo`, 408 lines | 6 — extract the library the duplication already designed |
+| ~~the confinement mechanism, written twice~~ **extracted** | `packages/confine`; the demos keep their posture and their failure policy | 6 — done ([#134](https://github.com/dglazkov/fsio/issues/134)) |
 | R1–R19: nineteen requirements specifying that library in advance, ~106 citations resolving to nothing | issue [#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments | 3, 6 — the citations are what should go |
 | F23–F28: Seatbelt and agent-CLI ground, 427 lines | `spec/FINDINGS.md` | one shelf — moves with the library |
 | F29 measures the shipped `/acp` page | `spec/FINDINGS.md` | 2a |
@@ -276,6 +276,13 @@ the nine rows: 427 lines of findings, 463 of requirements, 928 of labs, 70
 of decision, 48 of threat model, and 408 lines of the actual mechanism —
 **2,344 lines of record around 408 lines of code**, none of it shipped as
 a library. That ratio is rule 6's argument, made by counting.
+
+The code half of that ratio has since moved: `@fsio/confine` is 203 lines,
+and what stayed in the demos is 285 — each demo's posture (which holes it
+opens, and why, in the profile a human reads) and its failure policy (one
+must never throw, one must always throw). The record half has not moved,
+which is [#132](https://github.com/dglazkov/fsio/issues/132). Until it
+does, the ratio is worse than it was, not better.
 
 ## Settled
 

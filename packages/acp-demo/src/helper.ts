@@ -15,11 +15,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { sandboxArgv } from "@fsio/confine";
 import { HostServer } from "@fsio/host";
 import { acpKind } from "./acp-kind.js";
 import { AGENTS, roster, type AgentEntry, type RosterEntry } from "./agents.js";
 import { agentProfile } from "./profile.js";
-import { sandboxArgv } from "./sandbox.js";
 
 const fail = (msg: string): never => {
   console.error(`fsio acp-demo: ${msg}`);
