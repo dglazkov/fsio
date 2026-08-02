@@ -367,7 +367,9 @@ const DEFAULT_TRANSCRIPTS: Required<TranscriptRetention> = {
 
 // Reporter dirs (#39): pages self-report under .fsio/client/<clientId>/, one
 // dir per page load. Enough history for forensics; beyond this, stale dirs
-// are swept (host owns .fsio cleanup — D6).
+// are swept (host owns .fsio cleanup — D6). The whole directory can outlive
+// the host, at the embedder's request — see `cleanServiceDir` (#109).
+const CLIENT_DIR = "client";
 const CLIENT_DIR_CAP = 8;
 
 // ---------------------------------------------------------------- helpers
@@ -1238,7 +1240,7 @@ export class HostServer {
   // staleGraceMs — a live reporter flushes at least every 5 s, so a live
   // page's dir never looks stale.
   private sweepClientDirs(): void {
-    const root = path.join(this.fsioDir, "client");
+    const root = path.join(this.fsioDir, CLIENT_DIR);
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(root, { withFileTypes: true });
@@ -1390,12 +1392,28 @@ export class HostServer {
   /** Delete the service directory, keeping what outlives the host that
    *  wrote it. `fresh: true` runs this at start; an embedder runs it at
    *  Ctrl-C — the two moments that used to `rm -rf .fsio` and take the
-   *  transcripts with it (#119). With retention off it is exactly that
-   *  `rm -rf`; with retention on, `transcripts/` is the one survivor, and
-   *  a `.fsio` left holding nothing removes itself so a folder that hosted
-   *  no conversation is still handed back pristine (D6). */
-  cleanServiceDir(): void {
-    const keep = this.transcripts ? path.basename(this.transcriptsDir) : null;
+   *  transcripts with it (#119). With retention off and `keepClient` false
+   *  it is exactly that `rm -rf`; otherwise the survivors below stay, and a
+   *  `.fsio` left holding nothing removes itself so a folder that hosted no
+   *  conversation is still handed back pristine (D6).
+   *
+   *  `keepClient` spares `client/`, which is the one directory under
+   *  `.fsio` the host does not own: pages write their own diagnostics there
+   *  and nothing in the protocol reads them (spec layout, D6's amendment
+   *  for [#109](https://github.com/dglazkov/fsio/issues/109)). Sweeping it
+   *  is the host cleaning up after a party it was not at — and in a
+   *  manually-driven cooperative run it destroys the verdicts *as the
+   *  gesture that ends the run*, which is how #102's first run lost them.
+   *
+   *  It is a parameter rather than a constant because the two call sites
+   *  want opposite answers. At shutdown the reports are the point. At
+   *  `fresh` start they are the previous run's, and carrying them forward
+   *  would make "read the newest dir under `client/`" — the whole
+   *  cooperative-verification contract — quietly unreliable. */
+  cleanServiceDir(keepClient = false): void {
+    const keep = new Set<string>();
+    if (this.transcripts) keep.add(path.basename(this.transcriptsDir));
+    if (keepClient) keep.add(CLIENT_DIR);
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(this.fsioDir, { withFileTypes: true });
@@ -1403,7 +1421,7 @@ export class HostServer {
       return;
     }
     for (const e of entries) {
-      if (keep && e.name === keep) continue;
+      if (keep.has(e.name)) continue;
       try {
         fs.rmSync(path.join(this.fsioDir, e.name), { recursive: true, force: true });
       } catch {}

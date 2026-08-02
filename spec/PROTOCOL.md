@@ -73,7 +73,11 @@ runtimes (atomicity, append semantics, event coalescing).
       report.json           # load, id = c-<ts36>-<rand> — two pages on one
                             # dir must not share files (one writer per
                             # file). Consumers pick by recency; the host
-                            # sweeps stale dirs beyond a small cap (D6)
+                            # sweeps stale dirs beyond a small cap, but may
+                            # be asked to spare the directory at its own
+                            # shutdown — the reports are not the host's to
+                            # delete (D6's #109 amendment). `fresh` at start
+                            # still takes them: they are the last run's
   transcripts/              # ended sessions, when the host is configured to
     <session-id>/           #   keep them (D26 rule 4). Written by the host
       out.00000000.log      #   as it sweeps the session dir: the segments

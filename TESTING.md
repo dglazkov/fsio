@@ -51,6 +51,16 @@ Conventions:
   the page, the page self-reports into `.fsio/client/<clientId>/report.json`
   (one dir per page load — #39; read the newest), the native side (human or
   agent) reads the verdicts.
+
+  **The verdicts survive the run.** `client/` is the one directory under
+  `.fsio` the host does not own, so the demo helpers keep it at Ctrl-C
+  along with `transcripts/` ([#109](https://github.com/dglazkov/fsio/issues/109),
+  [D6](spec/DECISIONS.md#d6--one-writer-per-file-one-cleanup-owner)). Read
+  the newest dir *after* stopping the helper and the reports are still
+  there; that used to be advice that only worked if you never stopped it,
+  which is how #102's first run lost its verdicts. What does still wipe
+  them is starting a host with `fresh: true` — the next run's first
+  gesture, deliberately, so "the newest dir" always names this run.
 - **Chrome platform behavior** — you cannot unit-test the ~300 ms observer
   cadence (F6) or the after-write scan (F7). That's what the findings
   notebook is for.
