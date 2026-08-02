@@ -296,14 +296,17 @@ fsio ACP demo · serving ${rootReal}${
   → back in the demo page, pick the folder:  ${folderName}
 
 waiting for a browser… (Ctrl-C ends the agents and sweeps .fsio; what each
-  conversation said is kept in .fsio/transcripts/, newest ${TRANSCRIPT_KEEP})
+  conversation said is kept in .fsio/transcripts/, newest ${TRANSCRIPT_KEEP},
+  and a page that self-reported leaves its report in .fsio/client/)
 `);
 
 // ---- teardown: close sessions (which kills agents), then sweep the
-// plumbing (D6: the host owns .fsio cleanup) and keep the conversations
-// (#119, D26 rule 4). Ctrl-C ends the agents either way — they are our
-// children and no amount of retention makes a live one survive it. What it
-// no longer ends is the record of what they said.
+// plumbing (D6: the host owns .fsio cleanup) and keep the two things that
+// are not the host's to throw away — the conversations (#119, D26 rule 4)
+// and the pages' own reports (#109). Ctrl-C ends the agents either way —
+// they are our children and no amount of retention makes a live one
+// survive it. What it no longer ends is the record of what they said, or
+// the verdicts of the run that was watching them.
 
 let closing = false;
 const shutdown = async (signal: string) => {
@@ -312,9 +315,19 @@ const shutdown = async (signal: string) => {
   clearInterval(rosterTimer);
   console.log(`\n${signal} — closing sessions…`);
   await server.close();
-  server.cleanServiceDir();
+  // `keepClient`: this demo's verification is manual by construction (its
+  // page needs a real picker and a real agent, so no rig drives it), which
+  // makes Ctrl-C both the end of the run and — until #109 — the deletion of
+  // its evidence. The page's report is the page's.
+  server.cleanServiceDir(true);
   const kept = fs.existsSync(server.transcriptsDir) ? fs.readdirSync(server.transcriptsDir).length : 0;
-  console.log(kept ? `done; .fsio swept, ${kept} conversation${kept === 1 ? "" : "s"} kept in .fsio/transcripts/.` : "done; .fsio removed.");
+  const clientDir = path.join(fsioDir, "client");
+  const reports = fs.existsSync(clientDir) ? fs.readdirSync(clientDir).length : 0;
+  const left = [
+    kept ? `${kept} conversation${kept === 1 ? "" : "s"} in .fsio/transcripts/` : "",
+    reports ? `${reports} page report${reports === 1 ? "" : "s"} in .fsio/client/` : "",
+  ].filter(Boolean);
+  console.log(left.length ? `done; .fsio swept, ${left.join(" and ")} kept.` : "done; .fsio removed.");
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown("SIGINT"));

@@ -582,6 +582,42 @@ test("cleanServiceDir() sweeps the plumbing and keeps transcripts/; with retenti
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("cleanServiceDir(true) spares the page's own report; fresh: true still wipes it", async () => {
+  // #109: the gesture that ends a manually-driven cooperative run must not
+  // be the gesture that destroys its verdicts. `client/` is the one
+  // directory under .fsio the host does not own (D6's amendment).
+  const root = tmpRoot();
+  const report = path.join(root, ".fsio", "client", "c-verdicts", "report.json");
+  const write = (): void => {
+    fs.mkdirSync(path.dirname(report), { recursive: true });
+    fs.writeFileSync(report, JSON.stringify({ checks: [{ name: "the run proved something", ok: true }] }));
+  };
+
+  const server = new HostServer({ root, transcripts: true });
+  await server.start();
+  const dir = makeSession(root, "s-watched", { kind: "echo" });
+  await waitFor(() => status(dir)?.state === "running", "echo session running");
+  write();
+  await server.close();
+  server.cleanServiceDir(true);
+  assert.ok(fs.existsSync(report), "the page's report is the page's — Ctrl-C must not take it");
+  // Both survivors together: what was said, and what the run watching it
+  // concluded. Everything else under .fsio has a lifetime no longer than
+  // the host's.
+  assert.deepEqual(fs.readdirSync(path.join(root, ".fsio")).sort(), ["client", "transcripts"]);
+
+  // The default is unchanged, and is what the start-of-run wipe uses: a
+  // `fresh` host carrying the *previous* run's reports forward would make
+  // "read the newest dir under client/" quietly unreliable.
+  const second = new HostServer({ root, fresh: true, transcripts: true });
+  await second.start();
+  assert.ok(!fs.existsSync(report), "fresh: true must wipe the last run's reports");
+  await second.close();
+  second.cleanServiceDir();
+  assert.ok(!fs.existsSync(path.join(root, ".fsio", "client")), "the default still sweeps client/");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("fresh: true wipes the plumbing and spares the transcripts", async () => {
   // The other half of the contradiction #119 names: `fresh` is right that a
   // session pointing at a dead pid is not attachable, and was wrong that

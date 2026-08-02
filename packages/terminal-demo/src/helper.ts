@@ -153,11 +153,17 @@ fsio terminal demo · serving ${rootReal}
 
   → back in the demo page, pick the folder:  ${folderName}
 
-waiting for a browser… (Ctrl-C stops the helper and cleans up .fsio)
+waiting for a browser… (Ctrl-C stops the helper and cleans up .fsio; a page
+  that self-reported leaves its report in .fsio/client/)
 `);
 
 // ---- teardown: close sessions, then leave the folder pristine (D6: the
-// host owns .fsio cleanup; #16 ledger: exit = working folder back to normal).
+// host owns .fsio cleanup; #16 ledger: exit = working folder back to
+// normal) — with one exception the host does not own. A page's self-report
+// under .fsio/client/ is the page's, and this demo's page is verified by
+// the manual loop, where Ctrl-C is both the end of the run and the reading
+// of its verdicts (#109). Sweeping them here would make the folder pristine
+// by destroying the only record of what the run proved.
 
 let closing = false;
 const shutdown = async (signal: string) => {
@@ -165,8 +171,10 @@ const shutdown = async (signal: string) => {
   closing = true;
   console.log(`\n${signal} — closing sessions…`);
   await server.close();
-  fs.rmSync(fsioDir, { recursive: true, force: true });
-  console.log("done; .fsio removed.");
+  server.cleanServiceDir(true);
+  const clientDir = path.join(fsioDir, "client");
+  const reports = fs.existsSync(clientDir) ? fs.readdirSync(clientDir).length : 0;
+  console.log(reports ? `done; .fsio swept, ${reports} page report${reports === 1 ? "" : "s"} kept in .fsio/client/.` : "done; .fsio removed.");
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown("SIGINT"));

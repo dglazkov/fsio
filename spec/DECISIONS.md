@@ -156,9 +156,45 @@ renames, status.json) and failed with `InvalidModificationError`
 host has POSIX semantics (atomic rename, unlink-while-open), so it gets
 cleanup.
 
+**Amended — cleanup owns what the host wrote
+([#109](https://github.com/dglazkov/fsio/issues/109)).** "The host owns
+cleanup" was written about *session* state and the transport, where the
+argument is F8's: the host has POSIX semantics and the browser cannot
+delete without racing it. It was then applied to the whole of `.fsio`,
+which swept up the one directory the host never writes — `client/`, where
+pages leave their own diagnostics and nothing in the protocol reads them
+(spec layout: "client-owned diagnostics (not protocol)"). Sweeping it is
+the host cleaning up after a party it was not at, and it had a cost:
+`.fsio/client/<clientId>/report.json` is where the cooperative-verification
+contract puts a page's verdicts, so the Ctrl-C that ends a manually-driven
+run also deleted the evidence it produced. #102's first run lost its
+verdicts exactly that way, and the `/acp` demo — whose page needs a real
+picker and a real agent, so no rig can drive it — made the manual loop the
+normal case rather than the exception.
+
+So an embedder may ask for `client/` to survive its own shutdown
+(`cleanServiceDir(keepClient)`), and both demo helpers do. Two boundaries
+hold it in place. The *host's* own wipes are unchanged: `fresh: true` at
+start still takes `client/`, because those reports belong to the previous
+run and carrying them forward would make "read the newest dir" — the
+contract's one instruction — quietly unreliable. And the per-load sweep
+(#39: newest 8, stale only) is unchanged, because that one bounds a
+directory that grows once per page load and it is the host doing the
+counting, not the deleting-of-someone-else's-conclusions. Ownership of a
+*file* is still exactly one writer (unamended); what narrows here is
+ownership of the *sweep*.
+
 **Alternatives rejected.** Client-owned cleanup (races host writes, F8).
 Shared files with locking (no usable cross-runtime file locks in the File
-System Access API).
+System Access API). Copying the reports out to a host-owned slot at
+shutdown (`~/.fsio/state/…`, R17/[#71](https://github.com/dglazkov/fsio/issues/71))
+— keeps the folder pristine and is where this should end up, but the slot
+does not exist yet and the folder is where the reader is already looking.
+A `--keep-reports` flag off by default (every cooperative run has to
+remember it, and the run where someone forgets is the run worth keeping).
+Leaving it and having the driver snapshot the dir mid-run (what #102's run
+did with a throwaway copy loop — it works, and it encodes the workaround
+somewhere nobody will find twice).
 
 **Findings.** F8.
 
