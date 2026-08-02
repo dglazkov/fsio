@@ -59,8 +59,8 @@ green `main` and force-pushes it (`npm run -w @fsio/<demo> bundle`), so the
 one-liner installs the same code the repo just tested. Both pages deploy to
 Cloud Run on `v*` tags, each as its own service:
 
-- [/terminal](https://fsio-terminal-demo-141172503982.us-central1.run.app)
-- [/acp](https://fsio-acp-demo-141172503982.us-central1.run.app)
+- [/terminal](https://terminal-demo.pewter.town)
+- [/acp](https://agent-demo.pewter.town)
 
 The `/acp` helper ships **no agent** ([#100](https://github.com/dglazkov/fsio/issues/100)):
 vendoring an ACP adapter costs ~118 MB of transitive dependencies, and an

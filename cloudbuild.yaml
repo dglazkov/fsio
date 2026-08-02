@@ -19,6 +19,23 @@
 # different helper, different preconditions, and a shared host would mean
 # serving one of them from a subpath (a vite `base`, i.e. a build-time
 # commitment to a URL) for no gain.
+#
+# The public URLs are terminal-demo.pewter.town and agent-demo.pewter.town
+# (README links these), not the *.run.app ones. They are served by a global
+# external Application Load Balancer in this project — one anycast IP
+# `fsio-demo-ip`, one managed cert `fsio-demo-cert` covering both names, and
+# url-map `fsio-demo-lb` splitting on Host; port 80 is a separate proxy over
+# url-map `fsio-demo-redirect` that 301s to HTTPS. DNS for pewter.town is at
+# Namecheap (two A records at the reserved IP), so it is NOT in this repo and
+# NOT in Cloud DNS.
+#
+# Nothing below touches the load balancer, and that is the point: the two
+# serverless NEGs (`fsio-{terminal,acp}-demo-neg`) resolve the Cloud Run
+# SERVICE, not a revision, so a tag deploy moves traffic with no LB change.
+# Two ways to break that, neither of which fails this build: renaming a
+# service (the NEG still points at the old name and the host 404s), or moving
+# _REGION (the NEGs are pinned to us-central1 and would have to be recreated
+# there — the backend services are --global, the NEGs are not).
 steps:
   - name: gcr.io/cloud-builders/docker
     id: build-terminal-demo
