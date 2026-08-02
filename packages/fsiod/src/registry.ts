@@ -134,8 +134,14 @@ export class Registry {
 
   /** Register a directory. `hubDir` is checked, not stored: a workspace
    *  that *contains* the hub would put the transport inside the child's
-   *  write reach, and the threat model's "$HOME carve-outs are delayed
-   *  sandbox escapes" applies with more force to $HOME itself. */
+   *  write reach.
+   *
+   *  $HOME is refused for the same reason with more force. A child that may
+   *  write a dotfile has execution outside its confinement later — a shell
+   *  replays `~/.zsh_history` and sources `~/.zcompdump` — so sharing $HOME
+   *  as a workspace is a delayed escape rather than a wide grant. Stated
+   *  here rather than cited: it is a fact about confining children, which
+   *  is `@fsio/confine`'s subject and this daemon's to apply. */
   add(opts: AddOptions, hubDir: string): WorkspaceEntry {
     const resolved = path.resolve(opts.dir);
     let real: string;

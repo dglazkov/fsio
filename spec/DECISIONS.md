@@ -1285,61 +1285,35 @@ two-visit flow): whether the return-visit re-prompt reliably offers the
 three-way prompt, and the post-revocation downgrade path. Feeds #69,
 #71, the slice-4 wizard.
 
-## D29 — profiles compose before the spawn; confinement is inherited and cannot be re-entered
+## D29 — the confinement rules, moved out with confinement
 
-**Decision.** A child's confinement is applied **once, by the process that
-spawns it**, from a single composed policy. Three rules follow, and are
-normative for fsiod's profile mechanism:
+Three rules about how a profile mechanism should apply a sandbox: compose
+before the spawn rather than layering, confinement is inherited by
+descendants, and a host that cannot enforce a profile must not advertise
+one.
 
-1. **Compose, never layer.** Where reach comes from more than one source —
-   the named service's profile intersected with the grant's scope
-   ([D27](#d27--reach-attaches-to-the-grant-not-the-workspace)) — the
-   intersection is computed *before* spawn and emitted as one policy. A
-   design that applies a second sandbox to an already-sandboxed process is
-   not merely wasteful; it does not work
-   ([F23](FINDINGS.md#f23--moved-the-wall-is-transitive-cannot-be-re-entered-and-setuid-dies)).
-2. **Confinement is transitive, and that is the stated answer to act 5.**
-   Descendants at any depth, including detached ones that outlive their
-   parent, inherit the policy. A spawned agent that spawns its own
-   subagents confines them by construction; no mechanism is owed here.
-3. **A confined host MUST NOT claim to confine.** Because a sandboxed
-   process cannot narrow itself, an fsio host running *inside* a sandbox
-   can only pass its own reach down. Such a host MUST report its children
-   as inheriting its reach rather than advertising a profile it cannot
-   enforce — the `deadPty` precedent
-   ([D14](#d14--host-embedder-surface-introspection-leveled-log-lines-awaited-close-injected-pty),
-   `sandbox.ts`): a confinement that cannot be applied must look broken,
-   never silently pass.
+None of it was protocol. Nothing on the wire states whether a child is
+confined; `sandboxed` is a kind's own `SpawnResult` extra under
+[D13](#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry),
+and this entry's own platform note said the rules were measured on
+macOS/Seatbelt and would have to be re-measured on any other backend — which
+is the tell. A rule that has to be re-measured per substrate is not a
+contract between two implementations of this protocol.
 
-**Context.** [#86](https://github.com/dglazkov/fsio/issues/86)'s open
-question 6 asked for transitivity or a written limit, and the profile
-design was about to assume layering: a workspace policy plus a service
-policy plus a per-grant narrowing sounded like three `sandbox-exec`
-invocations. The lab (`scripts/confinement-lab.mjs`, F23) found the
-opposite of what either branch assumed — inheritance is total (8 escape
-attempts, 0 escapes, including launchd as a spawn proxy), and
-`sandbox_apply` fails inside a sandbox in **both** directions, so
-voluntary self-narrowing is unavailable too. That kills layering as an
-implementation strategy and simultaneously removes act 5's worry. The
-same run priced what the wall does *not* hold
-([F24](FINDINGS.md#f24--moved-it-is-a-write-wall--the-environment-and-every-read-cross-it)):
-full environment inheritance and read-the-world, which is why the
-mechanism's remaining content — env placement and scrubbing, the read
-wall — is where #86's design session still has work, and is deliberately
-not decided here.
+Where each part went. Rule 2 was never a decision at all: it restates what
+the confinement lab measured, and it lives with that measurement in
+`packages/confine`, asserted on every push. Rule 1 is a build instruction
+for a profile mechanism that composes reach from more than one source —
+nothing does that yet, and the reasoning is in `packages/confine` beside the
+measurement it follows from. Rule 3 is real, and it is the confining
+library's to state: a caller that cannot apply a policy must fail rather
+than run unconfined, which is exactly what `@fsio/confine` refuses to
+paper over.
 
-**Alternatives rejected.** Layered sandboxes (per-workspace + per-service
-+ per-grant, applied in sequence — measured impossible, not merely
-inelegant). A helper that drops privileges progressively (same wall, one
-indirection later). Treating nested-host confinement as a future feature
-(it cannot be built on this substrate; stating the limit is the honest
-move, per the threat model's "written down rather than discovered").
-
-**Findings.** F23 (measured), F24 (context). Depends on D27 (the profile
-attaches to the named service), D14 (fail-visible spawn). Constrains #71's
-profile-content slice, #76, #77, and act 5 (#44). Platform note: measured
-on macOS/Seatbelt; a future Linux backend must be re-measured against
-these three rules before they are assumed to hold there.
+`spec/PROTOCOL.md`'s threat-model chapter carried 48 lines of the same
+material and no longer does. This number is spent and is never reused
+([PROCESS.md](https://github.com/dglazkov/fsio/blob/main/PROCESS.md) rules
+1 and 6, [#132](https://github.com/dglazkov/fsio/issues/132)).
 
 ## D30 — the `acp` kind's design, moved to the demo that made it
 

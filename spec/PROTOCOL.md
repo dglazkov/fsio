@@ -509,7 +509,7 @@ leaks the user's home directory and project layout.
 - A registry entry is a **naming record** — name, path, label — and carries
   no reach
   ([D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)).
-  The profile — spawn allow-list, sandbox template, env policy
+  The profile — spawn allow-list, confinement, env policy
   ([#46](https://github.com/dglazkov/fsio/issues/46)) — attaches to the
   named service, and authorization binds (principal × service × workspace)
   in the grant. The reach of a spawned child is the intersection of the
@@ -758,8 +758,8 @@ pixels, proof-of-possession and session-bound so a copied `spawn.json` is
 inert
 ([D23](DECISIONS.md#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities));
 every spawn *and attach* is judged by the D12 policy; and what an allowed
-command can reach is bounded by the child sandbox and the profile of the
-service the grant names
+command can reach is bounded by the profile of the service the grant
+names
 ([D27](DECISIONS.md#d27--reach-attaches-to-the-grant-not-the-workspace)).
 Revocation is two-sided and independent: the browser grant (per-origin, in
 browser settings —
@@ -771,9 +771,8 @@ judgment).
 **The protocol does not defend against it, and does not claim to**: it
 holds everything the folder grants and more — daemon-private state, the
 host process itself, every workspace, the browser profile storing the
-handles. The sandbox story (Seatbelt profiles, D22) is about *spawned
-children* — bounding the blast radius of a command the user approved — not
-about hostile peers. Defense against already-running local malware is the
+handles. Confining a *spawned child* (D22) bounds the blast radius of a
+command the user approved; it says nothing about hostile peers. Defense against already-running local malware is the
 operating system's job, and a design that claimed it here would be
 theater.
 
@@ -814,56 +813,8 @@ prompts and allow-all — are the designed middle ground.
 - **Profile directories are not browser permissions.** The browser's reach
   is exactly the picked handle, full stop; nothing the host or a profile
   does widens or narrows it. Profile directories govern the *spawned
-  child's* sandbox reach (D22). A consent UI that blurs this teaches users
-  that grants scope the browser, and they do not.
-
-### $HOME carve-outs are delayed sandbox escapes
-
-A child sandbox that walls off `$HOME` generates pressure to carve
-exceptions for shell conveniences — history, completion caches, session
-restore. The carve-outs are the escape: `~/.zsh_history` is *replayed* by
-real shells, and `~/.zcompdump` is *sourced* by future ones — a write
-inside the sandbox becomes execution outside it, later. The measured
-posture (the terminal demo's profile,
-[#32](https://github.com/dglazkov/fsio/issues/32)): fix the friction in
-the child's environment (`SHELL_SESSIONS_DISABLE=1`, `HISTFILE` redirected
-into the workspace), never by widening the write wall. Profiles SHOULD
-treat any `$HOME` path that a future unsandboxed process reads or executes
-as non-carvable.
-
-### What the child sandbox does not bound
-
-The child sandbox is a **write** wall, and its measured shape is narrower
-than the sentence "sandboxed to this folder" implies
-([F24](FINDINGS.md#f24--moved-it-is-a-write-wall--the-environment-and-every-read-cross-it),
-`scripts/confinement-lab.mjs`). Under the shipped posture a confined child
-still holds: the host's **entire environment** (47 of 48 variables,
-including every exported credential and `SSH_AUTH_SOCK` — agent forwarding
-is a signing capability, not a setting); **read access to every file the
-user can read** — private keys, `~/.gitconfig`, every sibling project — and
-**network egress**, which the demo allows deliberately. Read reach is
-therefore exfiltration reach.
-
-Two consequences are normative for consent surfaces:
-
-- A consent surface MUST NOT describe child confinement in terms broader
-  than modification. "Writes are limited to this folder; this program can
-  still read your files and reach the network" is the honest sentence; "the
-  shell is sandboxed" is not.
-- What the sandbox *does* hold is worth stating too, because it is stronger
-  than usually assumed
-  ([F23](FINDINGS.md#f23--moved-the-wall-is-transitive-cannot-be-re-entered-and-setuid-dies),
-  [D29](DECISIONS.md#d29--profiles-compose-before-the-spawn-confinement-is-inherited-and-cannot-be-re-entered)):
-  the write wall is inherited by every descendant at any depth, survives
-  detachment, cannot be widened from inside, and is not escapable by asking
-  launchd to spawn on the child's behalf. Setuid binaries (`sudo`, `ps`,
-  `crontab`) simply do not execute — a closed escalation route whose cost
-  is ordinary usability, not security.
-
-Narrowing the read wall or the environment is
-[#71](https://github.com/dglazkov/fsio/issues/71)'s profile-content slice,
-designed in [#86](https://github.com/dglazkov/fsio/issues/86); what a read
-wall *costs* a real toolchain is unmeasured.
+  child's* reach (D22). A consent UI that blurs this teaches users that
+  grants scope the browser, and they do not.
 
 ### Accepted and out of scope
 

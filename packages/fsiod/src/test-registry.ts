@@ -168,7 +168,7 @@ test("refusals: a missing dir, the filesystem root, and any folder containing th
   });
 });
 
-test("refusing $HOME is a rule, not a warning (spec: $HOME carve-outs are delayed sandbox escapes)", async () => {
+test("refusing $HOME is a rule, not a warning — a writable dotfile is execution outside the wall, later", async () => {
   await withFixture((f) => {
     const before = process.env["HOME"];
     const fakeHome = f.dir("home");

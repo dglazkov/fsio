@@ -69,6 +69,17 @@ of them observed in the session that produced this file.
 - **Inferring scope from location.** An entry cited by `PROTOCOL.md` is
   not thereby protocol — it may be cited for a *fact* it contains. D29
   was mis-scoped exactly this way, twice.
+- **Finding every piece a home instead of asking whether it should
+  exist.** The last move before D29 was finally dropped was a careful
+  three-way split of it: one rule re-grounded on a better reason, one
+  moved to the library, one kept as protocol. Every step was defensible
+  and the whole thing was the ball rolling — the split had *found* that
+  the surviving rule's premise held only on macOS, which is the signal
+  that the rule does not belong in a substrate-independent document, and
+  read it instead as a repair job. **"This does not fit here" is more
+  often a delete signal than a rewrite signal.** The tell is a plan whose
+  every branch ends in "and it goes *there*", with no branch ending in
+  "and it goes.
 
 **The recognition trigger.** If you are weighing a constraint you cannot
 trace to a file, or reconciling two rules that seem to disagree, you are
@@ -255,10 +266,8 @@ list of what the rules would touch.
 |---|---|---|
 | ~~the confinement mechanism, written twice~~ **extracted** | `packages/confine`; the demos keep their posture and their failure policy | 6 — done ([#134](https://github.com/dglazkov/fsio/issues/134)) |
 | four confinement labs, 928 lines | `scripts/{confinement,read-wall,service-reach,agent-reach}-lab.mjs` | 2a — they were labs for demos |
-| D29, three rules at three altitudes, 70 lines | `spec/DECISIONS.md` | 1, 6 |
-| 48 lines of Seatbelt mechanism in the threat model chapter | `spec/PROTOCOL.md` | 1 |
 
-Five of the nine rows have since come off this list, and the three issues
+Seven of the nine rows have since come off this list, and the three issues
 that took them off are each worth a sentence, because in none of the three
 was the work the shape this table predicted.
 
@@ -286,6 +295,14 @@ one now says what the requirement says, and points at
 [#86](https://github.com/dglazkov/fsio/issues/86) where they actually live.
 Nothing was renamed into a file to make the citations resolve — that was
 tried once and reverted, and it is the second failure mode listed above.
+
+The confinement cluster finished the way the row above did not predict:
+`spec/PROTOCOL.md`'s threat model lost 48 lines of Seatbelt mechanism and
+D29 was dropped whole rather than split. The chapter is about what holding
+the folder *is* and against whom; how a particular OS confines a child
+process is the confining library's subject, and D29's own platform note —
+measured on macOS, re-measure on any other backend — was the argument
+against keeping it, once anybody read it that way.
 
 The rest is tracked from
 [#133](https://github.com/dglazkov/fsio/issues/133).
