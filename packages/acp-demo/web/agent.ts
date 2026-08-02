@@ -19,7 +19,7 @@
 //
 // Both are the agent's choice to use, and that is the honest caveat: an
 // agent that reads files with its own hands is bounded by the Seatbelt
-// profile, which is a *write* wall (F24) — it reads the world. Measured in
+// profile, which is a *write* wall — it reads the world. Measured in
 // the first field test: pi-acp answered "read /etc/passwd" without ever
 // calling `fs/read_text_file`, and edited a file without asking. What these
 // handlers bound is what the page does **on the agent's behalf**; what the

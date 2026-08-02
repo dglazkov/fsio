@@ -73,7 +73,7 @@ test("posture: the TMP param dir is writable (a child needs scratch)", { skip: !
   assert.equal(r.code, 0, r.out);
 });
 
-test("posture: /dev/null is writable, and reads outside the folder still succeed — it is a WRITE wall (F24)", { skip: !darwin }, async () => {
+test("posture: /dev/null is writable, and reads outside the folder still succeed — it is a WRITE wall", { skip: !darwin }, async () => {
   // Not an oversight being pinned. The unbounded read is why the honest
   // sentence says "reads: everything you can read" rather than "sandboxed".
   const r = await sandboxedSh(`echo x > /dev/null && head -1 /etc/hosts > "${root}/r-ok"`);
@@ -122,12 +122,12 @@ test("posture: a pattern carve matches its filename shape and nothing adjacent",
   for (const f of [hit, past, near]) fs.rmSync(f, { force: true });
 });
 
-// ---------------------------------------------- the three properties (F23)
+// ------------------------------- the three properties (MEASUREMENTS.md)
 //
 // Measured by scripts/confinement-lab.mjs and pinned here so a profile or
 // argv change that quietly loses one fails CI rather than a design review.
 
-test("posture: confinement is inherited by descendants and survives detachment (F23)", { skip: !darwin }, async () => {
+test("posture: confinement is inherited by descendants and survives detachment", { skip: !darwin }, async () => {
   // A marker inside ROOT proves the descendant actually ran — without it, a
   // child that never executed would pass this test by doing nothing.
   const marker = path.join(root, "grandchild-ran");
@@ -144,7 +144,7 @@ test("posture: confinement is inherited by descendants and survives detachment (
   assert.ok(!fs.existsSync(dCanary), "a detached child must not write outside ROOT");
 });
 
-test("posture: a confined child cannot re-enter sandbox-exec — in either direction (F23)", { skip: !darwin }, async () => {
+test("posture: a confined child cannot re-enter sandbox-exec — in either direction", { skip: !darwin }, async () => {
   // Widening is the security claim; narrowing failing too is the *design*
   // claim — it is why profiles must compose into one policy before the
   // spawn, and why a confined fsio host could not confine its own children.
@@ -158,7 +158,7 @@ test("posture: a confined child cannot re-enter sandbox-exec — in either direc
   assert.notEqual(narrow.code, 0, "even self-narrowing must fail — layering is unavailable");
 });
 
-test("posture: setuid binaries do not execute (F23 — Seatbelt's own rule, not this profile's)", { skip: !darwin }, async () => {
+test("posture: setuid binaries do not execute (Seatbelt's own rule, not this profile's)", { skip: !darwin }, async () => {
   const r = await sandboxedSh(`/usr/bin/sudo -n true 2>&1 | head -1`);
   assert.match(r.out, /Operation not permitted/, `setuid exec should be denied: ${r.out}`);
   // Control: a non-setuid binary in the same directory runs, so the denial

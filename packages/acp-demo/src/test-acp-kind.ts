@@ -201,9 +201,9 @@ test("acp/info reports the policy path, argv, and the exact env the child got", 
       assert.deepEqual(result["argv"], [process.execPath, fixture]);
       assert.ok((result["pid"] as number) > 0);
       const keys = result["env"] as string[];
-      // F26's measured floor plus the placement variable — and nothing else.
-      // The sharp item is the point (F24 measured that full inheritance
-      // hands a child the ssh-agent socket): synthesized env is the only
+      // The measured floor plus the placement variable — and nothing else.
+      // The sharp item is the point (full inheritance hands a child the
+      // ssh-agent socket): synthesized env is the only
       // lever that can withhold it, and a sandbox is not that lever.
       assert.ok(!keys.includes("SSH_AUTH_SOCK"), `SSH_AUTH_SOCK leaked into the agent's env: ${keys.join(",")}`);
       assert.ok(!keys.includes("AWS_SECRET_ACCESS_KEY"));

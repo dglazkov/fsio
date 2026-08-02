@@ -4,7 +4,8 @@
 //
 // #77 claims an stdio MCP server is a better grant unit than a command
 // shape because "an MCP server is narrower than a shell": its binary, its
-// working state, its credentials, and nothing else. F23/F24 measured the
+// working state, its credentials, and nothing else. The confinement lab
+// measured the
 // shell posture (`scripts/confinement-lab.mjs`); this lab measures whether
 // a real MCP server survives a *deny-default* profile, and prices the
 // difference in reach.

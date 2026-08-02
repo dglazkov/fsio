@@ -121,7 +121,8 @@ ${carves ? "\n" + carves + "\n" : ""}
  *
  *  It says what the wall does NOT bound, because that is the half a summary
  *  drops on its way to sounding reassuring. "The child is sandboxed" is the
- *  dishonest version: this is a *write* wall (F24). Reads are unbounded and
+ *  dishonest version: this is a *write* wall (MEASUREMENTS.md). Reads are
+ *  unbounded and
  *  the network is open, and a human deciding whether to hand over their
  *  folder needs both facts in the same sentence as the good news.
  *

@@ -1296,7 +1296,7 @@ normative for fsiod's profile mechanism:
    intersection is computed *before* spawn and emitted as one policy. A
    design that applies a second sandbox to an already-sandboxed process is
    not merely wasteful; it does not work
-   ([F23](FINDINGS.md#f23--child-confinement-is-transitive-to-any-depth-and-cannot-be-re-entered-in-either-direction-setuid-binaries-become-unexecutable)).
+   ([F23](FINDINGS.md#f23--moved-the-wall-is-transitive-cannot-be-re-entered-and-setuid-dies)).
 2. **Confinement is transitive, and that is the stated answer to act 5.**
    Descendants at any depth, including detached ones that outlive their
    parent, inherit the policy. A spawned agent that spawns its own
@@ -1321,7 +1321,7 @@ attempts, 0 escapes, including launchd as a spawn proxy), and
 voluntary self-narrowing is unavailable too. That kills layering as an
 implementation strategy and simultaneously removes act 5's worry. The
 same run priced what the wall does *not* hold
-([F24](FINDINGS.md#f24--the-wall-is-a-write-wall-a-confined-child-inherits-the-hosts-entire-environment-ssh-agent-socket-included-and-reads-every-file-the-user-can-read)):
+([F24](FINDINGS.md#f24--moved-it-is-a-write-wall--the-environment-and-every-read-cross-it)):
 full environment inheritance and read-the-world, which is why the
 mechanism's remaining content — env placement and scrubbing, the read
 wall — is where #86's design session still has work, and is deliberately

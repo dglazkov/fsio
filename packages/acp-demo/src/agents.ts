@@ -7,15 +7,16 @@
 // the human granted, and nothing else.
 //
 // Each entry also declares its **state posture**, which is not decoration.
-// F26 measured that a child's state and its *identity* are different things
-// and may live in different places, so the posture is per-agent fact, not a
-// policy this helper can guess:
+// MEASUREMENTS.md found that a child's state and its *identity* are
+// different things and may live in different places, so the posture is a
+// per-agent fact, not a policy this helper can guess:
 //
 //   - "place"  — the agent honors an env var pointing at its state dir, so
 //     the profile needs no carve at all (R4/R17: placement, not carve-out).
 //   - "carve"  — the agent's state dir is also where its credential lives,
-//     so placing it into an empty slot would log the child out (F26's
-//     lesson, second instance). The profile opens exactly those dirs.
+//     so placing it into an empty slot would log the child out
+//     (MEASUREMENTS.md, second instance). The profile opens exactly those
+//     dirs.
 //
 // Measured for pi-acp, 2026-08-01, under this demo's profile: with no carve,
 // `initialize` succeeds and **`session/new` fails** with a JSON-RPC -32603
@@ -127,17 +128,17 @@ export const AGENTS: AgentEntry[] = [
     state: {
       mode: "carve",
       homeDirs: [".pi"],
-      why: "pi keeps its credential (auth.json) beside its session history in ~/.pi; placing the state would place the identity too, and the agent would come up logged out (F26).",
+      why: "pi keeps its credential (auth.json) beside its session history in ~/.pi; placing the state would place the identity too, and the agent would come up logged out (MEASUREMENTS.md).",
     },
   },
   {
     // The Claude Code ACP adapter. Not exercised by this repo's tests —
-    // listed because it is the other posture, and F26 measured its state
-    // placement directly: CLAUDE_CONFIG_DIR moves the whole tree with zero
-    // denials, while the credential stays in the login Keychain (reachable
-    // here only because the profile is `allow default`).
+    // listed because it is the other posture, and MEASUREMENTS.md measured
+    // its state placement directly: CLAUDE_CONFIG_DIR moves the whole tree
+    // with zero denials, while the credential stays in the login Keychain
+    // (reachable here only because the profile is `allow default`).
     //
-    // Renamed since F26 was written (checked 2026-08-01): the package
+    // Renamed since that was measured (checked 2026-08-01): the package
     // `@zed-industries/claude-code-acp` (0.16.2, bin `claude-code-acp`) is
     // deprecated in favour of `@agentclientprotocol/claude-agent-acp`
     // (0.64.0, bin `claude-agent-acp`). The name here is the new one; an
@@ -167,15 +168,17 @@ export const AGENTS: AgentEntry[] = [
     // with an empty one, so the child holds a key and does not know which
     // lock it fits: `session/prompt` fails "Authentication required".
     //
-    // That is F26's headline reaching its conclusion. Two agents out of two
-    // now keep identity and state inseparable (F28 for pi, this for claude),
+    // That is MEASUREMENTS.md's headline reaching its conclusion. Two agents
+    // out of two now keep identity and state inseparable (pi in subject 2,
+    // claude here),
     // so R17's placed slot is the nicer design for a kind of agent neither
     // of ours is. Carve, and say why.
     //
     // Note the carve does NOT cover `~/.claude.json` — that is a file beside
     // the dir, not in it. Auth works anyway because it only needs to *read*
-    // it, and reads were never bounded (F24). The write wall is exactly what
-    // makes this posture viable; a read wall (F27) would break it.
+    // it, and reads were never bounded. The write wall is exactly what makes
+    // this posture viable; the read wall priced in @fsio/confine's
+    // MEASUREMENTS.md would break it.
     state: {
       mode: "carve",
       homeDirs: [".claude"],

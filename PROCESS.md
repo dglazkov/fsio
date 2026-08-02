@@ -254,7 +254,6 @@ list of what the rules would touch.
 |---|---|---|
 | ~~the confinement mechanism, written twice~~ **extracted** | `packages/confine`; the demos keep their posture and their failure policy | 6 — done ([#134](https://github.com/dglazkov/fsio/issues/134)) |
 | R1–R19: nineteen requirements specifying that library in advance, ~106 citations resolving to nothing | issue [#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments | 3, 6 — the citations are what should go |
-| F23–F28: Seatbelt and agent-CLI ground, 427 lines | `spec/FINDINGS.md` | one shelf — moves with the library |
 | four confinement labs, 928 lines | `scripts/{confinement,read-wall,service-reach,agent-reach}-lab.mjs` | 2a — they were labs for demos |
 | D29, three rules at three altitudes, 70 lines | `spec/DECISIONS.md` | 1, 6 |
 | 48 lines of Seatbelt mechanism in the threat model chapter | `spec/PROTOCOL.md` | 1 |
@@ -327,7 +326,12 @@ does, the ratio is worse than it was, not better.
   the protocol's reference implementation, which is a different
   relationship than a confinement library has. Unresolved, and the answer
   probably differs per entry.
-- **What happens to F23–F28's numbers when they move.** Numbers are
-  stable and never reused; whether that means they keep their F-numbers
-  in a new home, or retire and leave the numbers spent, is a convention
-  call nobody has made.
+- ~~**What happens to a number when its entry moves.**~~ Settled by
+  [#130](https://github.com/dglazkov/fsio/issues/130) and
+  [#132](https://github.com/dglazkov/fsio/issues/132), in practice rather
+  than by argument: the number **retires where it was**, leaving one line
+  that says what moved, where it went, and that the number is spent. The
+  material itself goes unnumbered into whatever it is ground for. That
+  keeps two things true at once — numbers are never reused, and a citation
+  written before the move still resolves to something that explains
+  itself.

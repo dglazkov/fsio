@@ -249,7 +249,7 @@ if (wantSandbox) {
 const rosterTimer = setInterval(publishRoster, 3000);
 
 // ---- banner: the second UI surface — what to do next, and the honest
-// safety sentence (F24: it is a *write* wall; reads and network are not
+// safety sentence (it is a *write* wall; reads and network are not
 // bounded, and saying otherwise would be the dishonest version).
 
 const folderName = path.basename(rootReal);

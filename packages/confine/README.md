@@ -84,8 +84,8 @@ file surfaces as an unexplained child exit.
 
 The honest line. It names what the wall does *not* bound, because that is
 the half a summary drops on its way to sounding reassuring — this is a write
-wall (F24), and "the agent is sandboxed" is the sentence the threat model
-has a MUST against. `alsoWrites` is spelled out rather than summarised: a
+wall (MEASUREMENTS.md), and "the agent is sandboxed" is the sentence the
+threat model has a MUST against. `alsoWrites` is spelled out rather than summarised: a
 hole outside the granted folder is exactly what a reader needs to see.
 
 ## Tests
@@ -96,3 +96,8 @@ hole outside the granted folder is exactly what a reader needs to see.
   D29 rests on: confinement is inherited by descendants and survives
   detachment, a confined child cannot re-enter `sandbox-exec` in either
   direction, and setuid binaries do not execute.
+
+## What is measured
+
+`MEASUREMENTS.md` — the wall's shape, priced. What crosses it, what a
+deny-default posture costs, and what closing the read wall costs.

@@ -40,7 +40,7 @@ import { spawnAgent, type AgentProcess } from "./sandbox.js";
 /** How many stderr lines to keep for `acp/diagnostics`. An agent's stderr
  *  is the only channel that carries "your profile denied me" (R19), so the
  *  page must be able to show it — a demo whose failures are invisible is
- *  the failure mode F26 named. */
+ *  the failure mode MEASUREMENTS.md names. */
 const STDERR_KEEP = 200;
 const STDERR_LINE_MAX = 2000;
 /** SIGTERM → this long → SIGKILL, on session close. */
