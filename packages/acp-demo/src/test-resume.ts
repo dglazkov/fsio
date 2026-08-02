@@ -4,7 +4,20 @@
 // answer, and whose JSON-RPC ids are whose.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ID_SPACE, firstIdForEpoch, parseRecord, permissionVerdict, promptsBefore, type StickyPrompt, type StickyRecord } from "./resume.js";
+import {
+  ID_SPACE,
+  KEEP_PAST,
+  anchorsAlign,
+  demote,
+  firstIdForEpoch,
+  parsePast,
+  parseRecord,
+  permissionVerdict,
+  promptsBefore,
+  prunablePast,
+  type StickyPrompt,
+  type StickyRecord,
+} from "./resume.js";
 
 // ---------------------------------------------------------------- the weave
 //
@@ -111,6 +124,7 @@ const FULL: StickyRecord = {
   agentName: "Fixture",
   agentVersion: "0.1.0",
   cwd: "/Users/x/project",
+  folder: "project",
   gen: 0,
   prompts: [{ text: "hi", atFrame: 0 }],
   queued: ["and then this"],
@@ -146,4 +160,123 @@ test("resume: junk inside a record is dropped, and the rest survives", () => {
   assert.deepEqual(r?.queued, ["kept"]);
   assert.deepEqual(r?.answers, { "3": "allow", "5": null });
   assert.equal(r?.pendingPromptId, null);
+});
+
+// ------------------------------------------------- what outlives the session
+//
+// #123. The session ends, the record stops being state — and the human's
+// half of the conversation becomes the only copy there has ever been of it,
+// at exactly the moment someone might want to read it back.
+
+test("past: demotion keeps the half the folder never had, and nothing that named the session", () => {
+  const p = demote(FULL);
+  assert.deepEqual(p, {
+    sessionId: "s-abc-123",
+    folder: "project",
+    agentName: "Fixture",
+    gen: 0,
+    prompts: [{ text: "hi", atFrame: 0 }],
+    answers: { "3": "allow" },
+  });
+  // Nothing attachable survives: no fsio session id to attach to beyond the
+  // transcript's own name, no ACP session id, no cwd to judge a path
+  // against, no turn in flight. A document cannot be mistaken for a session.
+  for (const k of ["acpSessionId", "cwd", "pendingPromptId", "queued"]) {
+    assert.equal(k in p, false, `${k} would name something that is gone`);
+  }
+  // A copy, not a view: editing the live record afterwards must not rewrite
+  // history (the page holds the record in memory and writes through it).
+  FULL.prompts.push({ text: "later", atFrame: 9 });
+  assert.equal(p.prompts.length, 1);
+  FULL.prompts.pop();
+});
+
+test("past: a demoted record round-trips, and one with nothing in it is not a record", () => {
+  const p = demote(FULL);
+  assert.deepEqual(parsePast(JSON.parse(JSON.stringify(p))), p);
+  // Neither turns nor answers: it annotates nothing, and claiming a human
+  // half exists would make the reader's banner lie about what they are
+  // looking at.
+  assert.equal(parsePast({ sessionId: "s-1", folder: "demo", prompts: [], answers: {} }), null);
+  assert.equal(parsePast({ prompts: [{ text: "orphan", atFrame: 0 }] }), null, "no session id, nothing to join to");
+  assert.equal(parsePast(null), null);
+  // Answers alone are worth keeping: a conversation can be one long turn
+  // with a permission card in the middle of it.
+  assert.deepEqual(parsePast({ sessionId: "s-1", answers: { "3": null } })?.answers, { "3": null });
+});
+
+test("past: anchors are only trustworthy against the generation they were counted in", () => {
+  // Both counting from the same segment: the turns land where they were typed.
+  assert.equal(anchorsAlign({ gen: 0 }, 0), true);
+  // The folder kept a tail that starts later than the page was counting
+  // from. The turns are all still shown — losing them is the one outcome
+  // worse than misplacing them — but the view says so (#57, D32's ceiling).
+  assert.equal(anchorsAlign({ gen: 0 }, 3), false);
+  assert.equal(anchorsAlign({ gen: 3 }, 0), false);
+});
+
+// ------------------------------------------------------------ the bound
+//
+// The folder is the authority: a browser-side half cannot outlive the
+// transcript it annotates. What makes that decidable is that the folder
+// archives in end-order, so a *newer* transcript is proof the older one had
+// its chance.
+
+const inFolder = (...ids: string[]): { id: string; folder: string }[] => ids.map((id) => ({ id, folder: "demo" }));
+
+test("past: a record the folder has moved past is dropped", () => {
+  // s-2 is absent from a folder that kept s-3, which ended later: s-2 either
+  // never got archived or has rotated out of the folder's N.
+  assert.deepEqual(prunablePast(inFolder("s-3", "s-2", "s-1"), ["s-3"], "demo"), ["s-2", "s-1"]);
+  assert.deepEqual(prunablePast(inFolder("s-2"), ["s-2"], "demo"), [], "the transcript is right there");
+});
+
+test("past: a record the folder has not caught up with yet survives", () => {
+  // The archive happens when the host sweeps the session, which lags the
+  // end of it. Between those two moments the newest record is absent from
+  // the folder and must NOT be read as stale — that window is exactly when
+  // someone reloads the page.
+  assert.deepEqual(prunablePast(inFolder("s-9"), ["s-3", "s-1"], "demo"), [], "nothing newer was kept, so nothing has been outlived");
+  assert.deepEqual(prunablePast(inFolder("s-9", "s-2"), ["s-3"], "demo"), ["s-2"], "the lagging one waits; the outlived one goes");
+});
+
+test("past: a folder that keeps no transcripts prunes nothing", () => {
+  // Transcripts are off by default (D26 rule 4). With nothing kept there is
+  // no verdict to read, so the count bound is the only one that applies —
+  // and the day the folder does keep one, everything older than it goes.
+  assert.deepEqual(prunablePast(inFolder("s-2", "s-1"), [], "demo"), []);
+  assert.ok(KEEP_PAST > 0);
+});
+
+test("past: one folder does not get to answer for another", () => {
+  // Two folders, one origin. Opening `other` lists only its own
+  // transcripts, and reading that absence as a verdict on `demo`'s records
+  // would delete the human's turns for every conversation that happened
+  // somewhere else.
+  const index = [
+    { id: "s-2", folder: "demo" },
+    { id: "s-1", folder: "other" },
+  ];
+  assert.deepEqual(prunablePast(index, ["s-3"], "other"), ["s-1"]);
+  assert.deepEqual(prunablePast(index, ["s-3"], "demo"), ["s-2"]);
+  // A record from before folders were tagged belongs to nobody, so nobody
+  // may prune it; the count bound is what eventually retires it.
+  assert.deepEqual(prunablePast([{ id: "s-0", folder: "" }], ["s-3"], "demo"), []);
+});
+
+test("past: junk inside a demoted record is dropped, and the rest survives", () => {
+  // Same defensive read as the live record's, and it matters more here: this
+  // one has been sitting in IndexedDB since the session ended rather than
+  // since the last refresh.
+  const p = parsePast({
+    sessionId: "s-abc-123",
+    agentName: 7,
+    gen: "later",
+    prompts: [{ text: "kept", atFrame: 1 }, { text: "no anchor" }, "not an object", null],
+    answers: { "3": "allow", "4": 7, "5": null },
+  });
+  assert.deepEqual(p?.prompts, [{ text: "kept", atFrame: 1 }]);
+  assert.deepEqual(p?.answers, { "3": "allow", "5": null });
+  assert.equal(p?.agentName, "agent");
+  assert.equal(p?.gen, 0);
 });

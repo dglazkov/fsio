@@ -12,7 +12,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agentFacts, entries, notice, pastEntries, queued, turn, viewing, type Entry, type PermissionEntry, type ToolEntry } from "../state";
+import { agentFacts, entries, notice, pastEntries, queued, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
 import { cancelTurn, sendPrompt, unqueue } from "../connection";
 import { closePast } from "../history";
 import { renderMarkdown } from "../markdown";
@@ -133,21 +133,29 @@ class AcpChat extends SignalWatcher(LitElement) {
     // A document, not a session (#119). No composer at all rather than a
     // disabled one: there is nothing on the other end of it, and a text box
     // that looks like it might send is the wrong kind of hopeful.
-    if (v)
+    if (v) {
+      const half = viewingHalf.get();
+      const kept = v.logs.length === 1 ? "the log" : `${v.logs.length} log segments`;
       return html`
         <div class="log" id="log">
           <div class="reading">
             reading a conversation that ended${v.ended ? ` on ${new Date(v.ended).toLocaleString()}` : ""}${v.agent ? ` · ${v.agent}` : ""}
             <span class="hint">
-              This is the agent's half, replayed from ${v.logs.length === 1 ? "the log" : `${v.logs.length} log segments`} the helper kept in
-              this folder. Your own prompts rode the uplink, which is not what the folder keeps — so they are not here, and neither are the
-              answers you gave to any question below.
+              ${half
+                ? html`The agent's half is replayed from ${kept} the helper kept in this folder. Your
+                  ${half.prompts === 1 ? "one turn" : `${half.prompts} turns`} — and the answers you gave below — rode the uplink, which the
+                  folder never sees; they are woven back in from this browser's own record${half.placed ? "" : ", though not in their original places"}.
+                  Open this folder in another browser and only the agent's half is there.`
+                : html`This is the agent's half, replayed from ${kept} the helper kept in this folder. Your own prompts rode the uplink,
+                  which is not what the folder keeps — and this browser has no record of this conversation, so they are not here, and
+                  neither are the answers you gave to any question below.`}
             </span>
             <button class="close" @click=${() => closePast()}>close and go back</button>
           </div>
           ${pastEntries.get().map((e) => this.#entry(e))}
         </div>
       `;
+    }
     return html`
       <div class="log" id="log">
         ${n ? html`<div class="banner">${n.msg}<span class="hint">${n.hint}</span></div>` : nothing}
@@ -247,19 +255,24 @@ class AcpChat extends SignalWatcher(LitElement) {
   #permission(e: PermissionEntry): TemplateResult {
     const answered = e.answer.get();
     const facts = agentFacts.get();
-    // Out of a transcript (#119): the question was in the folder, the
-    // answer never was. Show what was asked and what could have been
-    // answered, and say the rest is not knowable from here — the buttons
-    // would be a lie twice over, since there is nobody to answer to.
+    // Out of a transcript (#119, #123): the question was in the folder, the
+    // answer never was. Whether the verdict can be shown depends on who is
+    // reading — this browser kept what it clicked, another one cannot know
+    // and is told so. Either way there are no buttons: they would be a lie
+    // twice over, since there is nobody left to answer to.
     if (e.historic)
       return html`<div class="entry perm historic">
         <div class="who">the agent asked${e.toolKind && e.toolKind !== "other" ? ` · ${e.toolKind}` : ""}</div>
         <div class="title">${e.title}</div>
         ${e.locations.length ? html`<div class="where">${e.locations.join(", ")}</div>` : nothing}
         ${e.detail ? html`<pre>${e.detail}</pre>` : nothing}
-        <div class="opts">
-          offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— what was answered isn't in the folder's copy (it rode the uplink).
-        </div>
+        ${answered === null
+          ? html`<div class="opts">
+              offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— what was answered isn't in the folder's copy (it rode the
+              uplink), and this browser has no record of it either.
+            </div>`
+          : html`<div class="answered">answered: ${e.options.find((o) => o.optionId === answered)?.name ?? answered}</div>
+              <div class="opts">from this browser's record — the folder's copy has only the question.</div>`}
       </div>`;
     return html`<div class="entry perm">
       <div class="who">the agent is asking${e.toolKind && e.toolKind !== "other" ? ` · ${e.toolKind}` : ""}</div>
