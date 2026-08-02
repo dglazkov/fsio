@@ -994,8 +994,9 @@ B1 battery (unknown names are a no, not a throw). Feeds #8, #7, #71.
 
 ## D26 — scrollback hygiene: retention = the replay window, terminal sessions are swept, `.fsio/` is git-ignored
 
-**Decision.** Three rules bounding what a session leaves behind
-([#82](https://github.com/dglazkov/fsio/issues/82); normative text in the
+**Decision.** Four rules bounding what a session leaves behind
+([#82](https://github.com/dglazkov/fsio/issues/82),
+[#119](https://github.com/dglazkov/fsio/issues/119); normative text in the
 spec's Scrollback hygiene section). (1) **Retention is the replay
 window**: fully-acked non-current segments are deleted (the
 [D9](#d9--segmented-log-with-cumulative-ack-flow-control) mechanism,
@@ -1015,7 +1016,14 @@ exempt (their scrollback is the reattach promise). (3) **`.fsio/` is
 auto-git-ignored**: a host whose shared directory lies inside a git
 repository appends `.fsio/` to that directory's own `.gitignore` at
 start, once, and warns loudly when it cannot (`gitignore: false` /
-`--no-gitignore` opts out).
+`--no-gitignore` opts out). (4) **An ended session's transcript is a
+retention class of its own**: a host configured for it (`transcripts`,
+off by default) *moves* the out log of a session it is sweeping to
+`.fsio/transcripts/<id>/`, with `spawn.json` and a `meta.json`, where it
+survives the sweep and `fresh: true` — bounded by the newest N (10) and a
+total byte cap (32 MB), enforced at archive time and at start, newest
+never swept. Rules 1–3 are unchanged and continue to govern the live
+session; nothing in `transcripts/` is a session or is attachable.
 
 **Context.** Split from [#6](https://github.com/dglazkov/fsio/issues/6)
 as its one implementation-shaped bullet; D20 parked retention here
@@ -1050,9 +1058,70 @@ shared repo).
 (host owns cleanup), F16 (why unstarted dirs are exempt),
 [F21](FINDINGS.md#f21--two-origins-hold-independent-grants-on-one-directory-the-broker-splits-throughput-fairly-the-durable-grant-is-minted-at-the-re-prompt-not-the-picker)/D20
 (co-tenant readability raising the stakes). Enforced by the lifecycle
-tier (`test-lifecycle.ts`: sweep scenarios, gitignore scenarios). Feeds
-#6 (close condition), #57 (the retention ceiling replay may grow into),
-#71 (the daemon inherits all three rules).
+tier (`test-lifecycle.ts`: sweep scenarios, gitignore scenarios,
+transcript scenarios). Feeds #6 (close condition), #57 (the retention
+ceiling replay may grow into), #71 (the daemon inherits all four rules).
+
+**Amended — rule 4 ([#119](https://github.com/dglazkov/fsio/issues/119)).**
+Rules 1–3 were written for scrollback, where every byte on disk is owed
+to a live reader and anything else is exhaust. That is exactly wrong for
+a session whose out log is a *conversation*: nobody will ever ack it, and
+its value starts after the session is over. The contradiction was on the
+record and load-bearing —
+[D32](#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)
+rule 2 says the agent's half of the transcript "rode the folder, so the
+folder is where it is read back from" and deliberately keeps no
+browser-side copy, while the demo helper deleted the folder at `Ctrl-C`
+and `fresh: true` deleted it at start. Both were true in the repo and
+only one could stay. It cost a real conversation: a 572 KB agent session,
+recovered by hand from that file after
+[#115](https://github.com/dglazkov/fsio/issues/115), was gone minutes
+later because the helper had been stopped.
+
+**Why a separate directory rather than a flag on the session.** Marking
+the session dir "ended" and sweeping only its plumbing would put the new
+state in front of adoption, the idle sweep, the stale GC, `fresh`, and
+every reattach picker reading `listSessions()` — five places that would
+each have to learn that a directory can be a corpse, and one of them
+forgetting is a resurrected dead session. Moving the bytes out means no
+session-directory lifetime changes at all: `transcripts/` is a different
+noun, and the only code that knows it exists is the wipe.
+
+**The cost, stated rather than discovered.** The transcript lives in the
+project's `.fsio/` (owner's call; the alternative is below), so every
+origin ever granted that folder can read every kept conversation — the
+same folder, the same grant, the same human, but a change in *kind* from
+the transport exhaust already there, since a conversation with a coding
+agent contains whatever the human typed
+([D24](#d24--the-service-directory-is-the-origin-facing-capability-document)'s
+line, [D20](#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)'s
+posture). That is the argument for the bound being tight rather than
+"keep everything". The reciprocal obligation is on the reader: a stored
+transcript is a file any co-tenant can write, with none of the
+provenance live replay has, so it is parsed defensively and rendered as
+text — never re-issued as requests (D32 rule 3, which holds here a
+fortiori). [P1](PRINCIPLES.md) and P2 are what this serves — the
+conversation about a project stays with the project, and it is read back
+from the medium it rode. [P3](PRINCIPLES.md) is what it strains, and the
+strain is real but narrow: no new rung and no new gesture (the page
+already holds the handle), which is precisely why the retention bound and
+the defensive read are load-bearing rather than hygiene.
+
+**Alternatives rejected (rule 4).** The host-owned slot
+`~/.fsio/state/<workspace>/<service>/` that R17 and
+[#71](https://github.com/dglazkov/fsio/issues/71) point at (keeps the
+workspace clean and matches where the Claude CLI puts history; costs new
+machinery, a second grantable place, and a new rung for a page to read
+its own past — the project's folder needs none of that). Keeping the
+session directory and marking it ended (above). Age-based retention
+(nothing sweeps while no host runs, so an age rule is enforced at start
+like any other — count and size say what they mean without pretending to
+a clock we do not have). Retention on by default (the generic host serves
+workbench echoes and shells, where rules 1–2 are right and a durable copy
+is a liability; an embedder whose sessions carry a conversation asks for
+it, and by asking accepts what the paragraph above says). Persisting the
+transcript browser-side instead (D32 already rejected it: a second source
+of truth that drifts).
 
 ## D27 — reach attaches to the grant, not the workspace
 
@@ -1487,6 +1556,22 @@ Resuming into a *new* agent process — that is what ACP's `session/load` is
 for, it is gated on an agent advertising `loadSession`, and it is per-agent
 ([#103](https://github.com/dglazkov/fsio/issues/103) is where that gets
 measured rather than guessed).
+
+**Amended ([#119](https://github.com/dglazkov/fsio/issues/119)).** The
+paragraph above gave a policy as if it were a constraint. `fresh: true`
+wiping the transcript was a choice, and a wrong one: it deleted the very
+file rule 2 names as where the agent's half is read back from.
+[D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored)
+rule 4 keeps ended sessions' out logs under `.fsio/transcripts/`, past both
+the `Ctrl-C` sweep and `fresh`. What is *still* out of scope is unchanged
+and is the part that was never policy: the agents are the helper's
+children, so no amount of retention makes a live session survive its exit.
+A helper restart can offer the conversation back to *read* — the same
+frames through the same `session/update` handlers, no live agent, no
+protocol change — and resuming it into a new agent process remains gated
+on `session/load` and #103. The expectation people bring from
+`claude --resume` is transcript-shaped; what this decision built is
+process-shaped; rule 4 closes the gap from the cheap end.
 
 **Alternatives rejected.** Persisting the whole transcript in IndexedDB
 (the folder already has the agent's half, and a browser-cached copy would be

@@ -19,6 +19,8 @@ import {
   now,
   CHUNK_RE,
   DIR_CHUNK_RE,
+  OUT_LOG_RE,
+  segName,
   b64urlDecode,
   RpcErrors,
   rpcResult,
@@ -43,6 +45,7 @@ import {
   type ServicesDoc,
   type ServiceKind,
   type ServiceWorkspace,
+  type TranscriptMeta,
 } from "@fsio/common";
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -257,6 +260,19 @@ export interface HostTimings {
   killGraceMs?: number;
 }
 
+/** How much of the past to keep (D26 rule 4). Both bounds are enforced
+ *  when a transcript is archived and again at start, so lowering them takes
+ *  effect on the next run rather than at the next rotation. The newest
+ *  transcript is never swept: deleting the conversation the human just
+ *  ended is the one outcome worse than keeping too much. */
+export interface TranscriptRetention {
+  /** how many ended sessions to keep, newest first. Default 10. */
+  keep?: number;
+  /** total bytes across kept transcripts. Default 32 MB — four full head
+   *  segments (`segMax`), which is a lot of chat and not a lot of disk. */
+  maxBytes?: number;
+}
+
 /** Flow control knobs (spec: segmented out log + ack window). */
 export interface HostLimits {
   /** rotate out segment at this size. */
@@ -291,8 +307,14 @@ export interface HostServerOptions {
    *  replaced at runtime with `setServices()`. */
   services?: ServicesInput;
   /** wipe .fsio on startup. Default false. Refused while another host is
-   *  live on the directory (#40) — takeover applies here too. */
+   *  live on the directory (#40) — takeover applies here too. Transcript
+   *  retention, when on, survives it (D26 rule 4). */
   fresh?: boolean;
+  /** keep ended sessions' out logs under `.fsio/transcripts/<id>/` instead
+   *  of deleting them with the session dir (D26 rule 4, #119). Default off
+   *  — an embedder whose sessions carry a *conversation* opts in, and by
+   *  opting in accepts that the record outlives the host that wrote it. */
+  transcripts?: boolean | TranscriptRetention;
   /** skip the live-host refusal (#40): seize a directory whose host.json
    *  still looks live — for a killed host whose last heartbeat hasn't gone
    *  stale yet. Default false. */
@@ -336,6 +358,11 @@ const DEFAULT_LIMITS: Required<HostLimits> = {
   segMax: 8 * 1024 * 1024,
   ackWindow: 4 * 1024 * 1024,
   ackResume: 2 * 1024 * 1024,
+};
+
+const DEFAULT_TRANSCRIPTS: Required<TranscriptRetention> = {
+  keep: 10,
+  maxBytes: 32 * 1024 * 1024,
 };
 
 // Reporter dirs (#39): pages self-report under .fsio/client/<clientId>/, one
@@ -532,7 +559,7 @@ class Session {
   }
 
   segPath(gen: number): string {
-    return path.join(this.dir, `out.${String(gen).padStart(8, "0")}.log`);
+    return path.join(this.dir, segName(gen));
   }
 
   // Append with open/write/close per call, then bump a rename-committed
@@ -694,6 +721,8 @@ export class HostServer {
   readonly sharedDir: string;
   readonly fsioDir: string;
   readonly sessionsDir: string;
+  /** where ended sessions' out logs are kept when retention is on (#119). */
+  readonly transcriptsDir: string;
   readonly allowShell: boolean;
   private readonly onSpawnRequest: SpawnPolicy | null;
   private readonly workspaces: WorkspaceResolver;
@@ -708,6 +737,8 @@ export class HostServer {
   ptyAvailable = false;
 
   private fresh: boolean;
+  /** null = off, and off means an ended session leaves nothing behind. */
+  private readonly transcripts: Required<TranscriptRetention> | null;
   private readonly takeover: boolean;
   private readonly gitignore: boolean;
   private readonly ptyOpt: PtyModule | false | undefined;
@@ -743,6 +774,7 @@ export class HostServer {
     this.sharedDir = path.resolve(opts.root);
     this.fsioDir = path.join(this.sharedDir, ".fsio");
     this.sessionsDir = path.join(this.fsioDir, "sessions");
+    this.transcriptsDir = path.join(this.fsioDir, "transcripts");
     this.allowShell = opts.allowShell ?? false;
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
     // One-folder mode is a registry of one (D22), not an absence of one:
@@ -764,6 +796,7 @@ export class HostServer {
           ? { root: this.sharedDir, ...(name ? { name } : {}) }
           : { error: `unknown workspace: ${echoSafe(name)}` });
     this.fresh = opts.fresh ?? false;
+    this.transcripts = opts.transcripts ? { ...DEFAULT_TRANSCRIPTS, ...(opts.transcripts === true ? {} : opts.transcripts) } : null;
     this.takeover = opts.takeover ?? false;
     this.gitignore = opts.gitignore ?? true;
     this.watchEnabled = opts.watch ?? true;
@@ -935,8 +968,13 @@ export class HostServer {
     else if (this.ptyOpt === false) this.log.info("pty disabled by the embedder: shell sessions would fall back to pipes");
     else this.log.warn("no pty (node-pty not installed): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
 
-    if (this.fresh) fs.rmSync(this.fsioDir, { recursive: true, force: true });
+    // `fresh` is right about the plumbing — a stale .fsio whose sessions
+    // all point at dead pids is its own bad experience — and was wrong
+    // about the record (#119). It now wipes everything with a lifetime no
+    // longer than the host's, and no more than that.
+    if (this.fresh) this.cleanServiceDir();
     fs.mkdirSync(this.sessionsDir, { recursive: true });
+    this.sweepTranscripts();
     this.ensureGitignore();
 
     const manifest: FsioManifest = { protocol: PROTOCOL_VERSION };
@@ -1001,6 +1039,11 @@ export class HostServer {
       const proc = s.proc;
       const usesPty = s.usesPty;
       s.close(); // delivers SIGTERM (and nulls s.proc)
+      // The child is dying; whatever it said is now history rather than a
+      // stream, so the record moves out of the session dir before the
+      // embedder sweeps the directory behind us (#119). Nothing further
+      // will be appended: the only writer was the process we just killed.
+      this.archiveTranscript(s, "host closed");
       if (proc) reaps.push(this.reapChild(s.id, proc, usesPty));
     }
     for (const t of this.timers) clearInterval(t);
@@ -1225,6 +1268,149 @@ export class HostServer {
         this.log.info(`client dir ${d.name}: over cap (${CLIENT_DIR_CAP}) and stale, removed`);
       } catch {}
     }
+  }
+
+  // ---- ended-session transcripts (D26 rule 4, #119)
+  //
+  // Two lifetimes were living in one directory. The plumbing — `in/`,
+  // doorbells, status.json, the profile a session ran under — means
+  // nothing once the host that wrote it is gone, and sweeping it is right.
+  // The out log of a session that carried a *conversation* is the only
+  // copy of that conversation, and the same sweep was taking it: a 572 KB
+  // agent session, recovered by hand from that file, was unrecoverable
+  // minutes later because the helper had been stopped.
+  //
+  // The record gets its own directory rather than a flag on the session's.
+  // A flag would have to be understood by adoption, the idle sweep, the
+  // stale GC, `fresh`, and every reattach picker reading `listSessions()`
+  // — five places that would each have to learn that a directory can be
+  // a corpse. Moving the bytes out means nothing in `sessions/` changes
+  // lifetime at all, and the only code that knows about retention is the
+  // wipe (`cleanServiceDir`).
+  //
+  // What is kept is what retention already had (D26 rule 1): the segments
+  // still on disk. For a conversation shorter than one rotation that is
+  // all of it; past that it is the tail, and `meta.json` carries `gen` and
+  // `total` so a reader can say so (#57) instead of rendering a suffix as
+  // if it were the whole thing.
+  private archiveTranscript(s: Session, why: string): void {
+    if (!this.transcripts) return;
+    let logs: string[];
+    try {
+      logs = fs.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
+    } catch {
+      return; // dir already gone
+    }
+    if (!logs.length) return; // nothing was ever said; keep no monument to it
+    const dir = path.join(this.transcriptsDir, s.id);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      let bytes = 0;
+      for (const name of logs) {
+        const to = path.join(dir, name);
+        fs.renameSync(path.join(s.dir, name), to);
+        bytes += fs.statSync(to).size;
+      }
+      // spawn.json rides along verbatim: it is what the client asked for,
+      // and it is where a reader finds which kind — and, for a kind that
+      // has one, which agent — produced these bytes. Copied rather than
+      // summarized, because summarizing it here would be a second schema
+      // to keep true.
+      try {
+        fs.copyFileSync(path.join(s.dir, "spawn.json"), path.join(dir, "spawn.json"));
+      } catch {}
+      const st = readJson<SessionStatus>(path.join(s.dir, "status.json"));
+      const first = OUT_LOG_RE.exec(logs[0]!);
+      const meta: TranscriptMeta = {
+        id: s.id,
+        kind: s.spawn ? (s.spawn.kind ?? "echo") : null,
+        ...(s.spawn?.client ? { client: s.spawn.client } : {}),
+        ...(s.spawn?.origin ? { origin: s.spawn.origin } : {}),
+        ended: now(),
+        why,
+        exitCode: st?.exitCode ?? null,
+        gen: first ? Number(first[1]) : 0,
+        total: s.outTotal,
+        bytes,
+      };
+      writeJsonAtomic(path.join(dir, "meta.json"), meta);
+      this.log.info(`session ${s.id}: transcript kept (${why}, ${bytes} B)`);
+    } catch (e) {
+      this.log.warn(`session ${s.id}: transcript not kept: ${errMsg(e)}`);
+      return;
+    }
+    this.sweepTranscripts();
+  }
+
+  /** Enforce the retention bounds, newest first. Runs after every archive
+   *  and once at start — a cap lowered between runs takes effect then,
+   *  which is the only moment it can: nothing sweeps while no host runs. */
+  private sweepTranscripts(): void {
+    const cfg = this.transcripts;
+    if (!cfg) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(this.transcriptsDir, { withFileTypes: true });
+    } catch {
+      return; // nothing archived yet
+    }
+    const kept: { name: string; ended: number; bytes: number }[] = [];
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const dir = path.join(this.transcriptsDir, e.name);
+      let bytes = 0;
+      let ended = 0;
+      try {
+        for (const f of fs.readdirSync(dir)) bytes += fs.statSync(path.join(dir, f)).size;
+        // The stat is the fallback, not the record: a hand-copied
+        // transcript keeps its meta and loses its mtime.
+        ended = readJson<TranscriptMeta>(path.join(dir, "meta.json"))?.ended ?? fs.statSync(dir).mtimeMs;
+      } catch {
+        continue;
+      }
+      kept.push({ name: e.name, ended, bytes });
+    }
+    kept.sort((a, b) => b.ended - a.ended);
+    let running = 0;
+    for (let i = 0; i < kept.length; i++) {
+      const t = kept[i]!;
+      running += t.bytes;
+      // i === 0 is never swept: deleting the conversation the human just
+      // ended, because it is on its own bigger than the cap, would be the
+      // failure mode the whole feature exists to prevent.
+      const over = i >= cfg.keep ? `over the ${cfg.keep}-transcript cap` : i > 0 && running > cfg.maxBytes ? `over the ${cfg.maxBytes} B cap` : null;
+      if (!over) continue;
+      try {
+        fs.rmSync(path.join(this.transcriptsDir, t.name), { recursive: true, force: true });
+        this.log.info(`transcript ${t.name}: removed (${over})`);
+      } catch {}
+    }
+  }
+
+  /** Delete the service directory, keeping what outlives the host that
+   *  wrote it. `fresh: true` runs this at start; an embedder runs it at
+   *  Ctrl-C — the two moments that used to `rm -rf .fsio` and take the
+   *  transcripts with it (#119). With retention off it is exactly that
+   *  `rm -rf`; with retention on, `transcripts/` is the one survivor, and
+   *  a `.fsio` left holding nothing removes itself so a folder that hosted
+   *  no conversation is still handed back pristine (D6). */
+  cleanServiceDir(): void {
+    const keep = this.transcripts ? path.basename(this.transcriptsDir) : null;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(this.fsioDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (keep && e.name === keep) continue;
+      try {
+        fs.rmSync(path.join(this.fsioDir, e.name), { recursive: true, force: true });
+      } catch {}
+    }
+    try {
+      fs.rmdirSync(this.fsioDir); // succeeds only when empty
+    } catch {}
   }
 
   scheduleScan(): void {
@@ -1847,6 +2033,7 @@ export class HostServer {
 
   private removeSessionDir(s: Session, why: string): void {
     try {
+      this.archiveTranscript(s, why); // the record leaves before the plumbing dies (#119)
       fs.rmSync(s.dir, { recursive: true, force: true });
       // The in-memory entry goes with the dir — before listSessions() (D14)
       // this map only ever grew for the life of the host.

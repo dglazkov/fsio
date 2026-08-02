@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HostServer, type HostServerOptions } from "@fsio/host";
-import { now, encodeFrame, FrameType, rpcRequest, rpcNotification, SPAWN_REQUEST_ID, type SpawnSpec, type SessionStatus } from "@fsio/common";
+import { now, encodeFrame, FrameType, rpcRequest, rpcNotification, SPAWN_REQUEST_ID, type SpawnSpec, type SessionStatus, type TranscriptMeta } from "@fsio/common";
 
 const tmpRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "fsio-life-"));
 
@@ -495,5 +495,132 @@ test("close() terminates session child processes", async () => {
       return true;
     }
   }, "child process termination");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ------------------------- ended-session transcripts (#119, D26 rule 4)
+
+const transcriptDir = (root: string, id: string): string => path.join(root, ".fsio", "transcripts", id);
+const transcriptMeta = (root: string, id: string): TranscriptMeta | null => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(transcriptDir(root, id), "meta.json"), "utf8")) as TranscriptMeta;
+  } catch {
+    return null;
+  }
+};
+
+test("a session closed by its client leaves its out log in transcripts/ and its plumbing nowhere", async () => {
+  // D26 rule 4: the sweep is right about `in/`, doorbells and status.json,
+  // and was wrong about the out log — for a session carrying a
+  // conversation, that file IS the conversation (#119).
+  await withServer({ transcripts: true, timings: { closeDelayMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "s-kept", { kind: "echo", client: "c-test", origin: "https://example.test" });
+    await waitFor(() => status(dir)?.state === "running", "echo session running");
+    sendNotification(dir, "close");
+    await waitFor(() => !fs.existsSync(dir), "closed session dir removed");
+    const kept = transcriptDir(root, "s-kept");
+    assert.ok(fs.existsSync(path.join(kept, "out.00000000.log")), "the out log must survive the session dir");
+    assert.ok(fs.statSync(path.join(kept, "out.00000000.log")).size > 0, "an empty transcript is not a transcript");
+    // spawn.json rides along: it is where a reader learns what produced
+    // these bytes (for `acp`, which agent).
+    assert.ok(fs.existsSync(path.join(kept, "spawn.json")), "spawn.json must be copied beside the log");
+    const meta = transcriptMeta(root, "s-kept");
+    assert.equal(meta?.kind, "echo");
+    assert.equal(meta?.why, "closed");
+    assert.equal(meta?.client, "c-test");
+    assert.equal(meta?.origin, "https://example.test");
+    assert.equal(meta?.gen, 0, "gen 0 = the log never rotated, so this is the whole conversation (#57)");
+    assert.ok((meta?.bytes ?? 0) > 0);
+  });
+});
+
+test("retention is opt-in: without it a closed session leaves nothing behind", async () => {
+  // The generic host serves workbench echoes and shells; only an embedder
+  // whose sessions carry a conversation asks for the record to outlive it.
+  await withServer({ timings: { closeDelayMs: 25 } }, async (_server, root) => {
+    const dir = makeSession(root, "s-gone", { kind: "echo" });
+    await waitFor(() => status(dir)?.state === "running", "echo session running");
+    sendNotification(dir, "close");
+    await waitFor(() => !fs.existsSync(dir), "closed session dir removed");
+    assert.ok(!fs.existsSync(path.join(root, ".fsio", "transcripts")), "retention off must archive nothing");
+  });
+});
+
+test("close() keeps the transcript of a session it kills (the Ctrl-C case, #119)", async () => {
+  // The demonstrated loss: a 572 KB agent session, recovered by hand from
+  // this file, unrecoverable minutes later because the helper was stopped.
+  const root = tmpRoot();
+  const server = new HostServer({ root, transcripts: true });
+  await server.start();
+  const dir = makeSession(root, "s-ctrlc", { kind: "echo" });
+  await waitFor(() => status(dir)?.state === "running", "echo session running");
+  await server.close();
+  assert.ok(fs.existsSync(path.join(transcriptDir(root, "s-ctrlc"), "out.00000000.log")), "close() must not take the conversation with it");
+  assert.equal(transcriptMeta(root, "s-ctrlc")?.why, "host closed");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("cleanServiceDir() sweeps the plumbing and keeps transcripts/; with retention off it removes .fsio outright", async () => {
+  // What the demo helper runs at Ctrl-C, in place of `rm -rf .fsio` (#119).
+  const root = tmpRoot();
+  const server = new HostServer({ root, transcripts: true });
+  await server.start();
+  const dir = makeSession(root, "s-swept", { kind: "echo" });
+  await waitFor(() => status(dir)?.state === "running", "echo session running");
+  await server.close();
+  server.cleanServiceDir();
+  const fsioDir = path.join(root, ".fsio");
+  assert.deepEqual(fs.readdirSync(fsioDir), ["transcripts"], "only the durable record may survive the sweep");
+  assert.ok(fs.existsSync(path.join(transcriptDir(root, "s-swept"), "out.00000000.log")));
+
+  // Same folder, retention off: the pre-#119 behavior, unchanged.
+  const plain = new HostServer({ root });
+  await plain.start();
+  await plain.close();
+  plain.cleanServiceDir();
+  assert.ok(!fs.existsSync(fsioDir), "retention off must hand the folder back pristine");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("fresh: true wipes the plumbing and spares the transcripts", async () => {
+  // The other half of the contradiction #119 names: `fresh` is right that a
+  // session pointing at a dead pid is not attachable, and was wrong that
+  // the transcript is part of what makes it stale.
+  const root = tmpRoot();
+  const first = new HostServer({ root, transcripts: true });
+  await first.start();
+  const dir = makeSession(root, "s-before", { kind: "echo" });
+  await waitFor(() => status(dir)?.state === "running", "echo session running");
+  await first.close();
+  assert.ok(fs.existsSync(dir), "close() leaves the session dir for the sweep that follows");
+
+  const second = new HostServer({ root, fresh: true, transcripts: true });
+  await second.start();
+  assert.ok(!fs.existsSync(dir), "fresh: true must still sweep dead sessions");
+  assert.ok(fs.existsSync(path.join(transcriptDir(root, "s-before"), "out.00000000.log")), "fresh: true must not delete the conversation");
+  await second.close();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("retention bounds: the oldest transcripts drop at the count cap; the newest is never swept for size", async () => {
+  const root = tmpRoot();
+  const server = new HostServer({ root, transcripts: { keep: 2 }, timings: { closeDelayMs: 10 } });
+  await server.start();
+  for (const id of ["s-one", "s-two", "s-three"]) {
+    const dir = makeSession(root, id, { kind: "echo" });
+    await waitFor(() => status(dir)?.state === "running", `${id} running`);
+    sendNotification(dir, "close");
+    await waitFor(() => !fs.existsSync(dir), `${id} removed`);
+    await waitFor(() => fs.existsSync(transcriptDir(root, id)), `${id} archived`);
+  }
+  assert.deepEqual(fs.readdirSync(path.join(root, ".fsio", "transcripts")).sort(), ["s-three", "s-two"], "the count cap keeps the newest N");
+  await server.close();
+
+  // A byte cap below one transcript must not delete the conversation the
+  // human just ended — that is the failure this feature exists to prevent.
+  const tight = new HostServer({ root, fresh: true, transcripts: { keep: 10, maxBytes: 1 } });
+  await tight.start();
+  assert.deepEqual(fs.readdirSync(path.join(root, ".fsio", "transcripts")), ["s-three"], "the newest transcript survives any byte cap");
+  await tight.close();
   fs.rmSync(root, { recursive: true, force: true });
 });

@@ -74,6 +74,13 @@ runtimes (atomicity, append semantics, event coalescing).
                             # dir must not share files (one writer per
                             # file). Consumers pick by recency; the host
                             # sweeps stale dirs beyond a small cap (D6)
+  transcripts/              # ended sessions, when the host is configured to
+    <session-id>/           #   keep them (D26 rule 4). Written by the host
+      out.00000000.log      #   as it sweeps the session dir: the segments
+      spawn.json            #   still retained, the spawn request verbatim,
+      meta.json             #   and {id, kind, ended, why, gen, total, bytes}.
+                            #   Survives `fresh` and the sweep; nothing here
+                            #   is a session — it is never attachable
   sessions/
     <session-id>/           # created by client; id = s-<ts36>-<rand>
       spawn.json            # JSON-RPC spawn request; written LAST by
@@ -910,7 +917,7 @@ facility should ship ahead of it.
 ([#82](https://github.com/dglazkov/fsio/issues/82)). The out log is full
 scrollback — everything typed or echoed, secrets included — and under the
 hub it is co-tenant-readable ([D20](DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)).
-Three rules bound its life:
+Four rules bound its life:
 
 1. **Retention is the replay window.** The host MUST delete fully-acked
    non-current segments (the
@@ -941,6 +948,36 @@ Three rules bound its life:
    The sharp case is the one-folder mode, where `.fsio/` sits inside the
    user's project; a hub folder is daemon-owned and outside any repo by
    construction ([D19](DECISIONS.md#d19--the-hub-pivot-one-transport-folder-as-a-socket-workspaces-as-resources)).
+4. **An ended session's transcript is retained on purpose, or not at
+   all.** Rules 1 and 2 assume every byte on disk is owed to a live
+   reader. For a session whose out log is a *conversation*, that is
+   false twice over: nobody is ever going to ack it, and its value
+   starts when the session ends
+   ([#119](https://github.com/dglazkov/fsio/issues/119)). A host MAY be
+   configured to keep it. When it is, sweeping a session directory MUST
+   **move** the retained segments to `transcripts/<session-id>/` — never
+   copy, never leave a live second copy — alongside `spawn.json` and a
+   `meta.json` naming the session, its kind, when and why it ended, and
+   `gen`/`total` against the bytes kept, so a reader can tell a whole
+   conversation from the tail of one. What is kept is what rule 1
+   already retained; retention MUST NOT widen to keep more. Kept
+   transcripts survive `fresh` and every session sweep, are never
+   attachable and MUST NOT appear as sessions, and MUST be bounded by a
+   stated policy — the reference host keeps the newest N under a total
+   byte cap, enforced when a transcript is archived and again at start,
+   and never sweeps the newest. A host not configured for it keeps
+   nothing: deletion is the default, and silence means deletion.
+   Two consequences a reader owns. A retained transcript is readable by
+   every origin that ever holds the folder, which is a change in kind
+   from transport exhaust and is why the bound above is stated rather
+   than assumed
+   ([D24](DECISIONS.md#d24--the-service-directory-is-the-origin-facing-capability-document)/[D20](DECISIONS.md#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)).
+   And a stored transcript carries no provenance a reader can check —
+   unlike live replay, whose frames came from a stream the host was
+   writing — so it MUST be parsed defensively and rendered as text,
+   never acted on: replaying one MUST NOT re-issue the requests it
+   contains (the rule [D32](DECISIONS.md#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)
+   already states for replayed frames, which holds here a fortiori).
 
 ## Open questions
 

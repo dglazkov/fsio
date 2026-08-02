@@ -87,6 +87,14 @@ export function chunkName(seq: number): string {
 
 export const CHUNK_RE = /^(\d{8})\.f$/;
 
+/** One out-log segment's file name (D9). Both sides build it: the host to
+ *  append, a reader to find the segments a session left behind. */
+export function segName(gen: number): string {
+  return `out.${String(gen).padStart(8, "0")}.log`;
+}
+
+export const OUT_LOG_RE = /^out\.(\d{8})\.log$/;
+
 // Dirname uplink (F10): small frame batches encoded into a created
 // directory's *name* — no file content, so no browser after-write checks.
 // Same sequence space as file chunks; consumers process both in seq order.
