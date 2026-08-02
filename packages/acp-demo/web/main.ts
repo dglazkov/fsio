@@ -10,18 +10,20 @@ import "./components/top-bar";
 import "./components/chat";
 import "./components/workspace-pane";
 import "./components/wizard";
-import { checkGates, closeOnPagehide } from "./connection";
-import { phase } from "./state";
+import { checkGates, detachOnPagehide, revisit } from "./connection";
 import { step } from "./reporter";
 
 checkGates();
 step("waiting for a folder");
-phase.set("wizard");
+// A remembered folder skips the wizard, and a remembered session skips the
+// whole setup (#113): the page comes back to the conversation it left.
+void revisit();
 
-// Closing the tab closes the session, which is what kills the agent (D6:
-// the host owns cleanup, and an orphaned agent process would keep its
-// model bill running).
-window.addEventListener("pagehide", closeOnPagehide);
+// Leaving the page DETACHES (D18) — the session, and the agent with it, keep
+// running for the next visit. It used to close, which killed the agent
+// (D6); a session now ends when the human ends it, and only then. See
+// endSession() for the other half of that bargain.
+window.addEventListener("pagehide", detachOnPagehide);
 window.addEventListener("pageshow", (e) => {
   if (e.persisted) location.reload();
 });

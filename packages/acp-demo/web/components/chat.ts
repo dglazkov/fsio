@@ -131,7 +131,7 @@ class AcpChat extends SignalWatcher(LitElement) {
         <textarea
           id="input"
           placeholder=${t === "gone"
-            ? "the agent is gone — restart the helper and reload"
+            ? "the agent is gone — “new session” up top starts another one"
             : busy
               ? "type ahead — this goes when the turn ends"
               : "ask the agent to do something in this folder…"}

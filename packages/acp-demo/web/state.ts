@@ -4,9 +4,14 @@
 import { signal } from "@lit-labs/signals";
 import type { Signal } from "@lit-labs/signals";
 
-/** boot — deciding; wizard — setup dialog; chat — the app. */
-export type Phase = "boot" | "wizard" | "chat";
+/** boot — deciding; wizard — setup dialog; reconnect — a remembered folder
+ *  whose grant needs one click back (#58's shape, F15); chat — the app. */
+export type Phase = "boot" | "wizard" | "reconnect" | "chat";
 export const phase = signal<Phase>("boot");
+/** The remembered handle waiting on that click. `requestPermission` needs a
+ *  user activation (F15), so this is a button the human presses, never
+ *  something the page can do for them. */
+export const reconnectTo = signal<FileSystemDirectoryHandle | null>(null);
 /** 1 run the helper · 2 pick the folder · 3 the agent. Step 3 only appears
  *  when there is a choice to make or an install to do (#102): with exactly
  *  one agent installed the page names it and goes. */
@@ -17,7 +22,12 @@ export const gate = signal<{ msg: string; hint: string } | null>(null);
 export const pickError = signal<{ msg: string; hint: string } | null>(null);
 export const notice = signal<{ msg: string; hint: string } | null>(null);
 
-export const folder = signal<{ name: string } | null>(null);
+export const folder = signal<{ name: string; via: "picked" | "restored" | "regranted" } | null>(null);
+
+/** True once the page is driving a session it did not start — a conversation
+ *  it came back to (#113). The chat header says so; a demo that silently
+ *  resumed would be indistinguishable from one that lost everything. */
+export const resumed = signal(false);
 
 export type HelperState = "none" | "silent" | "alive" | "wrong-kind";
 export const helper = signal<HelperState>("none");

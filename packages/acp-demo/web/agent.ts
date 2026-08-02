@@ -25,12 +25,35 @@
 // handlers bound is what the page does **on the agent's behalf**; what the
 // profile bounds is what the child may write. Neither one bounds reads, and
 // no wording here should suggest otherwise.
-import { AcpConnection } from "./acp";
+//
+// ---- coming back (#113/D32)
+//
+// A refreshed page reattaches to a session that never stopped, and the
+// agent never knew. That makes this file the place where two rules live:
+//
+//   The conversation is rebuilt by re-running these same handlers over the
+//   session's replayed history. The agent's words, its tool calls and its
+//   questions all come back from the folder (P2); the human's turns come
+//   from the sticky record, woven in at the anchors they were sent at
+//   (resume.ts).
+//
+//   A replayed request must not *act*. The downlink carries the agent's
+//   `fs/*` calls as well as its words, and re-running a write the human
+//   approved an hour ago, against a folder that has moved on, is the worst
+//   thing this page could do. So: a request the page already answered is
+//   history and gets silence; one it never answered is a request the agent
+//   is STILL blocked on, and gets a real answer — the permission card comes
+//   back live and clickable, an `fs/*` call comes back refused, because
+//   "the page reloaded, ask me again" is honest and rewriting a file on a
+//   guess is not.
+import { AcpConnection, NO_RESPONSE, type Origin } from "./acp";
 import { log } from "./reporter";
-import { entries, pushEntry, turn, type PermissionEntry, type TextEntry, type ToolEntry } from "./state";
+import { entries, pushEntry, queued, turn, type PermissionEntry, type TextEntry, type ToolEntry } from "./state";
 import { signal } from "@lit-labs/signals";
 import { touched } from "./workspace";
 import { containedRelative } from "../src/paths.js";
+import { permissionVerdict, promptsBefore, type StickyRecord } from "../src/resume.js";
+import { currentRecord, updateRecord } from "./store";
 
 /** The protocol version this client speaks. */
 const PROTOCOL_VERSION = 1;
@@ -67,16 +90,34 @@ export class AgentSession {
   #sessionId: string | null = null;
   #tools = new Map<string, ToolEntry>();
   #streaming: TextEntry | null = null;
+  /** how many of the record's prompts have been woven back in. */
+  #promptCursor = 0;
 
-  constructor(conn: AcpConnection, root: FileSystemDirectoryHandle, cwd: string) {
+  /** `resume` is the record of a session this page is coming back to; null
+   *  for one it is starting. Everything a returning page needs before the
+   *  attach even completes is in it — the ACP session id, the agent's cwd,
+   *  and the id of a turn that was in flight — because replayed frames
+   *  start arriving before `ready` resolves. */
+  constructor(conn: AcpConnection, root: FileSystemDirectoryHandle, cwd: string, resume: StickyRecord | null = null) {
     this.conn = conn;
     this.#root = root;
     this.#cwd = cwd.replace(/\/+$/, "");
 
-    conn.onNotification("session/update", (params) => this.#update(params));
-    conn.onRequest("session/request_permission", (params) => this.#permission(params));
-    conn.onRequest("fs/read_text_file", (params) => this.#readTextFile(params));
-    conn.onRequest("fs/write_text_file", (params) => this.#writeTextFile(params));
+    conn.onNotification("session/update", (params, origin) => this.#update(params, origin));
+    conn.onRequest("session/request_permission", (params, origin) => this.#permission(params, origin));
+    conn.onRequest("fs/read_text_file", (params, origin) => this.#readTextFile(params, origin));
+    conn.onRequest("fs/write_text_file", (params, origin) => this.#writeTextFile(params, origin));
+
+    if (!resume) return;
+    this.#sessionId = resume.acpSessionId;
+    // Adopted here, not at the end of replay: a turn that finished while the
+    // page was away answered into the history, so the id has to be claimed
+    // before the first replayed frame is delivered or the reply is dropped
+    // as an unknown id and the turn spins forever.
+    if (resume.pendingPromptId !== null) {
+      turn.set("thinking");
+      void this.#finishAdoptedTurn(resume.pendingPromptId);
+    }
   }
 
   get sessionId(): string | null {
@@ -84,7 +125,15 @@ export class AgentSession {
   }
 
   /** initialize + session/new. Capabilities are a promise: only claim the
-   *  `fs` methods because they are implemented below. */
+   *  `fs` methods because they are implemented below.
+   *
+   *  There is deliberately no reattach counterpart to this (D32). The
+   *  handshake belongs to the agent *process*, and a refresh does not
+   *  restart it — the agent has been talking to the same stdio pipe the
+   *  whole time and never saw a disconnect. A second `initialize` is
+   *  undefined territory, `session/new` would silently start a second
+   *  conversation, and `session/load` is for resuming into an agent that
+   *  did die. A returning page just keeps using the session id it had. */
   async start(): Promise<InitResult> {
     const init = (await this.conn.request("initialize", {
       protocolVersion: PROTOCOL_VERSION,
@@ -103,23 +152,103 @@ export class AgentSession {
     };
   }
 
+  // ------------------------------------------------------------- replay
+
+  /** The library's replay bracket (D18), forwarded by the connection. */
+  onReplay(replaying: boolean, gen: number): void {
+    const rec = currentRecord();
+    if (replaying) {
+      // Replay is head-segment-only (D26): a generation higher than the one
+      // this page left behind means older frames rotated away and what comes
+      // back is a suffix. Say it in the transcript, at the top, where the
+      // missing part would have been (#57).
+      if (rec && gen !== rec.gen) {
+        pushEntry({
+          kind: "note",
+          text: "the earlier part of this conversation has rotated out of the session's retained stream and cannot be shown — what follows is the tail.",
+        });
+      }
+      updateRecord((r) => {
+        r.gen = gen;
+      });
+      return;
+    }
+    // Live again. Anything anchored past the last replayed frame is a turn
+    // taken after the agent's last word (or one whose anchor overshot a
+    // rotated stream) — it goes here, at the end.
+    this.#weavePrompts(Number.POSITIVE_INFINITY);
+    this.#streaming = null;
+    if (rec?.queued.length) queued.set([...rec.queued]);
+  }
+
+  /** Called once per incoming DATA frame, before it is dispatched. */
+  onFrame(index: number, replayed: boolean): void {
+    if (replayed) this.#weavePrompts(index);
+  }
+
+  #weavePrompts(upTo: number): void {
+    const rec = currentRecord();
+    if (!rec) return;
+    const next = promptsBefore(rec.prompts, this.#promptCursor, upTo);
+    for (let i = this.#promptCursor; i < next; i++) {
+      this.#streaming = null;
+      pushEntry({ kind: "user", text: rec.prompts[i]!.text });
+    }
+    this.#promptCursor = next;
+  }
+
+  /** A `session/prompt` the previous page sent and never heard back about.
+   *  The agent answers to that id whenever it finishes — during replay if it
+   *  finished while the page was away, live if it is still working. */
+  async #finishAdoptedTurn(id: number): Promise<void> {
+    try {
+      const r = (await this.conn.adopt(id)) as { stopReason?: string };
+      if (r.stopReason && r.stopReason !== "end_turn") pushEntry({ kind: "note", text: `turn ended: ${r.stopReason}` });
+    } catch (e) {
+      pushEntry({ kind: "error", text: `the turn that was running when this page reloaded ended: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      this.#endTurn();
+    }
+  }
+
+  // ------------------------------------------------------------- prompting
+
   async prompt(text: string): Promise<void> {
     if (!this.#sessionId) throw new Error("no ACP session");
     pushEntry({ kind: "user", text });
     this.#streaming = null;
     turn.set("thinking");
+    // Anchored *before* the send: the position is "how much of the agent's
+    // stream this turn had seen when it was typed", which is what puts it
+    // back between the right two things on the way home.
+    const atFrame = this.conn.frameIndex;
+    const sent = this.conn.requestTracked<{ stopReason?: string }>("session/prompt", {
+      sessionId: this.#sessionId,
+      prompt: [{ type: "text", text }],
+    });
+    updateRecord((r) => {
+      r.prompts.push({ text, atFrame });
+      r.pendingPromptId = sent.id;
+    });
     try {
-      const r = (await this.conn.request("session/prompt", {
-        sessionId: this.#sessionId,
-        prompt: [{ type: "text", text }],
-      })) as { stopReason?: string };
+      const r = await sent.result;
       if (r.stopReason && r.stopReason !== "end_turn") pushEntry({ kind: "note", text: `turn ended: ${r.stopReason}` });
     } catch (e) {
-      pushEntry({ kind: "error", text: `prompt failed: ${e instanceof Error ? e.message : String(e)}` });
+      // A turn that failed because the session ended has already been
+      // narrated by whoever ended it (the agent's exit, or the human's "end
+      // session"). Only a failure inside a live session is news here.
+      if (turn.get() !== "gone") pushEntry({ kind: "error", text: `prompt failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
-      this.#streaming = null;
-      turn.set(turn.get() === "gone" ? "gone" : "idle");
+      this.#endTurn();
     }
+  }
+
+  #endTurn(): void {
+    this.#streaming = null;
+    updateRecord((r) => {
+      r.pendingPromptId = null;
+    });
+    turn.set(turn.get() === "gone" ? "gone" : "idle");
   }
 
   cancel(): void {
@@ -130,7 +259,7 @@ export class AgentSession {
 
   // -------------------------------------------------------------- updates
 
-  #update(params: Record<string, unknown> | undefined): void {
+  #update(params: Record<string, unknown> | undefined, origin: Origin): void {
     const u = (params?.["update"] ?? {}) as Record<string, unknown>;
     const type = String(u["sessionUpdate"] ?? "");
     switch (type) {
@@ -172,8 +301,10 @@ export class AgentSession {
         const detail = contentSummary(tc.content);
         if (detail) entry.detail.set(detail);
         // A finished edit is a file that just changed — nudge the workspace
-        // pane rather than waiting for its next poll.
-        if (tc.status === "completed") void touched();
+        // pane rather than waiting for its next poll. Not while replaying:
+        // that edit landed before this page existed, and the pane's first
+        // scan already has it.
+        if (tc.status === "completed" && !origin.replayed) void touched();
         return;
       }
       case "plan": {
@@ -190,23 +321,42 @@ export class AgentSession {
 
   // ---------------------------------------------------------- permission
 
-  #permission(params: Record<string, unknown> | undefined): Promise<unknown> {
+  #permission(params: Record<string, unknown> | undefined, origin: Origin): Promise<unknown> | typeof NO_RESPONSE {
     const tc = (params?.["toolCall"] ?? {}) as ToolCallShape;
     const options = ((params?.["options"] as { optionId?: string; name?: string; kind?: string }[] | undefined) ?? [])
       .filter((o) => o.optionId)
       .map((o) => ({ optionId: o.optionId!, name: o.name ?? o.optionId!, ...(o.kind ? { kind: o.kind } : {}) }));
     this.#streaming = null;
-    log(`permission requested: ${tc.title ?? "(untitled)"} [${options.map((o) => o.optionId).join(", ")}]`);
+    const card = {
+      kind: "permission" as const,
+      id: tc.toolCallId ?? `p-${Math.random().toString(36).slice(2)}`,
+      title: tc.title ?? "the agent wants to do something",
+      toolKind: tc.kind ?? "other",
+      locations: locationPaths(tc),
+      detail: contentSummary(tc.content),
+      options,
+    };
 
+    // A question this page already settled: it is transcript now. Render the
+    // verdict, say nothing on the wire — the agent read the answer long ago
+    // and has moved on.
+    const verdict = origin.replayed ? permissionVerdict(currentRecord()?.answers ?? {}, origin.id) : ({ state: "open" } as const);
+    if (verdict.state === "settled") {
+      pushEntry({ ...card, answer: signal<string | null>(verdict.option ?? "(cancelled)"), respond: null });
+      return NO_RESPONSE;
+    }
+
+    // Open — including on replay, and that case is the whole argument for
+    // replaying at all: the agent is still parked on this request id, so
+    // the card comes back clickable and answering it writes the response it
+    // has been waiting for since before the refresh.
+    log(`permission ${origin.replayed ? "still open from before the refresh" : "requested"}: ${tc.title ?? "(untitled)"} [${options.map((o) => o.optionId).join(", ")}]`);
+    if (origin.replayed) {
+      pushEntry({ kind: "note", text: "this question was still waiting when the page reloaded — the agent is holding for an answer." });
+    }
     return new Promise((resolve) => {
       const entry = pushEntry({
-        kind: "permission",
-        id: tc.toolCallId ?? `p-${Math.random().toString(36).slice(2)}`,
-        title: tc.title ?? "the agent wants to do something",
-        toolKind: tc.kind ?? "other",
-        locations: locationPaths(tc),
-        detail: contentSummary(tc.content),
-        options,
+        ...card,
         answer: signal<string | null>(null),
         respond: (optionId: string | null) => {
           if (entry.answer.get() !== null) return;
@@ -214,6 +364,14 @@ export class AgentSession {
           entry.respond = null;
           entries.set([...entries.get()]); // the card's buttons become a verdict
           log(`permission answered: ${optionId ?? "cancelled"}`);
+          // Written down before the response goes out: a card answered but
+          // not remembered would be asked again on the next visit, which is
+          // the failure this record exists to prevent.
+          if (origin.id !== undefined) {
+            updateRecord((r) => {
+              r.answers[String(origin.id)] = optionId;
+            });
+          }
           resolve(optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
         },
       }) as PermissionEntry;
@@ -222,7 +380,43 @@ export class AgentSession {
 
   // ------------------------------------------------------------- fs/*
 
-  async #readTextFile(params: Record<string, unknown> | undefined): Promise<{ content: string }> {
+  /** Replayed `fs/*`: history, or an unanswered request the agent is still
+   *  blocked on. Neither one may re-run the call.
+   *
+   *  History is silent — the file operation happened, its response was read,
+   *  and the only trace it leaves is in the log. An unanswered one gets a
+   *  refusal rather than a second attempt: this page cannot prove its
+   *  predecessor's answer never landed, and the folder has moved on since
+   *  the request was made. An error unblocks the agent and lets it ask
+   *  again against the folder as it is now; a write on a guess is
+   *  unrecoverable. Returns `NO_RESPONSE` for the silent case, throws for
+   *  the refusal, and null when the call is live and should just happen. */
+  #replayGuard(method: string, path: string, origin: Origin): typeof NO_RESPONSE | null {
+    if (!origin.replayed) return null;
+    if (origin.id !== undefined && Object.prototype.hasOwnProperty.call(currentRecord()?.answers ?? {}, String(origin.id))) {
+      log(`${method} ${path} — replayed, already served before the reload`);
+      return NO_RESPONSE;
+    }
+    log(`${method} ${path} — outstanding since the reload; refusing rather than repeating it`);
+    pushEntry({
+      kind: "note",
+      text: `the agent asked to ${method === "fs/write_text_file" ? "write" : "read"} ${path} while this page was away — it was told to ask again rather than have it done blind.`,
+    });
+    throw { code: -32603, message: "the page that received this request reloaded; nothing was done. Send it again." };
+  }
+
+  #remember(origin: Origin): void {
+    if (origin.id === undefined) return;
+    updateRecord((r) => {
+      r.answers[String(origin.id)] = "fs";
+    });
+  }
+
+  async #readTextFile(params: Record<string, unknown> | undefined, origin: Origin): Promise<{ content: string } | typeof NO_RESPONSE> {
+    // Guarded before containment: a replayed request must not produce a
+    // second answer of any kind, refusal included.
+    const guarded = this.#replayGuard("fs/read_text_file", String(params?.["path"] ?? ""), origin);
+    if (guarded) return guarded;
     const rel = this.#contain(String(params?.["path"] ?? ""));
     const file = await this.#file(rel, false);
     let text = await (await file.getFile()).text();
@@ -234,10 +428,13 @@ export class AgentSession {
       text = lines.slice(from, limit === undefined ? undefined : from + limit).join("\n");
     }
     log(`fs/read_text_file ${rel} (${text.length} chars) — served from the page's handle`);
+    this.#remember(origin);
     return { content: text };
   }
 
-  async #writeTextFile(params: Record<string, unknown> | undefined): Promise<null> {
+  async #writeTextFile(params: Record<string, unknown> | undefined, origin: Origin): Promise<null | typeof NO_RESPONSE> {
+    const guarded = this.#replayGuard("fs/write_text_file", String(params?.["path"] ?? ""), origin);
+    if (guarded) return guarded;
     const rel = this.#contain(String(params?.["path"] ?? ""));
     const content = String(params?.["content"] ?? "");
     const file = await this.#file(rel, true);
@@ -245,6 +442,7 @@ export class AgentSession {
     await w.write(new TextEncoder().encode(content) as Uint8Array<ArrayBuffer>);
     await w.close();
     log(`fs/write_text_file ${rel} (${content.length} chars) — written through the page's grant`);
+    this.#remember(origin);
     void touched();
     return null;
   }

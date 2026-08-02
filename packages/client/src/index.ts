@@ -143,6 +143,17 @@ export interface SessionEventMap {
   frame: [frame: Frame, at: number];
   /** Payload of each DATA frame — the one obvious way to consume output. */
   data: [bytes: Uint8Array];
+  /** Scrollback replay boundaries (D18), emitted only when
+   *  `attachSession(id, {replay: true})` asked for them. Every `frame`/`data`
+   *  event between `"start"` and `"end"` is re-emitted history, not live
+   *  traffic — a consumer that must not re-run side effects (an ACP client
+   *  re-executing the agent's file writes, #113) can only tell the two apart
+   *  here. `gen` names the out segment that was replayed: replay is
+   *  head-segment-only (D26, #57), so a `gen` higher than the one a previous
+   *  visit saw means older history was rotated away and the re-emission is a
+   *  suffix, not the whole stream. The bracket is emitted even when there is
+   *  nothing to replay, so the state machine stays symmetric. */
+  replay: [phase: "start" | "end", gen: number];
   /** status.json changed (deep-compared). */
   status: [status: SessionStatus];
   /** Non-fatal observations, e.g. observer fallback to polling (D7). */
@@ -509,7 +520,15 @@ export class FsioSession {
     this.#epoch = result.epoch;
     this.#inDir = await op(`creating session ${this.id}/in.${result.epoch}/`, () => this.#dir.getDirectoryHandle(`in.${result.epoch}`, { create: true }));
     const a = this.#attach!;
-    if (a.replayTo) await this.#replayHead(a.replayTo.gen, a.replayTo.end);
+    if (a.replayTo) {
+      // Bracket the re-emission so a consumer can tell history from live
+      // traffic (#113). Unconditional inside the branch: a session with an
+      // empty head still gets start/end, so "did replay happen" is one
+      // question and "was there anything in it" is another.
+      this.#emit("replay", "start", a.replayTo.gen);
+      await this.#replayHead(a.replayTo.gen, a.replayTo.end);
+      this.#emit("replay", "end", a.replayTo.gen);
+    }
     const held = this.#hold ?? [];
     this.#hold = null;
     for (const [f, at] of held) {
