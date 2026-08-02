@@ -125,6 +125,37 @@ export interface SessionStatus {
   writer?: { epoch: number; aid: string };
 }
 
+/** `transcripts/<id>/meta.json` — what an ended session left behind (D26
+ *  rule 4, #119). The out log beside it is the *agent's* half of a
+ *  conversation, read back by replaying its DATA frames through the same
+ *  handlers that consumed them live; the human's half was never on the
+ *  downlink and is the reader's own to carry (D32 rule 2).
+ *
+ *  Written once, by the host, when the session's directory is swept. Every
+ *  field is a claim by whoever wrote the file — a reader parses it
+ *  defensively and renders it as text, never as authority (D20). */
+export interface TranscriptMeta {
+  id: string;
+  /** the session's kind, or null when spawn.json was never readable. */
+  kind: string | null;
+  client?: string;
+  origin?: string;
+  /** epoch ms at which the host swept the session. */
+  ended: number;
+  /** what ended it, for display: the human's close, the host shutting
+   *  down, a client that vanished, a stale leftover. */
+  why: string;
+  exitCode?: number | null;
+  /** generation of the OLDEST segment kept. Above 0 means the log rotated
+   *  and this is the conversation's tail, not the whole of it (D26 rule 1,
+   *  #57) — a reader that does not say so is lying by omission. */
+  gen: number;
+  /** cumulative bytes the session ever wrote, against `bytes` — what
+   *  survived. Unequal is the same suffix story `gen` tells. */
+  total: number;
+  bytes: number;
+}
+
 // ---- spawn (the request carried by spawn.json; see spec "Control plane")
 
 export interface EchoSpawn {

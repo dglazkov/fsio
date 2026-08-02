@@ -150,6 +150,12 @@ const log = {
 };
 
 const fsioDir = path.join(rootReal, ".fsio");
+
+/** How many ended conversations `.fsio/transcripts/` holds (#119, D26 rule
+ *  4). Ten is a demo's worth of history against a directory the human owns
+ *  and did not ask to become an archive; the host's byte cap can cut it
+ *  shorter, never longer. */
+const TRANSCRIPT_KEEP = 10;
 const server = new HostServer({
   root: rootReal,
   // The sandbox and the allow-list are the gates; the policy narrates.
@@ -159,6 +165,18 @@ const server = new HostServer({
     return true;
   },
   fresh: true, // demo restarts should never inherit stale sessions
+  // …but a restart must not eat the conversations either (#119). `fresh`
+  // is right that a session pointing at a dead pid is not attachable and
+  // right to sweep the plumbing; it was wrong that the out log is plumbing.
+  // For this demo that file IS the conversation — the agent's half of it,
+  // which D32 rule 2 deliberately does not persist browser-side because
+  // "it rode the folder, so the folder is where it is read back from"
+  // (P2). The folder now keeps its side of that bargain.
+  //
+  // The count is stated here rather than inherited because the banner
+  // promises it out loud, and a promise about the user's own project
+  // directory is not a thing to leave to a default two packages away.
+  transcripts: { keep: TRANSCRIPT_KEEP },
   // This demo serves exactly one kind and it is not `shell`; a pty would
   // never be reached. Saying so keeps the npx artifact (which bundles no
   // node_modules) from opening with advice about a package nobody here needs.
@@ -216,7 +234,7 @@ if (wantSandbox) {
     });
   }).catch(async (e: Error) => {
     await server.close();
-    fs.rmSync(fsioDir, { recursive: true, force: true });
+    server.cleanServiceDir();
     fail(e.message);
   });
   fs.rmSync(probePath, { force: true });
@@ -277,11 +295,15 @@ fsio ACP demo · serving ${rootReal}${
 
   → back in the demo page, pick the folder:  ${folderName}
 
-waiting for a browser… (Ctrl-C stops the helper and cleans up .fsio)
+waiting for a browser… (Ctrl-C ends the agents and sweeps .fsio; what each
+  conversation said is kept in .fsio/transcripts/, newest ${TRANSCRIPT_KEEP})
 `);
 
-// ---- teardown: close sessions (which kills agents), then leave the folder
-// pristine (D6: the host owns .fsio cleanup).
+// ---- teardown: close sessions (which kills agents), then sweep the
+// plumbing (D6: the host owns .fsio cleanup) and keep the conversations
+// (#119, D26 rule 4). Ctrl-C ends the agents either way — they are our
+// children and no amount of retention makes a live one survive it. What it
+// no longer ends is the record of what they said.
 
 let closing = false;
 const shutdown = async (signal: string) => {
@@ -290,8 +312,9 @@ const shutdown = async (signal: string) => {
   clearInterval(rosterTimer);
   console.log(`\n${signal} — closing sessions…`);
   await server.close();
-  fs.rmSync(fsioDir, { recursive: true, force: true });
-  console.log("done; .fsio removed.");
+  server.cleanServiceDir();
+  const kept = fs.existsSync(server.transcriptsDir) ? fs.readdirSync(server.transcriptsDir).length : 0;
+  console.log(kept ? `done; .fsio swept, ${kept} conversation${kept === 1 ? "" : "s"} kept in .fsio/transcripts/.` : "done; .fsio removed.");
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown("SIGINT"));
