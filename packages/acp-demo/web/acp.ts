@@ -1,4 +1,5 @@
-// The thin wrapper (D30): ACP messages over a session's DATA frames.
+// The thin wrapper ([#18](https://github.com/dglazkov/fsio/issues/18)): ACP
+// messages over a session's DATA frames.
 //
 // Thin is the whole claim. There is no buffer here, no line splitting, no
 // "did we get half a message" state — because the host promised that one
@@ -13,7 +14,7 @@
 // own control plane is a different endpoint entirely, on RPC frames, in the
 // library; nothing here can reach it, which is the point.
 //
-// Sticky sessions (#113/D32) add one thing here, and only one: this peer now
+// Sticky sessions (#113) add one thing here, and only one: this peer now
 // knows whether the message it is delivering is *live* or *replayed
 // scrollback*. It does not know what that ought to mean — that judgement is
 // agent.ts's, because it is about permission cards and file writes, not

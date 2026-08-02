@@ -15,8 +15,8 @@ format. The only way to tell them apart is to have been there.
 
 **How it happened.** The records were built for a linear exploration —
 measure, decide, write it down, never renumber. The work has not been
-linear. Directions got parked (the hub, fsiod), directions did not pan
-out (season two), and the demos made a few hundred small choices that
+linear. Directions got parked (the hub, fsiod), directions moved out of
+this repo (season two), and the demos made a few hundred small choices that
 were never protocol questions. None of that had anywhere to go, because
 the records were the only shelf in the building. So demo choices became
 D-entries, demo needs became a nineteen-entry requirements namespace for
@@ -255,12 +255,31 @@ list of what the rules would touch.
 | ~~the confinement mechanism, written twice~~ **extracted** | `packages/confine`; the demos keep their posture and their failure policy | 6 — done ([#134](https://github.com/dglazkov/fsio/issues/134)) |
 | R1–R19: nineteen requirements specifying that library in advance, ~106 citations resolving to nothing | issue [#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments | 3, 6 — the citations are what should go |
 | F23–F28: Seatbelt and agent-CLI ground, 427 lines | `spec/FINDINGS.md` | one shelf — moves with the library |
-| F29 measures the shipped `/acp` page | `spec/FINDINGS.md` | 2a |
 | four confinement labs, 928 lines | `scripts/{confinement,read-wall,service-reach,agent-reach}-lab.mjs` | 2a — they were labs for demos |
 | D29, three rules at three altitudes, 70 lines | `spec/DECISIONS.md` | 1, 6 |
 | 48 lines of Seatbelt mechanism in the threat model chapter | `spec/PROTOCOL.md` | 1 |
-| D30, D32 are demo decisions; `common/src/protocol.ts:132` cites D32 | `spec/DECISIONS.md`, protocol layer | 1, 2 |
-| the hub (D19–D28) and season two are parked or dead, stated nowhere | `spec/DECISIONS.md` | 5 |
+
+Three rows have since come off this list, and the two issues that took them
+off are each worth a sentence, because in both cases the work was not the
+shape this table predicted.
+
+[#130](https://github.com/dglazkov/fsio/issues/130) — D30 and D32 were one
+demo's decisions in the protocol decision log, and F29 measured a page we
+wrote. All three were *second copies*: the demo's own code already stated
+every rule of D30 and D32 in its own voice, beside the code that keeps
+them. So what actually moved was the little nobody had written down twice,
+and what is left at each number is a line saying it is spent.
+
+[#131](https://github.com/dglazkov/fsio/issues/131) — the hub and season
+two now say their own status, once, at the cluster (rule 5). The hub note
+is narrower than this row assumed: the *direction* is parked, but D20,
+D22–D26 shipped anyway and are cited from `common`, `host`, `client` and
+the demos today, so a blanket "D19–D28 are parked" would have made a reader
+discount five live decisions. Only D19 and D21 are purely the pivot.
+Season two moved to its own repo rather than dying.
+
+The rest is tracked from
+[#133](https://github.com/dglazkov/fsio/issues/133).
 
 Nothing in `spec/` changed to produce this document, deliberately. A first
 attempt did — a `**Scope.**` line on all 62 D and F entries saying what
@@ -271,8 +290,8 @@ rules the layer a thing sits in *is* its scope, so the label was
 redundant; and the R-citations go with the extraction rather than ahead
 of it.
 
-Note how much of the list is one subject. Confinement accounts for six of
-the nine rows: 427 lines of findings, 463 of requirements, 928 of labs, 70
+Note how much of the list is one subject. Confinement is now every
+remaining row: 427 lines of findings, 463 of requirements, 928 of labs, 70
 of decision, 48 of threat model, and 408 lines of the actual mechanism —
 **2,344 lines of record around 408 lines of code**, none of it shipped as
 a library. That ratio is rule 6's argument, made by counting.

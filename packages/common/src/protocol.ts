@@ -126,10 +126,11 @@ export interface SessionStatus {
 }
 
 /** `transcripts/<id>/meta.json` — what an ended session left behind (D26
- *  rule 4, #119). The out log beside it is the *agent's* half of a
+ *  rule 4, #119). The out log beside it is the *downlink's* half of a
  *  conversation, read back by replaying its DATA frames through the same
- *  handlers that consumed them live; the human's half was never on the
- *  downlink and is the reader's own to carry (D32 rule 2).
+ *  handlers that consumed them live. Whatever rode the uplink was never in
+ *  this file and never will be — replay is downlink-only (D18) — so a
+ *  reader wanting both halves carries the other one itself.
  *
  *  Written once, by the host, when the session's directory is swept. Every
  *  field is a claim by whoever wrote the file — a reader parses it

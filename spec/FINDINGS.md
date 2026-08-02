@@ -1015,79 +1015,37 @@ quota spent, and none needed: the failure lands before inference).
 `homeDirs` entry removed from `agents.ts`; cell E is the default, and cell N
 requires passing `from` into `synthesizeEnv`.
 → F24, F26,
-[D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
 [#18](https://github.com/dglazkov/fsio/issues/18); feeds
 [#86](https://github.com/dglazkov/fsio/issues/86),
 [#71](https://github.com/dglazkov/fsio/issues/71),
 [#77](https://github.com/dglazkov/fsio/issues/77).
 
-### F29 — the consent surface fires: 5 permission asks, 10 `fs/*` calls, 2 rejections that wrote nothing — and an `agent_message_chunk` is a fragment, not a line
+### F29 — the `/acp` page's own consent numbers, moved to the demo that made it
 
-Measured 2026-08-01 (macOS 26.5/arm64, Chrome; the shipped `/acp` page, the
-helper run with `--fixture`, a human answering every card; the page's own
-`report.json`). Subject: the **puppet agent**
-(`packages/acp-demo/src/fixture-agent.ts`) — a scripted ACP speaker that asks
-permission and has no hands, so every file it touches travels as an `fs/*`
-request. Written because
-[#100](https://github.com/dglazkov/fsio/issues/100) established that no
-installed agent exercises this half: pi-acp reads and edits itself and asks
-nobody, so the same page measured on the same day scored 52 `session/update`
-notifications, 3 prompts, 1 file change, **zero** `session/request_permission`
-and **zero** `fs/*`.
+A measurement of a page we wrote, driven by a puppet we wrote, filed on the
+slowest shelf. It measured our own fast layer, which is what
+[PROCESS.md](https://github.com/dglazkov/fsio/blob/main/PROCESS.md) rule 2a
+exists to keep off this one: a second implementation of this protocol, on
+another substrate, would need none of it.
 
-| | pi-acp (#100's measurement) | puppet, same page, same day |
-|---|---|---|
-| `session/request_permission` | 0 | **5** |
-| answered allow / reject | — | 3 / 2 |
-| `fs/*` | 0 | **10** (7 read, 3 write) |
-| files changed through the page's grant | 0 | 3 |
-| containment refusals, with text | 0 | 4 |
+What it recorded is a test. The counts and the refusal strings are asserted
+on every push by the demo's fixture-agent suite, which is where a demo's
+measurement of itself belongs. One line of it was never a measurement at
+all but a lesson the code owed — that an `agent_message_chunk` is a
+*fragment*, not a line, and that the agent owns its terminators — and that
+now sits as a comment beside the concatenation it cost. The half that is
+about a real agent rather than ours is
+[#100](https://github.com/dglazkov/fsio/issues/100) and F30.
 
-- **The consent property holds in practice, not just in assertion.** Both
-  rejections are followed in the log by the next request with no write
-  between them — `permission answered: reject` → nothing. P5's "the party
-  asking is not the party deciding" is now a measured behavior of the
-  shipped page rather than a claim in a comment.
-- **R9's refusals survive contact, and name the boundary *and* the folder.**
-  The exact strings, produced in the browser by `containedRelative()` and
-  read back out of the agent's transcript for the first time:
-  `refused: /etc/passwd is outside the folder this page was granted
-  (/Users/…/fsio-acp)`; `refused: .fsio is the transport's own directory,
-  owned by the helper`; `path must be absolute: NOTES.md`. Each is
-  actionable by the receiving agent, which is what "written to be relayed"
-  had always asserted and nothing had ever tested.
-- **An `agent_message_chunk` is a *fragment*, not a line — the agent owns
-  its terminators.** This cost a bug. A client is correct to concatenate
-  consecutive chunks into one flowing block (the page does, `web/agent.ts`),
-  so an agent emitting one chunk per line with no trailing newline gets a
-  transcript with every line welded to the next
-  (`…says back.✓ somewhere outside…`). The rule is not ACP-specific
-  guesswork — it follows from "chunk", and it will bite any agent this repo
-  writes. Regression-tested in `test-fixture-agent.ts`.
-- **A read needs no card.** The `read` scenario drew no permission request
-  at all: the human already granted the folder, and re-asking per read would
-  be exactly the prompt fatigue P3 says to fight with scope rather than
-  breadth.
-- **What this does *not* measure.** The puppet writes its own permission
-  card, so "does the card carry enough to decide on" is answered here only
-  for a card we authored. Whether a *real* agent's request carries the tool,
-  the file and the diff — and whether its own permission layer contradicts
-  the sandbox (F26 cell At found it did not, for a different agent) — still
-  needs a real agent that asks, which is #100's remaining half.
-→ [D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
-F24, F26,
-[#100](https://github.com/dglazkov/fsio/issues/100),
-[#18](https://github.com/dglazkov/fsio/issues/18); feeds
-[#86](https://github.com/dglazkov/fsio/issues/86).
-
+This number is spent and is never reused
+([#130](https://github.com/dglazkov/fsio/issues/130)).
 ### F30 — a real agent does ask, but only in a mode you cannot set without importing the operator's whole config; and its tooling hardcodes two paths under /tmp that TMPDIR never names
 
 Measured 2026-08-01 (macOS 26.5/arm64, Chrome; the shipped `/acp` page and
 helper; `@agentclientprotocol/claude-agent-acp` 0.64.0, which bundles
 `@anthropic-ai/claude-agent-sdk` 0.3.220 and its own `cli.js`). The
-[#100](https://github.com/dglazkov/fsio/issues/100) leg that
-[F29](#f29--the-consent-surface-fires-5-permission-asks-10-fs-calls-2-rejections-that-wrote-nothing--and-an-agent_message_chunk-is-a-fragment-not-a-line)
-could not answer, because the puppet writes its own card.
+[#100](https://github.com/dglazkov/fsio/issues/100) leg a scripted puppet
+could not answer, because a puppet writes its own card.
 
 **The headline: R6 has a real consumer.** In manual permission mode the
 adapter sends `session/request_permission`, the page renders it, and a human
@@ -1135,7 +1093,8 @@ wrote is legible enough to decide on.
 - **`fs/*` stayed at zero in every run.** The adapter honored the permission
   gate and then wrote the file with its own hands. Consent and access are
   independent for it: it asks the client *whether*, never *to*. So the page's
-  `fs/*` handlers still have no real-world consumer — only the puppet (F29).
+  `fs/*` handlers still have no real-world consumer — only a scripted
+  puppet.
 
 **Method note, and the reason this entry exists in this shape.** The first
 run appeared to show the agent editing without asking, and that was written
@@ -1150,8 +1109,7 @@ policy. Every behavioral measurement of it is therefore entangled with the
 machine it ran on, and a result from one laptop does not transfer. That
 constrains F26's whole approach, and it is the finding most likely to matter
 later.
-→ [D30](DECISIONS.md#d30--acp-is-payload-the-host-frames-the-browser-is-the-client),
-F24, F26, F27, F29,
+→ F24, F26, F27,
 [#100](https://github.com/dglazkov/fsio/issues/100); feeds
 [#86](https://github.com/dglazkov/fsio/issues/86),
 [#71](https://github.com/dglazkov/fsio/issues/71).

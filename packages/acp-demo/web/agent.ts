@@ -1,4 +1,4 @@
-// The ACP client role, played by the page (D30 rule 3).
+// The ACP client role, played by the page ([#18](https://github.com/dglazkov/fsio/issues/18)).
 //
 // Two of the things an ACP client owes an agent are things only this side
 // can do, and together they are the demo:
@@ -26,7 +26,7 @@
 // profile bounds is what the child may write. Neither one bounds reads, and
 // no wording here should suggest otherwise.
 //
-// ---- coming back (#113/D32)
+// ---- coming back ([#113](https://github.com/dglazkov/fsio/issues/113))
 //
 // A refreshed page reattaches to a session that never stopped, and the
 // agent never knew. That makes this file the place where two rules live:
@@ -178,7 +178,7 @@ export class AgentSession {
   /** initialize + session/new. Capabilities are a promise: only claim the
    *  `fs` methods because they are implemented below.
    *
-   *  There is deliberately no reattach counterpart to this (D32). The
+   *  There is deliberately no reattach counterpart to this. The
    *  handshake belongs to the agent *process*, and a refresh does not
    *  restart it — the agent has been talking to the same stdio pipe the
    *  whole time and never saw a disconnect. A second `initialize` is
@@ -339,6 +339,15 @@ export class AgentSession {
     const u = (params?.["update"] ?? {}) as Record<string, unknown>;
     const type = String(u["sessionUpdate"] ?? "");
     switch (type) {
+      // A chunk is a *fragment*, not a line — the agent owns its
+      // terminators. Concatenating consecutive chunks into one flowing
+      // block is the correct client behavior, and it cost a bug to learn
+      // that it is also unforgiving: an agent emitting one chunk per line
+      // with no trailing newline gets a transcript with every line welded
+      // to the next (`…says back.✓ somewhere outside…`). The rule follows
+      // from the word "chunk" rather than from anything ACP-specific, and
+      // it will bite any agent written in this repo. Regression-tested in
+      // test-fixture-agent.ts.
       case "agent_message_chunk":
       case "agent_thought_chunk": {
         const kind = type === "agent_message_chunk" ? "agent" : "thought";
@@ -416,11 +425,11 @@ export class AgentSession {
     // From a transcript (#119, #123): the question is in the folder, the
     // answer never was. Two different unknowables, and the card has to carry
     // the difference rather than blur it. A conversation *this browser*
-    // drove kept what was clicked (D32 rule 2's record, demoted rather than
-    // deleted), so the verdict is knowable — from here, on this machine, and
-    // nowhere else. One it did not drive stays unanswerable, and the
-    // alternative to saying so is inferring the answer from what the agent
-    // did next, which D32 already refused as a guess dressed as a fact.
+    // drove kept what was clicked (the sticky record, demoted rather than
+    // deleted when the session ended), so the verdict is knowable — from
+    // here, on this machine, and nowhere else. One it did not drive stays
+    // unanswerable, and the alternative to saying so is inferring the
+    // answer from what the agent did next: a guess dressed as a fact.
     if (this.#history) {
       const known = permissionVerdict(this.#history.past?.answers ?? {}, origin.id);
       this.#push({
