@@ -154,6 +154,32 @@ export function demote(rec: StickyRecord): PastRecord {
   };
 }
 
+/** Fold answers this record has not seen into it, and say how many landed.
+ *
+ *  One conversation can be open in more than one window since #120 — the URL
+ *  carries it — and each window holds its own copy of this record while both
+ *  write through to one key. A plain overwrite loses whichever window's
+ *  clicks came second, and what it loses is the human's verdicts on the
+ *  agent's consent questions: those rode the uplink, so the folder never had
+ *  them and nothing else can supply them (D18, D32 rule 2).
+ *
+ *  A union is the right merge, and it is sound rather than a best guess: an
+ *  answered question is never un-answered, so an id present in one copy and
+ *  absent in the other means only that one window saw a click the other did
+ *  not. `null` is a real answer — the human cancelled — which is why this
+ *  tests for the KEY rather than for a truthy value. Nothing else here
+ *  merges: every other field describes the session as its writer sees it,
+ *  and a session has one writer at a time (D18/F8). */
+export function mergeAnswers(into: Record<string, string | null>, from: Readonly<Record<string, string | null>>): number {
+  let added = 0;
+  for (const [id, answer] of Object.entries(from)) {
+    if (Object.prototype.hasOwnProperty.call(into, id)) continue;
+    into[id] = answer;
+    added++;
+  }
+  return added;
+}
+
 /** Whether the record's anchors are measured from the same place the
  *  transcript's frames are. A prompt's anchor counts DATA frames from the
  *  start of the segment generation the page was attached to; a transcript's

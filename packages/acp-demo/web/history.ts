@@ -38,8 +38,31 @@ import { anchorsAlign } from "../src/resume.js";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
 import { log, reporter } from "./reporter";
-import { past, pastEntries, pushPast, viewing, viewingHalf } from "./state";
+import { past, pastEntries, pushPast, viewing, viewingHalf, type ConvIO } from "./state";
 import { pastRecord, prunePast } from "./store";
+
+/** The channel a document gets (#120's `ConvIO`, #119's rules).
+ *
+ *  Every method here is either "put it in the other list" or a no-op, and
+ *  that IS the read-only guarantee, stated once in the plumbing instead of
+ *  re-checked in every handler. There is no turn to set: nobody is waiting.
+ *  There is no record to update: the record this conversation had was
+ *  demoted when it ended, and writing to it now would be editing history.
+ *  There is nothing to count as waiting: the agent that asked exited before
+ *  this page loaded. */
+const documentIO = (): ConvIO => ({
+  push: pushPast,
+  touch: () => pastEntries.set([...pastEntries.get()]),
+  turn: () => "gone",
+  setTurn: () => {},
+  setQueued: () => {},
+  waiting: () => {},
+  // Permanently, and for a stronger reason than a superseded window's: the
+  // agent that asked these questions exited before this page loaded.
+  fenced: () => true,
+  record: () => null,
+  update: () => {},
+});
 
 /** What `.fsio/transcripts/` holds, newest first. The reading is here; the
  *  judging is in `../src/transcripts.ts`, where it is testable in Node. A
@@ -129,7 +152,7 @@ export async function openPast(root: FileSystemDirectoryHandle, p: PastConversat
   });
   // cwd "" — every path in here is history, and the containment check it
   // would feed is never reached: history mode answers no `fs/*` call.
-  session = new AgentSession(conn, root, "", null, { past: mine });
+  session = new AgentSession(conn, root, "", documentIO(), null, { past: mine });
 
   let frames = 0;
   let unread = 0;

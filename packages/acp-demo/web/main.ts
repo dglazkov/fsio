@@ -7,23 +7,27 @@
 // for the cooperative verification loop (TESTING.md: the page reports, the
 // native side reads verdicts).
 import "./components/top-bar";
+import "./components/tab-bar";
 import "./components/chat";
 import "./components/workspace-pane";
 import "./components/wizard";
-import { checkGates, detachOnPagehide, revisit } from "./connection";
+import { checkGates, revisit } from "./connection";
+import { detachAllOnPagehide } from "./conversations";
 import { step } from "./reporter";
 
 checkGates();
 step("waiting for a folder");
-// A remembered folder skips the wizard, and a remembered session skips the
-// whole setup (#113): the page comes back to the conversation it left.
+// A remembered folder skips the wizard, and a remembered set of sessions
+// skips the whole setup (#113, #120): the page comes back to the
+// conversations it left — or, if the URL names them, to the ones it was
+// handed (P1: the URL travels, the data stays).
 void revisit();
 
-// Leaving the page DETACHES (D18) — the session, and the agent with it, keep
-// running for the next visit. It used to close, which killed the agent
-// (D6); a session now ends when the human ends it, and only then. See
-// endSession() for the other half of that bargain.
-window.addEventListener("pagehide", detachOnPagehide);
+// Leaving the page DETACHES every conversation (D18) — the sessions, and the
+// agents with them, keep running for the next visit. It used to close, which
+// killed the agent (D6); a conversation now ends when the human ends it, and
+// only then. See closeConv() for the other half of that bargain.
+window.addEventListener("pagehide", detachAllOnPagehide);
 window.addEventListener("pageshow", (e) => {
   if (e.persisted) location.reload();
 });

@@ -10,9 +10,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { adopted, agentFacts, diagnostics, folder, helper, past, resumed, turn, viewing, type PastConversation } from "../state";
+import { active, adopted, agentFacts, convs, diagnostics, folder, helper, past, resumed, turn, viewing, type PastConversation } from "../state";
 import { logText } from "../reporter";
-import { currentRoot, endSession, startNewSession } from "../connection";
+import { currentRoot, endSession, startAnother } from "../connection";
 import { closePast, openPast } from "../history";
 import { isTail } from "../../src/transcripts.js";
 
@@ -65,9 +65,12 @@ class AcpTopBar extends SignalWatcher(LitElement) {
 
   #open = false;
   #pastOpen = false;
-  /** The end button arms on first click and fires on second — a sticky
-   *  session's one irreversible gesture should cost two. */
-  #armed = false;
+  /** Which conversation's end button is armed, or "". It arms on first click
+   *  and fires on second — a sticky session's one irreversible gesture
+   *  should cost two — and it is keyed by conversation because switching
+   *  tabs while armed must not point the loaded gun at a different agent
+   *  (#120). */
+  #armed = "";
 
   override render(): TemplateResult {
     const f = folder.get();
@@ -75,9 +78,11 @@ class AcpTopBar extends SignalWatcher(LitElement) {
     const t = turn.get();
     const v = viewing.get();
     if (v) return this.#reading(v);
+    const n = convs.get().length;
     return html`
       <span class="name">${a ? a.agent : "fsio agent"}</span>
       ${f ? html`<span class="dim">in ${f.name}/</span>` : nothing}
+      ${n > 1 ? html`<span class="dim" title="each one is its own agent process and its own conversation">${n} conversations here</span>` : nothing}
       ${a
         ? html`<span class="badge ${a.sandboxed ? "" : "open"}" title=${a.confinement}>
             ${a.sandboxed ? "sandboxed" : "NOT sandboxed"}
@@ -90,7 +95,21 @@ class AcpTopBar extends SignalWatcher(LitElement) {
           : nothing}
       <span class="spacer"></span>
       <span class="turn">
-        ${t === "thinking" ? "thinking…" : t === "cancelling" ? "cancelling…" : t === "starting" ? "starting…" : t === "gone" ? "agent gone" : helper.get() === "silent" ? "helper silent" : ""}
+        ${!active.get()
+          ? helper.get() === "silent"
+            ? "helper silent"
+            : ""
+          : t === "thinking"
+            ? "thinking…"
+            : t === "cancelling"
+              ? "cancelling…"
+              : t === "starting"
+                ? "starting…"
+                : t === "gone"
+                  ? "agent gone"
+                  : helper.get() === "silent"
+                    ? "helper silent"
+                    : ""}
       </span>
       ${this.#lifetime(a, t)}
       ${this.#pastButton()}
@@ -152,26 +171,34 @@ class AcpTopBar extends SignalWatcher(LitElement) {
     </div>`;
   }
 
-  /** The other half of sticky sessions (#113): closing the tab no longer
-   *  kills the agent, so the page owes the human a control that does — and
-   *  it has to say what it costs, because nothing else here is irreversible. */
+  /** The other half of sticky sessions (#113): closing the browser tab no
+   *  longer kills the agent, so the page owes the human a control that does
+   *  — and it has to say what it costs, because nothing else here is
+   *  irreversible.
+   *
+   *  With N conversations (#120) this acts on the one on screen, and it is
+   *  the same gesture the tab strip's "×" is. Two places, one meaning: the
+   *  bar is where you are when you have been reading a conversation and have
+   *  decided you are finished with it. */
   #lifetime(a: ReturnType<typeof agentFacts.get>, t: ReturnType<typeof turn.get>): TemplateResult | typeof nothing {
+    const c = active.get();
+    if (!c) return nothing;
     if (t === "gone") {
-      return html`<button @click=${() => void startNewSession()}>new session</button>`;
+      return html`<button @click=${() => void startAnother()}>new conversation</button>`;
     }
     if (!a) return nothing;
-    if (!this.#armed) {
+    if (this.#armed !== c.id) {
       return html`<button
-        title="Ends this conversation and stops the agent. Closing the tab does not — the session waits for you."
-        @click=${() => { this.#armed = true; this.requestUpdate(); }}
+        title="Ends this conversation and stops the agent. Closing the browser tab does not — the conversations wait for you."
+        @click=${() => { this.#armed = c.id; this.requestUpdate(); }}
       >
-        end session
+        end conversation
       </button>`;
     }
-    return html`<button class="danger" @click=${() => { this.#armed = false; void endSession(); }}>
+    return html`<button class="danger" @click=${() => { this.#armed = ""; void endSession(c.id, true); }}>
       end it — this stops ${a.agent}
     </button>
-    <button @click=${() => { this.#armed = false; this.requestUpdate(); }}>cancel</button>`;
+    <button @click=${() => { this.#armed = ""; this.requestUpdate(); }}>cancel</button>`;
   }
 
   #details(): TemplateResult {

@@ -13,8 +13,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agentFacts, entries, notice, pastEntries, queued, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
-import { cancelTurn, sendPrompt, unqueue } from "../connection";
+import { active, agentFacts, convs, entries, notice, pastEntries, phase, queued, superseded, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
+import { cancelTurn, sendPrompt, unqueue } from "../conversations";
+import { retakeSession, startAnother } from "../connection";
 import { closePast } from "../history";
 import { renderMarkdown } from "../markdown";
 
@@ -104,6 +105,13 @@ class AcpChat extends SignalWatcher(LitElement) {
     button.allow { background: #5e81ac; border-color: #5e81ac; color: #eceff4; font-weight: 600; }
     button.reject { border-color: #6b3b40; color: #e5a3a8; }
     .composer { display: flex; gap: 0.6rem; padding: 0.7rem 1.2rem 1rem; border-top: 1px solid #262b34; }
+    /* Fenced (D18): the composer is replaced, not disabled — a text box with
+       nothing on the other end of it is the wrong kind of hopeful. Amber
+       rather than red: nothing is broken, somebody else is driving. */
+    .composer.fenced { align-items: center; background: #211d16; border-top-color: #6b5a2e; }
+    .composer.fenced .what { flex: 1; font-size: 0.87rem; color: #ebcb8b; }
+    .composer.fenced .hint { display: block; color: #9aa5b8; font-size: 0.82rem; margin-top: 0.25rem; }
+    .composer.fenced button { flex: none; }
     textarea {
       flex: 1; resize: none; background: #191c22; color: #d8dee9; font: inherit;
       border: 1px solid #2c313c; border-radius: 8px; padding: 0.55rem 0.7rem; min-height: 2.6rem; max-height: 9rem;
@@ -122,7 +130,8 @@ class AcpChat extends SignalWatcher(LitElement) {
     .perm.historic { border-color: #3b4252; background: #191c22; }
     .perm.historic .who { color: #7b8598; }
     .perm.historic .opts { color: #7b8598; font-size: 0.82rem; margin-top: 0.55rem; }
-    .perm.historic .opts code { font-family: ui-monospace, Menlo, monospace; color: #9aa5b8; }
+    .opts { color: #7b8598; font-size: 0.82rem; margin-top: 0.55rem; }
+    .opts code { font-family: ui-monospace, Menlo, monospace; color: #9aa5b8; }
   `;
 
   override render(): TemplateResult {
@@ -161,6 +170,25 @@ class AcpChat extends SignalWatcher(LitElement) {
         </div>
       `;
     }
+    // Every conversation closed (#120). Not the wizard — the folder is still
+    // granted, the helper is still running, and the page has not forgotten
+    // anything. It is simply holding none of the conversations in this
+    // folder, which is a state that could not exist when there was only ever
+    // one of them.
+    if (!active.get() && phase.get() === "chat") {
+      return html`<div class="log" id="log">
+        ${n ? html`<div class="banner">${n.msg}<span class="hint">${n.hint}</span></div>` : nothing}
+        <div class="reading">
+          no conversation open
+          <span class="hint">
+            ${convs.get().length
+              ? "Pick one from the strip above."
+              : "Nothing is on screen. Start another agent in this folder, or use “+” above to rejoin one that is still running here."}
+          </span>
+          <button class="close" @click=${() => void startAnother()}>Start a conversation</button>
+        </div>
+      </div>`;
+    }
     return html`
       <div class="log" id="log">
         ${n ? html`<div class="banner">${n.msg}<span class="hint">${n.hint}</span></div>` : nothing}
@@ -172,11 +200,40 @@ class AcpChat extends SignalWatcher(LitElement) {
           </div>`
         )}
       </div>
+      ${superseded.get() ? this.#fenced() : this.#composer(t, busy)}
+    `;
+  }
+
+  /** Another window is driving this conversation (D18 takeover).
+   *
+   *  The composer is replaced rather than disabled, for the same reason the
+   *  read-only view has no composer at all: there is nothing on the other end
+   *  of it. What is different here — and worth saying plainly, because it is
+   *  the part a reader would otherwise mistake for the agent losing its mind
+   *  — is that the transcript keeps growing with only one half of the
+   *  conversation in it. */
+  #fenced(): TemplateResult {
+    const c = active.get();
+    return html`<div class="composer fenced">
+      <div class="what">
+        another window is driving this conversation
+        <span class="hint">
+          Attaching takes over, so exactly one page holds an agent at a time (D18). You are still watching it live — the
+          agent's half rides the folder and every page can read it — but the prompts driving it are being typed somewhere
+          else, and those ride the uplink, which only the holder writes. Expect answers without their questions.
+        </span>
+      </div>
+      <button class="allow" ?disabled=${!c} @click=${() => c && void retakeSession(c.id)}>take it back</button>
+    </div>`;
+  }
+
+  #composer(t: ReturnType<typeof turn.get>, busy: boolean): TemplateResult {
+    return html`
       <div class="composer">
         <textarea
           id="input"
           placeholder=${t === "gone"
-            ? "the agent is gone — “new session” up top starts another one"
+            ? "the agent is gone — “new conversation” up top starts another one"
             : busy
               ? "type ahead — this goes when the turn ends"
               : "ask the agent to do something in this folder…"}
@@ -289,17 +346,27 @@ class AcpChat extends SignalWatcher(LitElement) {
             whatever you answer, ${facts.agent} is ${facts.sandboxed ? `confined — ${facts.confinement}` : "NOT confined: it can write anything you can"}
           </div>`
         : nothing}
-      ${answered === null
-        ? html`<div class="row">
-            ${e.options.map(
-              (o) => html`<button
-                class=${o.kind?.startsWith("allow") ? "allow" : o.kind?.startsWith("reject") ? "reject" : ""}
-                @click=${() => e.respond?.(o.optionId)}
-              >${o.name}</button>`
-            )}
-            <button @click=${() => e.respond?.(null)}>cancel</button>
-          </div>`
-        : html`<div class="answered">answered: ${e.options.find((o) => o.optionId === answered)?.name ?? answered}</div>`}
+      ${answered !== null
+        ? html`<div class="answered">answered: ${e.options.find((o) => o.optionId === answered)?.name ?? answered}</div>`
+        : superseded.get()
+          ? // Fenced (D18): the agent is genuinely blocked on this question,
+            // and the answer has to come from whichever window holds the
+            // uplink — this one's response would not go out. Buttons here
+            // would be the worst kind of wrong: they look like the consent
+            // gesture this whole demo is about, and they would do nothing.
+            html`<div class="opts">
+              offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— the agent is waiting, but another window is
+              driving this conversation, so the answer has to come from there. “take it back” below moves it here.
+            </div>`
+          : html`<div class="row">
+              ${e.options.map(
+                (o) => html`<button
+                  class=${o.kind?.startsWith("allow") ? "allow" : o.kind?.startsWith("reject") ? "reject" : ""}
+                  @click=${() => e.respond?.(o.optionId)}
+                >${o.name}</button>`
+              )}
+              <button @click=${() => e.respond?.(null)}>cancel</button>
+            </div>`}
     </div>`;
   }
 }
