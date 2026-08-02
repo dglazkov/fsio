@@ -95,6 +95,19 @@ export interface StickyRecord {
    *  no longer exists, so the returning page adopts the id (see
    *  web/acp.ts) — otherwise the turn spins forever. */
   pendingPromptId: number | null;
+  /** true when this record was rebuilt by the session picker (#117) rather
+   *  than written by the page that started the conversation.
+   *
+   *  It is durable because what it says is durable: everything before the
+   *  moment of adoption has no human half *anywhere* — the turns are in an
+   *  IndexedDB this browser cannot reach, or in none at all — and no later
+   *  refresh can make that untrue. A page that forgot it would go on to
+   *  present half a conversation as the whole of one, which is the failure
+   *  the rest of this file exists to avoid. It also changes what a replayed
+   *  permission card may claim: with no `answers` to consult, "never
+   *  answered" and "answered by somebody else" are indistinguishable, and
+   *  the card has to say so. */
+  adopted: boolean;
 }
 
 /** What survives the session: the half of a conversation the folder never
@@ -122,6 +135,10 @@ export interface PastRecord {
   /** what was clicked, by the agent's request id. Kept for the permission
    *  cards, which can otherwise only ever say "not knowable from here". */
   answers: Record<string, string | null>;
+  /** the conversation was joined in progress (#117), so this half starts
+   *  where the page did — not where the conversation did. A reader is
+   *  looking at a transcript missing a beginning that no browser has. */
+  adopted: boolean;
 }
 
 /** Session over: keep the half that was only ever here. */
@@ -133,6 +150,7 @@ export function demote(rec: StickyRecord): PastRecord {
     gen: rec.gen,
     prompts: [...rec.prompts],
     answers: { ...rec.answers },
+    adopted: rec.adopted,
   };
 }
 
@@ -261,6 +279,10 @@ export function parseRecord(raw: unknown): StickyRecord | null {
     queued: Array.isArray(r["queued"]) ? (r["queued"] as unknown[]).filter((q): q is string => typeof q === "string") : [],
     answers: parseAnswers(r["answers"]),
     pendingPromptId: typeof r["pendingPromptId"] === "number" ? r["pendingPromptId"] : null,
+    // Absent in every record written before #117, and the default is the
+    // one that cannot mislead: those records were written by the page that
+    // started the conversation, so they hold its whole human half.
+    adopted: r["adopted"] === true,
   };
 }
 
@@ -284,6 +306,7 @@ export function parsePast(raw: unknown): PastRecord | null {
     gen: typeof r["gen"] === "number" ? r["gen"] : 0,
     prompts,
     answers,
+    adopted: r["adopted"] === true,
   };
 }
 

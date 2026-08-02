@@ -110,6 +110,19 @@ export class AgentSession {
    *  live log either way. */
   #push: EntrySink;
 
+  /** This conversation was joined in progress (#117), so the record driving
+   *  it starts where the page did. That changes what an empty `answers` map
+   *  *means*: for a page coming back to its own session it is proof nothing
+   *  was answered, and here it is proof of nothing at all. Every claim below
+   *  that reads `answers` has to be weaker by exactly that much. */
+  #adopted = false;
+  /** Replayed `fs/*` calls refused during an adopted session's rebuild. One
+   *  summary beats one note each: for a page coming back to its own session
+   *  an unanswered `fs/*` is rare and worth a line, but a conversation joined
+   *  in progress has never answered *any* of them, so the per-call note
+   *  would bury the transcript it is annotating. */
+  #refusedOnJoin = 0;
+
   /** `resume` is the record of a session this page is coming back to; null
    *  for one it is starting. Everything a returning page needs before the
    *  attach even completes is in it — the ACP session id, the agent's cwd,
@@ -127,6 +140,7 @@ export class AgentSession {
     this.#cwd = cwd.replace(/\/+$/, "");
     this.#history = history;
     this.#push = history ? pushPast : pushEntry;
+    this.#adopted = history ? history.past?.adopted === true : resume?.adopted === true;
 
     conn.onNotification("session/update", (params, origin) => this.#update(params, origin));
     conn.onRequest("session/request_permission", (params, origin) => this.#permission(params, origin));
@@ -147,6 +161,18 @@ export class AgentSession {
 
   get sessionId(): string | null {
     return this.#sessionId;
+  }
+
+  /** Where the agent is rooted, learned late (#117).
+   *
+   *  A conversation joined from the picker is constructed before `acp/info`
+   *  has answered, because replayed frames arrive inside the attach grant
+   *  and there has to be someone to receive them. Until this is called
+   *  `#contain` refuses everything — an empty cwd normalizes to `/`, which
+   *  would turn the containment check into a check that always passes. */
+  adoptCwd(cwd: string): void {
+    if (this.#cwd) return; // a session's root does not move
+    this.#cwd = cwd.replace(/\/+$/, "");
   }
 
   /** initialize + session/new. Capabilities are a promise: only claim the
@@ -203,6 +229,15 @@ export class AgentSession {
     // rotated stream) — it goes here, at the end.
     this.flushPrompts();
     this.#streaming = null;
+    if (this.#refusedOnJoin) {
+      this.#push({
+        kind: "note",
+        text:
+          `${this.#refusedOnJoin} file operation${this.#refusedOnJoin === 1 ? "" : "s"} the agent asked for before this page joined ` +
+          `${this.#refusedOnJoin === 1 ? "was" : "were"} answered with "ask again" rather than repeated — they were served once already, by whoever was here then.`,
+      });
+      this.#refusedOnJoin = 0;
+    }
     if (rec?.queued.length) queued.set([...rec.queued]);
   }
 
@@ -412,7 +447,19 @@ export class AgentSession {
     // has been waiting for since before the refresh.
     log(`permission ${origin.replayed ? "still open from before the refresh" : "requested"}: ${tc.title ?? "(untitled)"} [${options.map((o) => o.optionId).join(", ")}]`);
     if (origin.replayed) {
-      this.#push({ kind: "note", text: "this question was still waiting when the page reloaded — the agent is holding for an answer." });
+      // The card stays live either way, and for a joined conversation (#117)
+      // that is the honest answer rather than a hedge: the agent may be
+      // parked on this request right now, and it may equally have had its
+      // answer an hour ago from a page in another browser. Clicking settles
+      // the first case and is ignored in the second — a response to a
+      // resolved id is a duplicate, which the protocol already says to drop.
+      // What the page must not do is render either guess as the fact.
+      this.#push({
+        kind: "note",
+        text: this.#adopted
+          ? "this question was asked before this page joined the conversation. Nothing here recorded what was answered, so the buttons stay live: if the agent is still waiting, clicking answers it — and if it has already moved on, clicking changes nothing."
+          : "this question was still waiting when the page reloaded — the agent is holding for an answer.",
+      });
     }
     return new Promise((resolve) => {
       const entry = this.#push({
@@ -469,10 +516,17 @@ export class AgentSession {
       return NO_RESPONSE;
     }
     log(`${method} ${path} — outstanding since the reload; refusing rather than repeating it`);
-    this.#push({
-      kind: "note",
-      text: `the agent asked to ${method === "fs/write_text_file" ? "write" : "read"} ${path} while this page was away — it was told to ask again rather than have it done blind.`,
-    });
+    // A conversation joined in progress (#117) has an empty `answers` map by
+    // construction, so *every* replayed `fs/*` call lands here. The refusal
+    // is still right — this page cannot repeat a write on a guess whoever
+    // else it was that answered — but it is not news one line at a time.
+    // `onReplay` says it once, in total, when the rebuild finishes.
+    if (this.#adopted) this.#refusedOnJoin++;
+    else
+      this.#push({
+        kind: "note",
+        text: `the agent asked to ${method === "fs/write_text_file" ? "write" : "read"} ${path} while this page was away — it was told to ask again rather than have it done blind.`,
+      });
     throw { code: -32603, message: "the page that received this request reloaded; nothing was done. Send it again." };
   }
 
@@ -522,6 +576,14 @@ export class AgentSession {
    *  The rule and its tests live in `../src/paths.ts` (Node-testable);
    *  here it becomes a JSON-RPC error the agent can relay (R9). */
   #contain(abs: string): string {
+    // No cwd yet (#117: a conversation joined in progress, before `acp/info`
+    // has said where it is rooted). `containedRelative("", …)` would treat
+    // the whole filesystem as the granted folder, so this refuses instead —
+    // the window is milliseconds wide and "ask again" costs the agent a
+    // retry, where the alternative costs the human their containment.
+    if (!this.#cwd) {
+      throw { code: -32603, message: "this page is still learning where this conversation is rooted; send that again in a moment" };
+    }
     const r = containedRelative(this.#cwd, abs);
     if (!r.ok) {
       log(`refused ${abs}: ${r.reason}`);

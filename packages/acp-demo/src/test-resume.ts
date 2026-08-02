@@ -130,6 +130,7 @@ const FULL: StickyRecord = {
   queued: ["and then this"],
   answers: { "3": "allow" },
   pendingPromptId: 42,
+  adopted: false,
 };
 
 test("resume: a full record round-trips through JSON", () => {
@@ -177,6 +178,7 @@ test("past: demotion keeps the half the folder never had, and nothing that named
     gen: 0,
     prompts: [{ text: "hi", atFrame: 0 }],
     answers: { "3": "allow" },
+    adopted: false,
   });
   // Nothing attachable survives: no fsio session id to attach to beyond the
   // transcript's own name, no ACP session id, no cwd to judge a path
@@ -203,6 +205,23 @@ test("past: a demoted record round-trips, and one with nothing in it is not a re
   // Answers alone are worth keeping: a conversation can be one long turn
   // with a permission card in the middle of it.
   assert.deepEqual(parsePast({ sessionId: "s-1", answers: { "3": null } })?.answers, { "3": null });
+});
+
+test("adopted: a conversation joined in progress says so, and keeps saying it (#117)", () => {
+  // The picker rebuilds a record for a session it never started, so this
+  // half begins where the page did rather than where the conversation did.
+  // That fact outlives the session: a refresh writes a new record from the
+  // old one, and a demotion turns it into a document someone reads later —
+  // both would otherwise present a beginning-less transcript as a whole one.
+  const joined: StickyRecord = { ...FULL, adopted: true };
+  assert.equal(parseRecord(JSON.parse(JSON.stringify(joined)))?.adopted, true);
+  assert.equal(demote(joined).adopted, true);
+  assert.equal(parsePast(JSON.parse(JSON.stringify(demote(joined))))?.adopted, true);
+  // The default is the one that cannot mislead: every record written before
+  // #117 belonged to the page that started the conversation.
+  const { adopted: _dropped, ...legacy } = joined;
+  assert.equal(parseRecord(legacy)?.adopted, false);
+  assert.equal(parsePast({ sessionId: "s-1", answers: { "3": null } })?.adopted, false);
 });
 
 test("past: anchors are only trustworthy against the generation they were counted in", () => {

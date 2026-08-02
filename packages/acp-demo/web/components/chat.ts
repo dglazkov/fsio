@@ -145,6 +145,10 @@ class AcpChat extends SignalWatcher(LitElement) {
                 ? html`The agent's half is replayed from ${kept} the helper kept in this folder. Your
                   ${half.prompts === 1 ? "one turn" : `${half.prompts} turns`} — and the answers you gave below — rode the uplink, which the
                   folder never sees; they are woven back in from this browser's own record${half.placed ? "" : ", though not in their original places"}.
+                  ${half.adopted
+                    ? html`That record starts where this page joined the conversation, not where the conversation started — anything typed before then was
+                      recorded in a browser that is not this one.`
+                    : nothing}
                   Open this folder in another browser and only the agent's half is there.`
                 : html`This is the agent's half, replayed from ${kept} the helper kept in this folder. Your own prompts rode the uplink,
                   which is not what the folder keeps — and this browser has no record of this conversation, so they are not here, and

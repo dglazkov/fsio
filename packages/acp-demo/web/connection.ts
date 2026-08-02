@@ -21,6 +21,8 @@ import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
 import { log, reporter, step } from "./reporter";
 import {
+  adoptable,
+  adopted,
   agentFacts,
   agents,
   diagnostics,
@@ -44,6 +46,7 @@ import {
 } from "./state";
 import { startWatching } from "./workspace";
 import { refreshPast } from "./history";
+import { listAdoptable } from "./discovery";
 import { beginRecord, clearRecord, forgetHandle, loadRecord, rememberAgent, saveHandle, savedAgent, savedHandle, updateRecord } from "./store";
 import { type StickyRecord } from "../src/resume.js";
 
@@ -157,6 +160,11 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
   rootHandle = root;
   servicesRev = undefined;
   resumeChecked = false;
+  // A different folder is a different set of running conversations, and a
+  // different set of decisions about them (#117).
+  picking = false;
+  passedOver.clear();
+  adoptable.set([]);
   clearInterval(hostTimer);
   // Probe for .fsio WITHOUT creating it: `connect()` would create one in
   // whatever folder was picked, littering the wrong folder and hiding the
@@ -253,8 +261,18 @@ async function refreshHelper(root: FileSystemDirectoryHandle): Promise<void> {
  *  taking over a session this page already holds. */
 let resumeChecked = false;
 let arriving = false;
+/** The picker is on screen (#117). Nothing may arrive past a question the
+ *  human is being asked: a roster bump that spawned an agent underneath an
+ *  open picker would be the silent second conversation this whole path
+ *  exists to prevent. */
+let picking = false;
+/** Sessions this page has been told to leave alone: the one abandoned at the
+ *  resume-error panel, and any the human declined in the picker. They are
+ *  still running and still in the folder's listing — offering them back one
+ *  keystroke after being told not to would be a loop, not a recovery. */
+const passedOver = new Set<string>();
 async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | null): Promise<void> {
-  if (arriving || session) return;
+  if (arriving || session || picking) return;
   arriving = true;
   try {
     // The session first: coming back to a conversation outranks starting one.
@@ -272,6 +290,16 @@ async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | nu
         if (outcome === "failed") return;
       }
     }
+
+    // No record, or a record that named something that is gone — and about
+    // to start a new conversation. Ask the FOLDER first (#117): the record
+    // is a shortcut to one session, but `listSessions()` sees all of them,
+    // and a running agent nothing here can name is exactly the state #115
+    // produced and exactly the state a second browser profile, an incognito
+    // window, or a cleared IndexedDB produces on purpose. Starting a second
+    // conversation beside a live one is the silent fork D32 rule 1 forbids;
+    // the difference between doing it and not is one directory listing.
+    if (await offerRunning(root)) return;
 
     // A helper that publishes no roster is a pre-#102 one. Unknown detail is
     // "not supported", never an error (D25), so let it choose for itself —
@@ -305,6 +333,107 @@ async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | nu
   } finally {
     arriving = false;
   }
+}
+
+// ------------------------------------------------- conversations in progress
+//
+// #117. Sticky sessions made the browser's record the only route back to a
+// running agent, and that is one route too few — the record can be wrong,
+// stale, gone, or simply another browser's. What `listSessions()` sees is
+// the truth of the folder, and it does not care which IndexedDB the human
+// is looking through.
+//
+// What this can and cannot restore is the whole reason it comes with a
+// panel rather than a silent reattach. The agent's half comes back from the
+// folder, entire (P2). The human's half does not exist here at all: prompts
+// rode the uplink, which is not replayed (D18), and the record that carried
+// them across a refresh is the very thing that is missing. So a rejoined
+// conversation is honestly partial, and every permission card in it has an
+// unknowable verdict — D32 rule 3 treats an id it has never seen as
+// outstanding, and here "never seen" no longer means "never answered".
+
+/** Anything running in this folder worth offering? Shows the picker and
+ *  returns true when there is; a caller that gets true must not go on to
+ *  start anything. */
+async function offerRunning(root: FileSystemDirectoryHandle): Promise<boolean> {
+  if (!client) return false;
+  const rows = await listAdoptable(root, client, passedOver).catch(() => []);
+  reporter.event("sessions-listed", {
+    running: rows.length,
+    detached: rows.filter((r) => r.detached).length,
+    rejoinable: rows.filter((r) => !r.blocked).length,
+  });
+  if (!rows.length) return false;
+  log(`${rows.length} conversation(s) already running in this folder that this page has no record of`);
+  adoptable.set(rows);
+  picking = true;
+  phase.set("pick-session");
+  return true;
+}
+
+/** "Rejoin this one." Builds the record the missing one would have been —
+ *  minus everything that only the page that typed it could know. */
+export async function adoptSession(id: string): Promise<void> {
+  if (!rootHandle || session) return;
+  const row = adoptable.get().find((r) => r.id === id);
+  // The ACP session id is what `session/prompt` has to carry, so a row
+  // without one is offered to look at and not to click (`blocked`).
+  if (!row?.acpSessionId) return;
+  picking = false;
+  adoptable.set([]);
+  reporter.event("adopt", { sessionId: id, agent: row.agent, detached: row.detached, lastLine: !!row.lastLine });
+  const outcome = await reattach(
+    rootHandle,
+    {
+      sessionId: row.id,
+      acpSessionId: row.acpSessionId,
+      agent: row.agent,
+      agentName: row.agentName || row.agent || "agent",
+      agentVersion: row.agentVersion,
+      // Unknown until `acp/info` answers, and deliberately left empty rather
+      // than guessed: it is what every `fs/*` path is judged against, and a
+      // wrong cwd is a containment check that passes when it should not.
+      // `reattach` fills it in, and until it does nothing may act. A record
+      // persisted inside that window fails `parseRecord` on the next load
+      // (cwd is load-bearing there), which costs a trip back through the
+      // picker — the one path that is always correct here.
+      cwd: "",
+      folder: rootHandle.name,
+      // Replay's own bracket reports the generation it is re-emitting from
+      // and the record is corrected there — there is nothing to compare it
+      // against yet, because this page was never counting.
+      gen: 0,
+      prompts: [],
+      queued: [],
+      answers: {},
+      pendingPromptId: null,
+      adopted: true,
+    },
+    true
+  );
+  // The session died between the listing and the click, or the host refused
+  // the attach outright. Going around again is right — the picker's other
+  // rows may still be there — but not with this one still in it, or the
+  // panel would keep offering a door that has already been proved shut.
+  if (outcome === "gone") {
+    passedOver.add(id);
+    await arrive(rootHandle, agents.get());
+  }
+}
+
+/** "Start a new one instead." A separate, explicit gesture for the same
+ *  reason `abandonAndStartNew` is: leaving a live conversation running with
+ *  nothing pointing at it is the human's call, never the page's default.
+ *  Those sessions keep running; this page just stops offering them. */
+export async function declineRunning(): Promise<void> {
+  if (!rootHandle || session) return;
+  const rows = adoptable.get();
+  for (const r of rows) passedOver.add(r.id);
+  reporter.event("adopt-declined", { count: rows.length });
+  log(`leaving ${rows.length} running conversation(s) alone and starting a new one`);
+  adoptable.set([]);
+  picking = false;
+  await arrive(rootHandle, agents.get());
 }
 
 /** The roster as published by the helper (#102). Everything here arrives as
@@ -408,6 +537,9 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
       queued: [],
       answers: {},
       pendingPromptId: null,
+      // Started here, so this record holds the whole human half of it — the
+      // thing a rebuilt one (#117) cannot claim.
+      adopted: false,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -451,7 +583,12 @@ function saysSessionIsGone(e: unknown): boolean {
   return e.code === RpcErrors.ATTACH_FAILED || e.code === RpcErrors.SPAWN_DENIED || e.code === RpcErrors.SHELL_NOT_ALLOWED;
 }
 
-async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Promise<ResumeOutcome> {
+/** `joining` is what is happening *now* — the human just picked this
+ *  conversation out of the folder (#117) — as against `rec.adopted`, which
+ *  is what stays true about the transcript afterwards. A refresh of a joined
+ *  conversation is an ordinary reattach with a permanently short human
+ *  half, and the two notes below say those two different things. */
+async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord, joining = false): Promise<ResumeOutcome> {
   if (!client) return "failed";
   let live = false;
   try {
@@ -539,20 +676,47 @@ async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Pro
     return "failed";
   }
 
-  readFacts(facts);
+  const cwd = readFacts(facts);
+  // A conversation joined from the picker had no cwd to start with (#117):
+  // only the host knows where the agent is rooted, and it says so here. The
+  // session has been refusing every `fs/*` call until this line.
+  if (!rec.cwd && cwd) {
+    agent?.adoptCwd(cwd);
+    updateRecord((r) => {
+      r.cwd = cwd;
+    });
+  }
   resumed.set(true);
+  adopted.set(rec.adopted);
   startWatching(root);
   diagTimer = setInterval(() => void pollDiagnostics(), 3000);
   // "starting" still means nothing else claimed the turn — a prompt that was
   // in flight across the refresh has already set it to "thinking" and owns
   // it until the agent answers.
   if (turn.get() === "starting") turn.set("idle");
+  if (rec.adopted) {
+    // At the TOP, where the missing part would have been — the same place
+    // the read-only view puts its seams (#123). A caveat under a transcript
+    // is a footnote; above one it is a description of what you are reading.
+    entries.set([
+      {
+        kind: "note",
+        text:
+          "this conversation was already running when this page joined it, so what follows is the agent's half, replayed from what the folder kept. " +
+          "The turns typed into it before that moment rode the uplink, which the folder never sees, and the browser record that carried them is not this one — " +
+          "so they are not here. Nor is any verdict on a permission question from before then: this page cannot tell one that was already answered from one the agent is still waiting on.",
+      },
+      ...entries.get(),
+    ]);
+  }
   pushEntry({
     kind: "note",
-    text: `back in the same conversation — ${rec.agentName || rec.agent} kept running while this page was away.`,
+    text: joining
+      ? `you are on the wire with ${rec.agentName || rec.agent} now — from here on this is an ordinary conversation.`
+      : `back in the same conversation — ${rec.agentName || rec.agent} kept running while this page was away.`,
   });
-  reporter.event("resumed", { sessionId: rec.sessionId, epoch, prompts: rec.prompts.length, frames: conn.frameIndex });
-  step("reattached");
+  reporter.event(joining ? "adopted" : "resumed", { sessionId: rec.sessionId, epoch, adopted: rec.adopted, prompts: rec.prompts.length, frames: conn.frameIndex });
+  step(joining ? "joined a conversation in progress" : "reattached");
   return "resumed";
 }
 
@@ -770,7 +934,13 @@ export async function retryResume(): Promise<void> {
  *  what [#117](https://github.com/dglazkov/fsio/issues/117) is for. */
 export async function abandonAndStartNew(): Promise<void> {
   if (!rootHandle || session) return;
-  reporter.event("resume-abandoned", {});
+  // Named before the record is cleared, so the picker does not turn round
+  // and offer back the very session the human just walked away from (#117).
+  // It is still running, and it is still findable — by a later visit, or by
+  // another tab — which is what "leave it running" means.
+  const rec = await loadRecord().catch(() => null);
+  if (rec) passedOver.add(rec.sessionId);
+  reporter.event("resume-abandoned", { sessionId: rec?.sessionId ?? null });
   log("the human chose to leave the old session and start a new one");
   await clearRecord();
   resumeError.set(null);
@@ -785,6 +955,7 @@ export async function startNewSession(): Promise<void> {
   if (!rootHandle || session) return;
   entries.set([]);
   resumed.set(false);
+  adopted.set(false);
   agentFacts.set(null);
   diagnostics.set(null);
   turn.set("starting");
