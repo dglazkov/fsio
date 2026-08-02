@@ -91,7 +91,10 @@ export interface AcpConnectionOptions {
 }
 
 export class AcpConnection {
-  #session: FsioSession;
+  /** null = no wire (#119): a transcript being read back from the folder.
+   *  Nothing is sent, because there is nobody to send it to — the agent
+   *  that spoke these words exited before this page loaded. */
+  #session: FsioSession | null;
   #opts: AcpConnectionOptions;
   #nextId = 1;
   #pending = new Map<string | number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
@@ -105,9 +108,16 @@ export class AcpConnection {
   #adopted = new Set<string | number>();
   #frames = 0;
 
-  constructor(session: FsioSession, opts: AcpConnectionOptions = {}) {
+  constructor(session: FsioSession | null, opts: AcpConnectionOptions = {}) {
     this.#session = session;
     this.#opts = opts;
+    // A stored transcript (#119): every frame is history by construction —
+    // there is no live phase to switch into — and they arrive through
+    // `feed()` rather than from a session that is streaming them.
+    if (!session) {
+      this.#replaying = true;
+      return;
+    }
     session.on("data", (bytes) => this.#deliver(bytes));
     session.on("replay", (phase, gen) => {
       this.#replaying = phase === "start";
@@ -122,6 +132,15 @@ export class AcpConnection {
    *  and the anchor stamped on every prompt it sends. */
   get frameIndex(): number {
     return this.#frames;
+  }
+
+  /** Push one recorded DATA frame through the same dispatch live traffic
+   *  takes (#119). Deliberately the same path and not a parallel one: a
+   *  second interpretation of the same bytes would drift from this one, and
+   *  the day it did, the version people read after the fact would be the
+   *  wrong version. */
+  feed(bytes: Uint8Array): void {
+    this.#deliver(bytes);
   }
 
   /** Partition this connection's id space by the host's writer epoch (D18),
@@ -182,6 +201,10 @@ export class AcpConnection {
   }
 
   #send(msg: unknown): void {
+    // No wire, no send. Reading a transcript must not be able to write one
+    // byte anywhere, and the enforcement is here rather than in every
+    // handler that might forget (#119).
+    if (!this.#session) return;
     this.#opts.onTraffic?.("out", msg);
     // One message, one frame — `sendData` is a single DATA frame, and the
     // host refuses anything carrying more than one line.

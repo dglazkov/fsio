@@ -12,8 +12,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agentFacts, entries, notice, queued, turn, type Entry, type PermissionEntry, type ToolEntry } from "../state";
+import { agentFacts, entries, notice, pastEntries, queued, turn, viewing, type Entry, type PermissionEntry, type ToolEntry } from "../state";
 import { cancelTurn, sendPrompt, unqueue } from "../connection";
+import { closePast } from "../history";
 import { renderMarkdown } from "../markdown";
 
 class AcpChat extends SignalWatcher(LitElement) {
@@ -109,6 +110,18 @@ class AcpChat extends SignalWatcher(LitElement) {
     textarea:focus { outline: none; border-color: #4c566a; }
     .banner { background: #2b1f22; border: 1px solid #6b3b40; color: #e5a3a8; border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.87rem; }
     .banner .hint { color: #c98d92; display: block; font-size: 0.82rem; margin-top: 0.2rem; }
+    /* The read-only header (#119): quiet, not alarming — nothing is wrong,
+       this is simply a document. */
+    .reading {
+      background: #191c22; border: 1px solid #2c313c; color: #9aa5b8;
+      border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.87rem;
+    }
+    .reading .hint { color: #7b8598; display: block; font-size: 0.82rem; margin-top: 0.25rem; }
+    .reading .close { margin-top: 0.5rem; font-size: 0.82rem; padding: 0.2rem 0.6rem; }
+    .perm.historic { border-color: #3b4252; background: #191c22; }
+    .perm.historic .who { color: #7b8598; }
+    .perm.historic .opts { color: #7b8598; font-size: 0.82rem; margin-top: 0.55rem; }
+    .perm.historic .opts code { font-family: ui-monospace, Menlo, monospace; color: #9aa5b8; }
   `;
 
   override render(): TemplateResult {
@@ -116,6 +129,25 @@ class AcpChat extends SignalWatcher(LitElement) {
     const t = turn.get();
     const q = queued.get();
     const busy = t === "thinking" || t === "cancelling";
+    const v = viewing.get();
+    // A document, not a session (#119). No composer at all rather than a
+    // disabled one: there is nothing on the other end of it, and a text box
+    // that looks like it might send is the wrong kind of hopeful.
+    if (v)
+      return html`
+        <div class="log" id="log">
+          <div class="reading">
+            reading a conversation that ended${v.ended ? ` on ${new Date(v.ended).toLocaleString()}` : ""}${v.agent ? ` · ${v.agent}` : ""}
+            <span class="hint">
+              This is the agent's half, replayed from ${v.logs.length === 1 ? "the log" : `${v.logs.length} log segments`} the helper kept in
+              this folder. Your own prompts rode the uplink, which is not what the folder keeps — so they are not here, and neither are the
+              answers you gave to any question below.
+            </span>
+            <button class="close" @click=${() => closePast()}>close and go back</button>
+          </div>
+          ${pastEntries.get().map((e) => this.#entry(e))}
+        </div>
+      `;
     return html`
       <div class="log" id="log">
         ${n ? html`<div class="banner">${n.msg}<span class="hint">${n.hint}</span></div>` : nothing}
@@ -146,9 +178,26 @@ class AcpChat extends SignalWatcher(LitElement) {
     `;
   }
 
+  /** Which document the reader has already been placed in, so re-renders
+   *  don't yank them back to the top of it. */
+  #placedIn: string | null = null;
+
   protected override updated(): void {
     const log = this.renderRoot.querySelector("#log");
-    if (log) log.scrollTop = log.scrollHeight;
+    if (!log) return;
+    const v = viewing.get();
+    // A live conversation follows the agent; a document is read from the
+    // beginning. Dropping someone at the end of a conversation they are
+    // opening to re-read would be the wrong end of it.
+    if (v) {
+      if (this.#placedIn !== v.id) {
+        this.#placedIn = v.id;
+        log.scrollTop = 0;
+      }
+      return;
+    }
+    this.#placedIn = null;
+    log.scrollTop = log.scrollHeight;
   }
 
   #keydown(e: KeyboardEvent): void {
@@ -198,6 +247,20 @@ class AcpChat extends SignalWatcher(LitElement) {
   #permission(e: PermissionEntry): TemplateResult {
     const answered = e.answer.get();
     const facts = agentFacts.get();
+    // Out of a transcript (#119): the question was in the folder, the
+    // answer never was. Show what was asked and what could have been
+    // answered, and say the rest is not knowable from here — the buttons
+    // would be a lie twice over, since there is nobody to answer to.
+    if (e.historic)
+      return html`<div class="entry perm historic">
+        <div class="who">the agent asked${e.toolKind && e.toolKind !== "other" ? ` · ${e.toolKind}` : ""}</div>
+        <div class="title">${e.title}</div>
+        ${e.locations.length ? html`<div class="where">${e.locations.join(", ")}</div>` : nothing}
+        ${e.detail ? html`<pre>${e.detail}</pre>` : nothing}
+        <div class="opts">
+          offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— what was answered isn't in the folder's copy (it rode the uplink).
+        </div>
+      </div>`;
     return html`<div class="entry perm">
       <div class="who">the agent is asking${e.toolKind && e.toolKind !== "other" ? ` · ${e.toolKind}` : ""}</div>
       <div class="title">${e.title}</div>
