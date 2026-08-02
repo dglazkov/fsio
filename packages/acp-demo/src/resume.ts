@@ -22,6 +22,23 @@
 // `answers` is how the page tells a question it already settled from one it
 // still owes.
 //
+// ---- and after it is over (#123)
+//
+// The record dies with the session it describes — it points at something
+// that is not there. But it is also the only copy of the human's half, and
+// the moment those turns stop being state is the moment they become
+// history, which is exactly when a reader wants them. So the record is
+// demoted rather than deleted: the half the folder cannot have moves to a
+// `PastRecord`, keyed by session id, and the read-only view weaves it into
+// the transcript with the same `promptsBefore` the live page uses.
+//
+// The bound on that is the folder's, not ours. D26 rule 4 bounds what the
+// *folder* keeps; a browser-side copy needs its own sentence, and the one
+// that keeps the folder in charge is: as many as the folder keeps, keyed by
+// session id, dropped once the folder has demonstrably moved past them
+// (`prunablePast`). The browser copy is a satellite that cannot outlive the
+// transcript it annotates.
+//
 // Everything here is pure so it can be tested without a browser
 // (test-resume.ts); the parts that need a directory handle or a signal live
 // in web/.
@@ -55,6 +72,12 @@ export interface StickyRecord {
    *  because replayed frames arrive first and `fs/*` containment is judged
    *  against it. */
   cwd: string;
+  /** the granted folder's name. Not used to find anything — the handle in
+   *  IndexedDB does that — but to say which folder this conversation
+   *  belongs to once it is over (#123), so that connecting to a *second*
+   *  folder cannot read its transcripts as a verdict on the first one's
+   *  records. "" for a record written before this existed. */
+  folder: string;
   /** out-segment generation last seen. A higher one on return means the
    *  head rotated and the replay is a suffix of the conversation, not all
    *  of it (D26, #57) — the page says so rather than pretending. */
@@ -72,6 +95,92 @@ export interface StickyRecord {
    *  no longer exists, so the returning page adopts the id (see
    *  web/acp.ts) — otherwise the turn spins forever. */
   pendingPromptId: number | null;
+}
+
+/** What survives the session: the half of a conversation the folder never
+ *  had. Everything a *live* record carries about a session that is still
+ *  there — the ids to attach with, the cwd to judge paths against, the turn
+ *  in flight — is gone with it, which is the point: nothing in here names
+ *  anything attachable, and nothing in here can be acted on. */
+export interface PastRecord {
+  /** the fsio session id, which is also the transcript directory's name —
+   *  the join between this and what the folder kept. */
+  sessionId: string;
+  /** which folder that transcript would be in. Only the folder that owned a
+   *  conversation gets a say in whether its record is stale. */
+  folder: string;
+  /** what `initialize` said, so the view can name who was talking even when
+   *  the transcript's own paperwork did not survive. */
+  agentName: string;
+  /** the out-segment generation the live page last counted frames against.
+   *  Anchors are positions *within* a generation, so this is what says
+   *  whether they line up with the transcript's numbering
+   *  (`anchorsAlign`). */
+  gen: number;
+  /** the human's turns, oldest first — the whole reason this is kept. */
+  prompts: StickyPrompt[];
+  /** what was clicked, by the agent's request id. Kept for the permission
+   *  cards, which can otherwise only ever say "not knowable from here". */
+  answers: Record<string, string | null>;
+}
+
+/** Session over: keep the half that was only ever here. */
+export function demote(rec: StickyRecord): PastRecord {
+  return {
+    sessionId: rec.sessionId,
+    folder: rec.folder,
+    agentName: rec.agentName,
+    gen: rec.gen,
+    prompts: [...rec.prompts],
+    answers: { ...rec.answers },
+  };
+}
+
+/** Whether the record's anchors are measured from the same place the
+ *  transcript's frames are. A prompt's anchor counts DATA frames from the
+ *  start of the segment generation the page was attached to; a transcript's
+ *  frames start at the oldest generation the host kept. Same number, same
+ *  origin, the turns land where they were typed; different, and they are
+ *  somewhere in the right conversation but not the right place in it —
+ *  which the view says out loud rather than letting the seam look
+ *  deliberate (#57, D32's ceiling). */
+export function anchorsAlign(rec: Pick<PastRecord, "gen">, transcriptGen: number): boolean {
+  return rec.gen === transcriptGen;
+}
+
+/** How many demoted records this origin keeps: the folder's own bound (D26
+ *  rule 4's newest-N), so the browser copy cannot outnumber the transcripts
+ *  it annotates. The byte half of that bound is not mirrored — a record is
+ *  the human's typing, kilobytes against the transcript's megabytes. */
+export const KEEP_PAST = 10;
+
+/** Which demoted records the folder now open has moved past, given what it
+ *  kept. `index` is every record this origin holds, tagged with the folder
+ *  it came from; `folder` is the one whose transcripts `kept` describes.
+ *
+ *  Two ways to get this wrong, and both delete the human's own words.
+ *
+ *  A record whose transcript is absent is not automatically stale: the host
+ *  archives at the sweep, which lags the session's end, so "not there yet"
+ *  and "never going to be there" look identical for a minute. What tells
+ *  them apart is a *newer* transcript — session ids are `s-<ts36>-…`, so
+ *  they sort by when the session started. If the folder kept a conversation
+ *  that ended after this one and not this one, this one either never made
+ *  it or has rotated out of the folder's N, and either way the folder has
+ *  spoken. Nothing kept, nothing pruned: an origin whose helper keeps no
+ *  transcripts at all holds at most KEEP_PAST records and drops them the
+ *  day it does keep one.
+ *
+ *  And a folder only speaks for itself. One origin can hold conversations
+ *  from several folders; opening the second must not be read as a verdict
+ *  on the first, whose transcripts are simply not in the directory being
+ *  listed. A record from before folders were tagged ("") belongs to nobody
+ *  and is therefore never pruned — it ages out by count instead. */
+export function prunablePast(index: readonly { id: string; folder: string }[], kept: readonly string[], folder: string): string[] {
+  const keep = new Set(kept);
+  let newest = "";
+  for (const id of kept) if (id > newest) newest = id;
+  return index.filter((e) => !!e.folder && e.folder === folder && !keep.has(e.id) && e.id < newest).map((e) => e.id);
 }
 
 /** The weave, one frame at a time. About to replay the DATA frame at
@@ -139,21 +248,6 @@ export function parseRecord(raw: unknown): StickyRecord | null {
   const acpSessionId = str("acpSessionId");
   const cwd = str("cwd");
   if (!sessionId || !acpSessionId || !cwd) return null;
-  const prompts: StickyPrompt[] = [];
-  if (Array.isArray(r["prompts"])) {
-    for (const p of r["prompts"] as unknown[]) {
-      if (!p || typeof p !== "object") continue;
-      const q = p as Record<string, unknown>;
-      if (typeof q["text"] !== "string" || typeof q["atFrame"] !== "number") continue;
-      prompts.push({ text: q["text"], atFrame: q["atFrame"] });
-    }
-  }
-  const answers: Record<string, string | null> = {};
-  if (r["answers"] && typeof r["answers"] === "object") {
-    for (const [k, v] of Object.entries(r["answers"] as Record<string, unknown>)) {
-      if (v === null || typeof v === "string") answers[k] = v;
-    }
-  }
   return {
     sessionId,
     acpSessionId,
@@ -161,10 +255,55 @@ export function parseRecord(raw: unknown): StickyRecord | null {
     agent: str("agent") ?? "",
     agentName: str("agentName") ?? "agent",
     agentVersion: str("agentVersion") ?? "",
+    folder: str("folder") ?? "",
     gen: typeof r["gen"] === "number" ? r["gen"] : 0,
-    prompts,
+    prompts: parsePrompts(r["prompts"]),
     queued: Array.isArray(r["queued"]) ? (r["queued"] as unknown[]).filter((q): q is string => typeof q === "string") : [],
-    answers,
+    answers: parseAnswers(r["answers"]),
     pendingPromptId: typeof r["pendingPromptId"] === "number" ? r["pendingPromptId"] : null,
   };
+}
+
+/** The same defensive read for a record that has been sitting there since
+ *  the session ended (#123) — longer, by design, so more of the reasons
+ *  above apply. A record with neither turns nor answers is not a record: it
+ *  annotates nothing, and the view is better off saying the folder's copy is
+ *  all there is. */
+export function parsePast(raw: unknown): PastRecord | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const sessionId = typeof r["sessionId"] === "string" ? r["sessionId"] : "";
+  if (!sessionId) return null;
+  const prompts = parsePrompts(r["prompts"]);
+  const answers = parseAnswers(r["answers"]);
+  if (!prompts.length && !Object.keys(answers).length) return null;
+  return {
+    sessionId,
+    folder: typeof r["folder"] === "string" ? r["folder"] : "",
+    agentName: typeof r["agentName"] === "string" && r["agentName"] ? r["agentName"] : "agent",
+    gen: typeof r["gen"] === "number" ? r["gen"] : 0,
+    prompts,
+    answers,
+  };
+}
+
+function parsePrompts(raw: unknown): StickyPrompt[] {
+  const prompts: StickyPrompt[] = [];
+  if (!Array.isArray(raw)) return prompts;
+  for (const p of raw as unknown[]) {
+    if (!p || typeof p !== "object") continue;
+    const q = p as Record<string, unknown>;
+    if (typeof q["text"] !== "string" || typeof q["atFrame"] !== "number") continue;
+    prompts.push({ text: q["text"], atFrame: q["atFrame"] });
+  }
+  return prompts;
+}
+
+function parseAnswers(raw: unknown): Record<string, string | null> {
+  const answers: Record<string, string | null> = {};
+  if (!raw || typeof raw !== "object") return answers;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v === null || typeof v === "string") answers[k] = v;
+  }
+  return answers;
 }

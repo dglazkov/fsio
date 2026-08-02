@@ -52,7 +52,7 @@ import { entries, pastEntries, pushEntry, pushPast, queued, turn, type EntrySink
 import { signal } from "@lit-labs/signals";
 import { touched } from "./workspace";
 import { containedRelative } from "../src/paths.js";
-import { permissionVerdict, promptsBefore, type StickyRecord } from "../src/resume.js";
+import { permissionVerdict, promptsBefore, type PastRecord, type StickyRecord } from "../src/resume.js";
 import { currentRecord, updateRecord } from "./store";
 
 /** The protocol version this client speaks. */
@@ -93,12 +93,17 @@ export class AgentSession {
   /** how many of the record's prompts have been woven back in. */
   #promptCursor = 0;
 
-  /** true when this session is a *document*: an ended conversation read
-   *  back from `.fsio/transcripts/` (#119). Same handlers, same rendering,
-   *  three differences — no wire (the connection has no session), no turns
-   *  of the human's to weave (they rode the uplink and the record died with
-   *  the session), and nothing that could act. */
-  #history: boolean;
+  /** set when this session is a *document*: an ended conversation read back
+   *  from `.fsio/transcripts/` (#119). Same handlers, same rendering, two
+   *  differences — no wire (the connection has no session), and nothing that
+   *  could act.
+   *
+   *  `past` is what this browser kept of its own half of that conversation
+   *  (#123), or null for one it did not drive. Deliberately a field on the
+   *  session rather than a lookup in `currentRecord()`: the live record
+   *  belongs to a different conversation, and splicing it in here would be
+   *  the one mistake this view cannot survive. */
+  #history: { past: PastRecord | null } | null;
   /** Which conversation this session's output belongs to. A property of the
    *  session, not of the moment: the live agent may well be mid-turn while
    *  someone is reading a past conversation, and its words belong in the
@@ -110,7 +115,13 @@ export class AgentSession {
    *  attach even completes is in it — the ACP session id, the agent's cwd,
    *  and the id of a turn that was in flight — because replayed frames
    *  start arriving before `ready` resolves. */
-  constructor(conn: AcpConnection, root: FileSystemDirectoryHandle, cwd: string, resume: StickyRecord | null = null, history = false) {
+  constructor(
+    conn: AcpConnection,
+    root: FileSystemDirectoryHandle,
+    cwd: string,
+    resume: StickyRecord | null = null,
+    history: { past: PastRecord | null } | null = null
+  ) {
     this.conn = conn;
     this.#root = root;
     this.#cwd = cwd.replace(/\/+$/, "");
@@ -190,28 +201,39 @@ export class AgentSession {
     // Live again. Anything anchored past the last replayed frame is a turn
     // taken after the agent's last word (or one whose anchor overshot a
     // rotated stream) — it goes here, at the end.
-    this.#weavePrompts(Number.POSITIVE_INFINITY);
+    this.flushPrompts();
     this.#streaming = null;
     if (rec?.queued.length) queued.set([...rec.queued]);
   }
 
-  /** Called once per incoming DATA frame, before it is dispatched. */
+  /** Called once per incoming DATA frame, before it is dispatched. A
+   *  transcript's reader passes `true` for every frame it feeds, because
+   *  every frame in a file is history by construction. */
   onFrame(index: number, replayed: boolean): void {
     if (replayed) this.#weavePrompts(index);
   }
 
+  /** Everything anchored past the last frame there was: turns taken after
+   *  the agent's last word, and — after a rotation (#57) — turns whose
+   *  anchors overshoot the stream entirely. Live replay flushes this when
+   *  the bracket closes; a transcript has no bracket, so its reader calls it
+   *  when the last segment has been fed. */
+  flushPrompts(): void {
+    this.#weavePrompts(Number.POSITIVE_INFINITY);
+  }
+
   #weavePrompts(upTo: number): void {
-    // A past conversation has no human half to weave: the record that
-    // carried it died with the session it described. Reading the *live*
-    // record here would splice the current conversation's prompts into a
-    // document about a different one (#119).
-    if (this.#history) return;
-    const rec = currentRecord();
-    if (!rec) return;
-    const next = promptsBefore(rec.prompts, this.#promptCursor, upTo);
+    // Which half is being woven, and whose. A document weaves the record
+    // demoted when *its* session ended (#123); a live conversation weaves
+    // the record it is driving. Reading the live record in a document would
+    // splice the current conversation's prompts into one about a different
+    // one, which is why the source is a field and not a lookup.
+    const prompts = (this.#history ? this.#history.past : currentRecord())?.prompts;
+    if (!prompts?.length) return;
+    const next = promptsBefore(prompts, this.#promptCursor, upTo);
     for (let i = this.#promptCursor; i < next; i++) {
       this.#streaming = null;
-      this.#push({ kind: "user", text: rec.prompts[i]!.text });
+      this.#push({ kind: "user", text: prompts[i]!.text });
     }
     this.#promptCursor = next;
   }
@@ -356,13 +378,22 @@ export class AgentSession {
       options,
     };
 
-    // From a transcript (#119): the question is in the folder, the answer
-    // never was. Show what was asked, mark it historic, and let the card
-    // say that the verdict is not knowable from here — the alternative is
-    // inferring it from what the agent did next, which D32 already refused
-    // as a guess dressed as a fact.
+    // From a transcript (#119, #123): the question is in the folder, the
+    // answer never was. Two different unknowables, and the card has to carry
+    // the difference rather than blur it. A conversation *this browser*
+    // drove kept what was clicked (D32 rule 2's record, demoted rather than
+    // deleted), so the verdict is knowable — from here, on this machine, and
+    // nowhere else. One it did not drive stays unanswerable, and the
+    // alternative to saying so is inferring the answer from what the agent
+    // did next, which D32 already refused as a guess dressed as a fact.
     if (this.#history) {
-      this.#push({ ...card, answer: signal<string | null>(null), respond: null, historic: true });
+      const known = permissionVerdict(this.#history.past?.answers ?? {}, origin.id);
+      this.#push({
+        ...card,
+        answer: signal<string | null>(known.state === "settled" ? (known.option ?? "(cancelled)") : null),
+        respond: null,
+        historic: true,
+      });
       return NO_RESPONSE;
     }
 

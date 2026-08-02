@@ -83,6 +83,14 @@ export const past = signal<PastConversation[]>([]);
  *  the chat pane is a document: no composer, nothing clickable, nothing on
  *  the wire. */
 export const viewing = signal<PastConversation | null>(null);
+/** Whether the conversation being read has its human half, and how much of
+ *  it (#123) — null when this browser did not drive it, which is the state
+ *  every transcript was in before the record was demoted rather than
+ *  deleted. `placed` is false when the anchors no longer line up with the
+ *  segments the folder kept: the turns are all there, in the wrong places.
+ *  The banner reads this, because "what you are looking at is half a
+ *  conversation" and "…is the whole of one" are different documents. */
+export const viewingHalf = signal<{ prompts: number; placed: boolean } | null>(null);
 
 export type Turn = "starting" | "idle" | "thinking" | "cancelling" | "gone";
 export const turn = signal<Turn>("starting");
@@ -134,9 +142,12 @@ export interface PermissionEntry {
   respond: ((optionId: string | null) => void) | null;
   /** read out of an ended session's transcript (#119). The question is in
    *  the folder; the answer never was — it rode the uplink, which is not
-   *  logged. So the card shows what was asked and says plainly that what
-   *  was answered is not knowable from here, rather than inferring it from
-   *  what the agent did next (a guess dressed as a fact, D32's words). */
+   *  logged. So the card shows what was asked, and what it can say about the
+   *  verdict depends on who is reading (#123): this browser kept what it
+   *  clicked, so `answer` is set for a conversation it drove, and stays null
+   *  for one it did not — where the honest thing is to say it is not
+   *  knowable from here, rather than inferring it from what the agent did
+   *  next (a guess dressed as a fact, D32's words). */
   historic?: true;
 }
 export interface NoteEntry {

@@ -399,6 +399,10 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
       agentName: init.agentName,
       agentVersion: init.agentVersion,
       cwd,
+      // Which folder this conversation happens in, for after it is over
+      // (#123): the transcript will be in this folder's `.fsio/`, and only
+      // this folder gets to say the record of it has gone stale.
+      folder: root.name,
       gen: 0,
       prompts: [],
       queued: [],

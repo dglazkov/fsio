@@ -1121,7 +1121,14 @@ workbench echoes and shells, where rules 1–2 are right and a durable copy
 is a liability; an embedder whose sessions carry a conversation asks for
 it, and by asking accepts what the paragraph above says). Persisting the
 transcript browser-side instead (D32 already rejected it: a second source
-of truth that drifts).
+of truth that drifts). Note the asymmetry that leaves, settled in
+[D32](#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)'s
+[#123](https://github.com/dglazkov/fsio/issues/123) amendment: what is
+rejected here is a browser copy of the half the folder *has*. The human's
+half never rode the folder and has no other copy, so the page keeps it —
+bounded by what this folder kept, and with the opposite privacy trade
+(private to the origin, invisible to a co-tenant, invisible in the
+project) stated there rather than inherited from here.
 
 ## D27 — reach attaches to the grant, not the workspace
 
@@ -1575,9 +1582,82 @@ The expectation people bring from
 `claude --resume` is transcript-shaped; what this decision built is
 process-shaped; rule 4 closes the gap from the cheap end.
 
+**Amended — rule 2 outlives the session
+([#123](https://github.com/dglazkov/fsio/issues/123)).** Rule 2 splits a
+conversation in two and says where each half is read back from. Since the
+amendment above the folder's half survives the session; the page's half did
+not. The sticky record was *deleted* when the session ended — on the
+human's "end session", on the agent's exit, and on a revisit that found the
+session gone — and every one of those is correct for a record that is
+**state**: it names a session that is not there, and a page that acted on it
+would attach to nothing. None of them is a reason to delete the human's own
+words, which exist in no other place and become worth reading at exactly the
+moment they stop being state. So the record is **demoted, not deleted**:
+what pointed at the live session (the ACP session id, the cwd, the queue,
+the turn in flight) goes, and `{prompts, answers, agentName, gen}` moves to
+a `past:<session-id>` key that the read-only view weaves into the transcript
+with the same `promptsBefore` the live page uses. A past conversation this
+browser drove is now whole; one it did not is what it always was.
+
+Three things this had to decide rather than assume.
+
+**The bound is the folder's.** D26 rule 4 bounds what the *folder* keeps;
+IndexedDB in the origin is not that folder and needs its own sentence. The
+one that keeps the folder in charge: as many as the folder keeps, keyed by
+session id, dropped once the folder has demonstrably moved past them. Two
+enforcements — the newest N (10, the folder's own N; the byte half is not
+mirrored, a record being the human's typing against the transcript's
+megabytes), and a prune on every read of `.fsio/transcripts/`. That prune
+may not read "absent" as "stale": archiving happens at the sweep, which lags
+the end of the session, so for a minute "not yet" and "never" look
+identical. What separates them is a *newer* transcript — session ids sort by
+start time — and only from the folder the record belongs to, since one
+origin can hold conversations from several folders and opening the second is
+not a verdict on the first. The result is a satellite: it cannot outnumber
+the transcripts it annotates, and it cannot outlive them.
+
+**Keeping the human's words browser-side is the opposite trade from keeping
+the agent's in the folder, not that trade extended.** D26 rule 4's stated
+cost is that a transcript is readable by every origin ever granted the
+folder. This copy is the reverse: private to the origin, invisible to a
+co-tenant — and invisible to the human too, since it is in IndexedDB and not
+in their project. Neither is obviously the safer one, and the answered
+permission cards sharpen it, since "what I clicked" is arguably more
+sensitive than "what I typed". What settles it is that the alternative on
+offer was never "keep it somewhere better", it was *destroying it*: the
+words rode the uplink, nothing logged them, and the page holds the only copy
+there has ever been. Writing them into `.fsio/` beside the agent's half is
+the symmetrical option and is rejected below.
+
+**A permission card may show its verdict only for a conversation this
+browser drove.** #119 had every historic card say "what was answered isn't
+in the folder's copy" — honest, and still what a transcript from another
+browser gets. With `answers` demoted rather than deleted the verdict is
+knowable for a session this browser answered, and the card carries that
+distinction rather than blurring it: the answered card says where the answer
+came from, the unanswerable one says both that the folder does not have it
+and that this browser does not either. Inferring it from what the agent did
+next stays refused.
+
+**Alternatives rejected (this amendment).** Writing the human's half into
+`.fsio/transcripts/<id>/` beside the agent's (symmetrical, and readable
+afterwards by any browser — but it inverts the trade above without being
+asked to, publishing what someone typed *and what they clicked on a consent
+card* to every origin that has ever held the folder, which is the change in
+kind D26 rule 4 flagged as its reason for a tight bound; if it is ever
+wanted it is a gesture, not a default). Keeping the record whole and simply
+not deleting it (the next load would take it down the reattach path for a
+session that is gone — the record's job as state really does end, and only
+its contents outlive it). An unbounded browser-side archive (nothing would
+ever say how much of someone's typing this origin is holding, or when it
+stops). Bounding it by age instead of by the folder (a clock the page has
+no reason to trust over the authority it already reads on every connect).
+
 **Alternatives rejected.** Persisting the whole transcript in IndexedDB
 (the folder already has the agent's half, and a browser-cached copy would be
-a second source of truth that drifts). Cancelling every outstanding request
+a second source of truth that drifts — which is an argument about the
+*agent's* half only, and is why the amendment above keeps the human's half,
+of which there is no other copy at all). Cancelling every outstanding request
 at `detach` (simple, and it throws away the reason to be sticky at all — an
 agent that stops working the moment you close the tab has not survived
 anything). Inferring which permission cards were already answered from
