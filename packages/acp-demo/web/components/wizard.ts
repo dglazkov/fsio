@@ -9,8 +9,8 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agents, gate, phase, wizardStep, folder, helper, pickError, reconnectTo, type AgentOffer } from "../state";
-import { chooseAgent, forgetFolder, pickFolder, regrant, onMac } from "../connection";
+import { agents, gate, phase, wizardStep, folder, helper, pickError, reconnectTo, resumeError, type AgentOffer } from "../state";
+import { abandonAndStartNew, chooseAgent, forgetFolder, pickFolder, regrant, retryResume, onMac } from "../connection";
 
 // The one-liner (#106): CI force-pushes the bundled helper to the `acp-demo`
 // branch on every green main, so this installs and runs the same code the
@@ -74,14 +74,16 @@ class AcpWizard extends SignalWatcher(LitElement) {
         ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
         : phase.get() === "reconnect"
           ? this.#reconnect()
-          : this.#steps()}
+          : phase.get() === "resume-error"
+            ? this.#resumeError()
+            : this.#steps()}
     </dialog>`;
   }
 
   protected override updated(): void {
     const d = this.renderRoot.querySelector("dialog")!;
     const p = phase.get();
-    const open = gate.get() !== null || p === "wizard" || p === "reconnect";
+    const open = gate.get() !== null || p === "wizard" || p === "reconnect" || p === "resume-error";
     if (open && !d.open) d.showModal();
     else if (!open && d.open) d.close();
   }
@@ -186,6 +188,28 @@ class AcpWizard extends SignalWatcher(LitElement) {
         : nothing}
       ${!err && f && h === "alive" ? html`<div class="status ok">helper found — starting the agent</div>` : nothing}
     `;
+  }
+
+  /** A session that is probably still running, that we failed to rejoin
+   *  (#115).
+   *
+   *  The page stops here on purpose. Quietly starting a second conversation
+   *  would be the failure D32 rule 1 forbids — it looks like it worked, and
+   *  the first conversation keeps running with nothing pointing at it. Both
+   *  buttons here are honest: one tries again, the other says out loud that
+   *  the old session is being left behind. */
+  #resumeError(): TemplateResult {
+    const e = resumeError.get();
+    return html`${this.#header()}
+      <div class="status bad">${e?.msg ?? "could not rejoin the session"}<span class="hint">${e?.hint ?? ""}</span></div>
+      <p class="fineprint">
+        Nothing was started in its place, so there is still exactly one
+        conversation in this folder.
+      </p>
+      <div class="row">
+        <button class="primary" @click=${() => void retryResume()}>Try again</button>
+        <button class="ghost small" @click=${() => void abandonAndStartNew()}>leave it running and start a new one</button>
+      </div>`;
   }
 
   /** Step 3 (#102): what this machine has, and what each one will do.
