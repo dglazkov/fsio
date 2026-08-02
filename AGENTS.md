@@ -7,10 +7,23 @@ style.
 
 ## Map
 
+- **`PROCESS.md` — read this before the records, every time.** The records
+  below absorbed a great deal that was never protocol: demo choices sit in
+  the decision log, findings measure pages we wrote, and numbers cited from
+  shipped code resolve to nothing. They all read alike, so **if you find
+  yourself reconciling constraints where some seem not to fit, you are not
+  missing context — some of them are not real.** PROCESS.md says which layer
+  a thought goes in (demos fast and unrecorded, protocol slow, findings
+  slowest, workbench and labs are instruments), names the failure modes that
+  recur, and gives the one rule that matters when a demo runs into the
+  protocol: **stop and ask.** Don't write a decision to resolve the tension —
+  that is how it got here. `node scripts/record-hygiene.mjs` shows the
+  current state.
 - `spec/PROTOCOL.md` — normative (MUST/SHOULD). `spec/FINDINGS.md` — measured
   platform behaviors, F-numbered. `spec/DECISIONS.md` — ADR-lite, D-numbered.
   `spec/PRINCIPLES.md` — platform principles, P-numbered (handles below).
 - `TESTING.md` — test tiers and what deliberately isn't tested.
+- `NARRATIVE.md` — the demo through-line: which act each demo plays.
 - `packages/{common,client,host,fsiod,workbench,terminal-demo,acp-demo,bench}`
   — npm workspaces; `common` is the single source of protocol truth (types +
   codec + JSON-RPC), both sides import it. The `*-demo` packages are page +

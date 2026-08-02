@@ -11,9 +11,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const FILES = ["spec/PROTOCOL.md", "spec/FINDINGS.md", "spec/DECISIONS.md", "TESTING.md", "README.md", "AGENTS.md"].filter((f) =>
-  fs.existsSync(path.join(repo, f))
-);
+const FILES = [
+  "spec/PROTOCOL.md",
+  "spec/FINDINGS.md",
+  "spec/DECISIONS.md",
+  "spec/PRINCIPLES.md",
+  "TESTING.md",
+  "README.md",
+  "AGENTS.md",
+  "PROCESS.md",
+  "NARRATIVE.md",
+].filter((f) => fs.existsSync(path.join(repo, f)));
 
 // GitHub's slugger: lowercase, strip punctuation, spaces → hyphens.
 const slug = (h) =>
