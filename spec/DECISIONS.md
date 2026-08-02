@@ -187,7 +187,7 @@ ownership of the *sweep*.
 **Alternatives rejected.** Client-owned cleanup (races host writes, F8).
 Shared files with locking (no usable cross-runtime file locks in the File
 System Access API). Copying the reports out to a host-owned slot at
-shutdown (`~/.fsio/state/…`, R17/[#71](https://github.com/dglazkov/fsio/issues/71))
+shutdown (`~/.fsio/state/…`, [#71](https://github.com/dglazkov/fsio/issues/71))
 — keeps the folder pristine and is where this should end up, but the slot
 does not exist yet and the folder is where the reader is already looking.
 A `--keep-reports` flag off by default (every cooperative run has to
@@ -1166,7 +1166,8 @@ already holds the handle), which is precisely why the retention bound and
 the defensive read are load-bearing rather than hygiene.
 
 **Alternatives rejected (rule 4).** The host-owned slot
-`~/.fsio/state/<workspace>/<service>/` that R17 and
+`~/.fsio/state/<workspace>/<service>/` that
+[#86](https://github.com/dglazkov/fsio/issues/86) and
 [#71](https://github.com/dglazkov/fsio/issues/71) point at (keeps the
 workspace clean and matches where the Claude CLI puts history; costs new
 machinery, a second grantable place, and a new rung for a page to read
@@ -1209,7 +1210,7 @@ stands.
 the profile mechanism's requirements from the narrative's acts and left
 the attachment question as its sharpest fork (open question 2): season
 two needs the same workspace to have different reach depending on who is
-asking (R14), which one-profile-per-workspace cannot express. The
+asking, which one-profile-per-workspace cannot express. The
 walkthrough of a team-facing product drafted in the then-NARRATIVE.md
 (since spun out of this repo) settled it by exercise: at no beat did anyone want policy attached to the *place* —
 the owner consents to "Alice may use test-runner in workspace fsio," a
@@ -1227,9 +1228,9 @@ abandoned, just no longer this repo's to track, so nothing here should be
 read as waiting on it
 ([#131](https://github.com/dglazkov/fsio/issues/131)). This decision stands
 on fsio-native ground regardless: two *origins* granted the same workspace
-(F21's independent grants) already need per-asker reach — R14 is the
-multi-origin case stated generally, with or without a cloud layer above the
-transport.
+(F21's independent grants) already need per-asker reach, which is the
+multi-origin case of the same requirement, stated generally and with or
+without a cloud layer above the transport.
 
 **Alternatives rejected.** Profile-per-workspace (D22 as written —
 cannot say "same workspace, different reach per asker"; forces season

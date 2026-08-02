@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Agent-reach lab (#90, act 2 / #18) — what a real agent CLI touches under
-// confinement, and whether R17's host-owned slot actually works.
+// confinement, and whether a host-owned state slot actually works.
 //
 // This is the deliberate re-run of the organic field test in
 // https://github.com/dglazkov/fsio/issues/18#issuecomment-5119402080, where
 // the claude CLI's ~/.claude writes were denied by Seatbelt, surfaced in the
 // agent's own UI, and were fixed by REDIRECTING state (CLAUDE_CONFIG_DIR)
 // rather than by carving the wall. That accident produced "placement over
-// denial" (R4/R17); this lab measures it on purpose.
+// denial" (#86); this lab measures it on purpose.
 //
 // Instrument: the unified log (SBPL `(trace)` no longer produces a file on
 // current macOS), same as the confinement and service labs. Nothing reads
@@ -57,7 +57,7 @@ const fsioDir = path.join(WS, ".fsio");
 fs.mkdirSync(fsioDir, { recursive: true });
 const realTmp = fs.realpathSync(os.tmpdir());
 
-/** Profile variants. `slotCarve` is R17: open exactly the host-owned slot. */
+/** Profile variants. `slotCarve` opens exactly the host-owned slot. */
 function writeProfile(name, { slotCarve = false, noKeystore = false } = {}) {
   let body = SHIPPED;
   if (noKeystore) {
@@ -71,7 +71,7 @@ function writeProfile(name, { slotCarve = false, noKeystore = false } = {}) {
   }
   if (slotCarve) {
     body += `
-;; R17: the child's state lives in a host-owned slot, and the profile's job
+;; The child's state lives in a host-owned slot, and the profile's job
 ;; is to open exactly that slot — not $HOME, not the user's dotfiles.
 (allow file-read* (subpath (param "SLOT")))
 (allow file-write* (subpath (param "SLOT")))
@@ -243,7 +243,7 @@ if (has("Ak"))
 
 if (has("B"))
   results.push(await cell({
-    name: "B", title: "R17 — state in the host-owned slot, sandbox carve exactly that wide",
+    name: "B", title: "state in the host-owned slot, sandbox carve exactly that wide",
     profile: writeProfile("demo-slot", { slotCarve: true }), configDir: SLOT,
     env: fullEnv({ CLAUDE_CONFIG_DIR: SLOT }), prompt: PROMPT,
   }));

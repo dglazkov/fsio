@@ -11,10 +11,9 @@ Every one is reproducible with the labs in `scripts/`, on macOS/arm64.
 Where a measurement has a method trap, the trap is written next to the
 number — an instrument is worth exactly what its method is worth.
 
-The requirement numbers these entries used to cite (R1–R19) were never
-defined in a file; they live in
-[#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments, and
-are named here by what they say rather than by number.
+The requirement numbers these entries used to cite were never defined in a
+file; they live in [#86](https://github.com/dglazkov/fsio/issues/86)'s body
+and comments, and are named here by what they say rather than by number.
 
 ---
 

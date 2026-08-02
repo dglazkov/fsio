@@ -9,7 +9,7 @@
 // The rule: ACP sends absolute paths; the page holds a handle to exactly
 // one directory. Anything that does not resolve inside that directory is
 // refused *by name* rather than left to fail as a NotFoundError, so the
-// agent gets a sentence it can relay to its user (R9). `.fsio` is refused
+// agent gets a sentence it can relay to its user. `.fsio` is refused
 // too: it is the host's (D6), and it is the channel this very conversation
 // is riding on.
 

@@ -37,7 +37,7 @@ class ScriptedClient {
 
   /** canned contents the client will serve for `fs/read_text_file`. */
   files = new Map<string, string>();
-  /** paths the client refuses, with the message an agent would relay (R9). */
+  /** paths the client refuses, with the message an agent would relay. */
   refusals = new Map<string, string>();
 
   /** everything the puppet asked permission for, in order. */
@@ -197,7 +197,7 @@ test("puppet: session/new refuses without a cwd — it has no hands and cannot g
   }
 });
 
-// ------------------------------------------------------------- the demo (R6)
+// ----------------------------------------------------------------- the demo
 
 test("puppet: asks permission BEFORE writing, and the write matches the diff it showed", async () => {
   const c = await start();
@@ -269,9 +269,9 @@ test("puppet: a missing file becomes a proposal to create it, not a crash", asyn
   }
 });
 
-// ------------------------------------------------------- the refusals (R9)
+// ----------------------------------------------------------- the refusals
 
-test("puppet: relays the client's refusal TEXT verbatim, which is what R9 is for", async () => {
+test("puppet: relays the client's refusal TEXT verbatim — the point of writing it to be relayed", async () => {
   const c = await start();
   try {
     const outside = "/etc/passwd";

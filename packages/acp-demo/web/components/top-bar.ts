@@ -4,8 +4,9 @@
 // The confinement badge is not decoration. Confinement is a *session fact
 // the page reads* (`sandboxed`, `confinement`), never one it asserts, so an
 // unconfined agent says so here, in the same place a confined one does.
-// R3's rule with a UI: a demo whose safety sentence is hardcoded in the
-// page would keep saying it after the safety went away.
+// That is the never-silently-unconfined rule with a UI: a demo whose safety
+// sentence is hardcoded in the page would keep saying it after the safety
+// went away.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";

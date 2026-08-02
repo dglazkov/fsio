@@ -7,7 +7,8 @@
 // the workspace pane that shows the file. Compare the terminal version of
 // this moment: the agent draws a prompt inside a pty, the page cannot style
 // it, cannot link it to the file, and cannot tell you what confines the
-// process being authorized. That difference is R6, and it is why the
+// process being authorized. That difference is the demo's whole point, and
+// it is why the
 // structured half of #18 was the half worth building.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
