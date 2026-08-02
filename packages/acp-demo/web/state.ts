@@ -4,15 +4,17 @@
 import { signal } from "@lit-labs/signals";
 import type { Signal } from "@lit-labs/signals";
 import type { PastConversation } from "../src/transcripts.js";
+import type { Adoptable } from "./discovery";
 
-export type { PastConversation };
+export type { PastConversation, Adoptable };
 
 /** boot — deciding; wizard — setup dialog; reconnect — a remembered folder
  *  whose grant needs one click back (#58's shape, F15); resume-error — a
  *  session that is probably still running and that we failed to rejoin
  *  (#115: the page stops here rather than starting a second conversation
- *  on top of it); chat — the app. */
-export type Phase = "boot" | "wizard" | "reconnect" | "resume-error" | "chat";
+ *  on top of it); pick-session — conversations running in this folder that
+ *  nothing here has a record of (#117); chat — the app. */
+export type Phase = "boot" | "wizard" | "reconnect" | "resume-error" | "pick-session" | "chat";
 export const phase = signal<Phase>("boot");
 /** The remembered handle waiting on that click. `requestPermission` needs a
  *  user activation (F15), so this is a button the human presses, never
@@ -40,6 +42,16 @@ export const folder = signal<{ name: string; via: "picked" | "restored" | "regra
  *  it came back to (#113). The chat header says so; a demo that silently
  *  resumed would be indistinguishable from one that lost everything. */
 export const resumed = signal(false);
+
+/** Running conversations in this folder that nothing here has a record of
+ *  (#117). The record is a shortcut back to one session; the folder is the
+ *  index of all of them, and this is what it answered. */
+export const adoptable = signal<Adoptable[]>([]);
+/** True when the conversation on screen was joined in progress rather than
+ *  started or resumed here. Stronger than `resumed`, and it has to be said
+ *  louder: what came back is the agent's half, beginning at whatever the
+ *  folder still holds, with no record anywhere of what was typed into it. */
+export const adopted = signal(false);
 
 export type HelperState = "none" | "silent" | "alive" | "wrong-kind";
 export const helper = signal<HelperState>("none");
@@ -89,8 +101,12 @@ export const viewing = signal<PastConversation | null>(null);
  *  deleted. `placed` is false when the anchors no longer line up with the
  *  segments the folder kept: the turns are all there, in the wrong places.
  *  The banner reads this, because "what you are looking at is half a
- *  conversation" and "…is the whole of one" are different documents. */
-export const viewingHalf = signal<{ prompts: number; placed: boolean } | null>(null);
+ *  conversation" and "…is the whole of one" are different documents.
+ *
+ *  `adopted` is a third state between them (#117): the browser has a half,
+ *  but only from the point the page joined the conversation — before that
+ *  there are no turns anywhere. */
+export const viewingHalf = signal<{ prompts: number; placed: boolean; adopted: boolean } | null>(null);
 
 export type Turn = "starting" | "idle" | "thinking" | "cancelling" | "gone";
 export const turn = signal<Turn>("starting");

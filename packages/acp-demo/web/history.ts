@@ -117,7 +117,7 @@ export async function openPast(root: FileSystemDirectoryHandle, p: PastConversat
   // (#123). Read before the first frame is fed: the weave runs frame by
   // frame, so a record that arrived late would land its turns at the end.
   const mine = await pastRecord(p.id);
-  viewingHalf.set(mine ? { prompts: mine.prompts.length, placed: anchorsAlign(mine, p.gen) } : null);
+  viewingHalf.set(mine ? { prompts: mine.prompts.length, placed: anchorsAlign(mine, p.gen), adopted: mine.adopted } : null);
   reporter.event("history-open", { id: p.id, agent: p.agent, bytes: p.bytes, logs: p.logs.length, prompts: mine?.prompts.length ?? null });
   let session: AgentSession | null = null;
   const conn = new AcpConnection(null, {
@@ -173,6 +173,15 @@ export async function openPast(root: FileSystemDirectoryHandle, p: PastConversat
     head.push({
       kind: "note",
       text: "your own turns are from this browser's record of the conversation, and the stream they were anchored against has rotated since — they are all here, but not necessarily in the right places.",
+    });
+  // A third seam (#117): this browser joined the conversation partway
+  // through, so its record of the human half starts where the page did. The
+  // turns before that point are not late or misplaced — they were never
+  // here, and no browser is holding them.
+  if (mine?.adopted)
+    head.push({
+      kind: "note",
+      text: "this page joined this conversation while it was already running, so what it kept of your side starts from that moment. Anything typed into it before then rode the uplink and was recorded in a browser that is not this one.",
     });
   if (head.length) pastEntries.set([...head, ...pastEntries.get()]);
   reporter.event("history-rendered", {

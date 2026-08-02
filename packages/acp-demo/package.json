@@ -35,7 +35,7 @@
       ]
     },
     "test": {
-      "command": "node --test --test-concurrency=1 dist/test-framing.js dist/test-paths.js dist/test-markdown.js dist/test-resume.js dist/test-transcripts.js dist/test-agents.js dist/test-acp-kind.js dist/test-sandbox.js dist/test-fixture-agent.js",
+      "command": "node --test --test-concurrency=1 dist/test-framing.js dist/test-paths.js dist/test-markdown.js dist/test-resume.js dist/test-transcripts.js dist/test-discovery.js dist/test-agents.js dist/test-acp-kind.js dist/test-sandbox.js dist/test-fixture-agent.js",
       "files": [
         "../host/src/**",
         "../client/src/**"

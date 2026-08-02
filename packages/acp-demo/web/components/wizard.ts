@@ -9,8 +9,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agents, gate, phase, wizardStep, folder, helper, pickError, reconnectTo, resumeError, type AgentOffer } from "../state";
-import { abandonAndStartNew, chooseAgent, forgetFolder, pickFolder, regrant, retryResume, onMac } from "../connection";
+import { adoptable, agents, gate, phase, wizardStep, folder, helper, pickError, reconnectTo, resumeError, type AgentOffer, type Adoptable } from "../state";
+import { abandonAndStartNew, adoptSession, chooseAgent, declineRunning, forgetFolder, pickFolder, regrant, retryResume, onMac } from "../connection";
+import { sinceLabel } from "../../src/discovery.js";
 
 // The one-liner (#106): CI force-pushes the bundled helper to the `acp-demo`
 // branch on every green main, so this installs and runs the same code the
@@ -26,6 +27,7 @@ class AcpWizard extends SignalWatcher(LitElement) {
     }
     dialog::backdrop { background: rgba(10, 12, 16, 0.55); backdrop-filter: blur(2px); }
     h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
+    h2 { font-size: 1rem; margin: 0 0 0.3rem; font-weight: 600; color: #eceff4; }
     h1 .dim { color: #5e81ac; font-weight: 400; }
     .tagline { color: #9aa5b8; margin: 0.2rem 0 1.1rem; font-size: 0.92rem; }
     .crumbs { display: flex; gap: 1rem; font-size: 0.8rem; color: #5c6675; margin-bottom: 0.9rem; }
@@ -65,6 +67,24 @@ class AcpWizard extends SignalWatcher(LitElement) {
     .agent .asks { color: #a3be8c; }
     .agent .hands { color: #d9b477; }
     .agent .cmd { margin: 0.35rem 0 0; }
+    .sess {
+      border: 1px solid #2c313c; border-radius: 8px; padding: 0.6rem 0.8rem;
+      margin: 0.5rem 0; display: flex; gap: 0.8rem; align-items: center;
+    }
+    .sess .who { flex: 1; min-width: 0; }
+    .sess .name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; color: #eceff4; }
+    .sess .ver { color: #7b8598; font-size: 0.82rem; }
+    .sess .when { color: #9aa5b8; font-size: 0.85rem; margin-top: 0.1rem; }
+    .sess .said {
+      color: #7b8598; font-size: 0.85rem; margin-top: 0.25rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      border-left: 2px solid #2c313c; padding-left: 0.5rem;
+    }
+    .sess .stuck { color: #d9b477; font-size: 0.82rem; margin-top: 0.25rem; }
+    .caveat {
+      border-left: 2px solid #4c566a; padding-left: 0.7rem; margin: 0.9rem 0 0;
+      color: #9aa5b8; font-size: 0.85rem;
+    }
   `;
 
   override render(): TemplateResult {
@@ -76,14 +96,16 @@ class AcpWizard extends SignalWatcher(LitElement) {
           ? this.#reconnect()
           : phase.get() === "resume-error"
             ? this.#resumeError()
-            : this.#steps()}
+            : phase.get() === "pick-session"
+              ? this.#running()
+              : this.#steps()}
     </dialog>`;
   }
 
   protected override updated(): void {
     const d = this.renderRoot.querySelector("dialog")!;
     const p = phase.get();
-    const open = gate.get() !== null || p === "wizard" || p === "reconnect" || p === "resume-error";
+    const open = gate.get() !== null || p === "wizard" || p === "reconnect" || p === "resume-error" || p === "pick-session";
     if (open && !d.open) d.showModal();
     else if (!open && d.open) d.close();
   }
@@ -210,6 +232,72 @@ class AcpWizard extends SignalWatcher(LitElement) {
         <button class="primary" @click=${() => void retryResume()}>Try again</button>
         <button class="ghost small" @click=${() => void abandonAndStartNew()}>leave it running and start a new one</button>
       </div>`;
+  }
+
+  /** Conversations already running in this folder that nothing here has a
+   *  record of (#117).
+   *
+   *  This panel is the difference between "the agent is gone" and "the page
+   *  forgot where it was". Sessions live in the helper (D32), the folder
+   *  lists them (D18 discovery), and none of that depends on which browser
+   *  profile — or which browser — is looking. What it costs to be honest is
+   *  the caveat at the bottom, and it is not a footnote: a rejoined
+   *  conversation is genuinely half a conversation, and a panel that offered
+   *  the rejoin without saying so would be handing someone a transcript with
+   *  a hole in it and no sign there was ever anything there. */
+  #running(): TemplateResult {
+    const rows = adoptable.get();
+    const f = folder.get();
+    return html`${this.#header()}
+      <h2>${rows.length === 1 ? "A conversation is already running here" : `${rows.length} conversations are already running here`}</h2>
+      <p class="explain">
+        The agent lives in the helper, not in this tab — closing a page
+        doesn't end it. These are running in <code>${f?.name ?? "this folder"}/</code>
+        right now, and this browser has no record of any of them, which is
+        why you are being asked instead of quietly given a new one.
+      </p>
+      ${rows.map((r) => this.#session(r))}
+      <p class="caveat">
+        What rejoining brings back, and what it can't: the agent's half comes
+        out of the folder entire — every message, tool call and question.
+        What you typed rode the uplink, which the folder never sees, and the
+        browser record that would have carried it is the thing that's
+        missing. So the conversation comes back with no human side before the
+        moment you join it, and any permission question in it comes back with
+        no verdict beside it: this page can't tell one that was answered from
+        one the agent is still waiting on. Both are said in the transcript,
+        where you'll be reading it.
+      </p>
+      <div class="row">
+        <button @click=${() => void declineRunning()}>Leave them and start a new conversation</button>
+      </div>
+      <p class="fineprint">
+        Starting a new one doesn't stop these — they keep running, and they
+        keep showing up here. Only “end session” stops an agent.
+      </p>`;
+  }
+
+  /** One offer. The last line is the point of the row: an id and a timestamp
+   *  are a list of hashes, and what a person actually chooses by is what the
+   *  thing was saying. */
+  #session(r: Adoptable): TemplateResult {
+    return html`<div class="sess">
+      <div class="who">
+        <span class="name">${r.agentName || r.agent || "an agent"}</span>
+        ${r.agentVersion ? html`<span class="ver"> ${r.agentVersion}</span>` : nothing}
+        <div class="when">
+          ${sinceLabel(r.startedAt, Date.now())} ·
+          ${r.detached
+            ? "detached — no page is holding it"
+            : `held by ${r.client || "another page"}${r.origin ? ` at ${r.origin}` : ""}, so rejoining takes it over`}
+        </div>
+        ${r.lastLine ? html`<div class="said" title=${r.lastLine}>${r.lastLine}</div>` : nothing}
+        ${r.blocked ? html`<div class="stuck">${r.blocked}</div>` : nothing}
+      </div>
+      ${r.blocked
+        ? nothing
+        : html`<button class="primary" @click=${() => void adoptSession(r.id)}>Rejoin</button>`}
+    </div>`;
   }
 
   /** Step 3 (#102): what this machine has, and what each one will do.

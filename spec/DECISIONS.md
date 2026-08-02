@@ -1689,6 +1689,74 @@ ever say how much of someone's typing this origin is holding, or when it
 stops). Bounding it by age instead of by the folder (a clock the page has
 no reason to trust over the authority it already reads on every connect).
 
+**Amended — the record is a shortcut, the folder is the index
+([#117](https://github.com/dglazkov/fsio/issues/117)).** The decision above
+made the browser's record the *only* route back to a running conversation.
+That is one route too few, and it was never the transport's limitation: the
+sessions are in the folder, `listSessions()` is
+[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client)
+discovery, and [#58](https://github.com/dglazkov/fsio/issues/58) built the
+terminal demo's picker on exactly that. `/acp` shipped without one on the
+grounds that a session picker wanted a transcript story first; rule 2 is
+that story, so the reason is spent. So: **before starting a conversation,
+the page asks the folder whether one is already running.** Any `acp` session
+in `running` state that the record does not name is offered — with the agent
+it is running, when it started, whether it is detached, and a line of what
+it last said, all read out of the session directory the page already holds a
+handle to (no new capability, [P3](PRINCIPLES.md)). Picking one rebuilds the
+record, which is what makes this a recovery path rather than a convenience.
+[#115](https://github.com/dglazkov/fsio/issues/115) reached this state
+through a bug and was recovered by reading `out.00000000.log` in DevTools to
+extract the ACP session id and hand-writing an IndexedDB record; a second
+browser profile, an incognito window, a different origin (localhost against
+the deployed page — separate IndexedDB by design) or cleared site data reach
+it with no bug at all.
+
+Three things that rebuild has to say out loud, because the alternative is a
+transcript with a hole in it and no sign there was ever anything there.
+
+**A rejoined conversation is honestly half a one.** Rule 2 splits the
+transcript and puts the human's half in the page; the record that held it is
+precisely what is missing. The agent's half comes back entire and the human's
+side starts at the moment of joining — stated at the top of the transcript,
+where the missing part would have been, and carried in the record as a
+durable `adopted` flag rather than a banner the next refresh forgets. The
+flag survives demotion (#123) too: a reader opening that conversation later
+is looking at a document whose beginning no browser holds.
+
+**With no `answers`, "never answered" and "answered by someone else" are the
+same observation.** Rule 3 treats a replayed request id it has never seen as
+outstanding, which is exactly right for a page coming back to its own
+session and inexact here — the map is empty by construction. The card stays
+**live**, because the agent may genuinely be parked on it and that is the
+recovery worth having; what changes is the claim beside it, which says the
+verdict is unknowable from here. Answering one that was already settled
+sends a response to an id the agent has resolved, which the control plane
+already says to drop. Rendering a guess as a fact is the thing rule 3's
+sibling in #123 refused, and it stays refused.
+
+**The cwd arrives after the frames do.** A rejoined session is constructed
+before `acp/info` answers, because replay runs inside the attach grant. An
+empty cwd normalizes to `/`, which would turn `fs/*` containment into a
+check that always passes — so every path is refused until the host says
+where the agent is rooted. Milliseconds of "ask again", against a
+containment wall that silently opens.
+
+**Alternatives rejected (this amendment).** Reattaching to the only running
+session automatically when the record is missing (it is the same silent
+takeover rule 1 forbids in the other direction — the human may be looking at
+that conversation in another window, and D18 attach is a takeover that
+fences them). Offering only `detached: true` sessions (D18 rejected that
+gate for shells; a held session is a legitimate takeover and saying so is
+what the row is for). Hiding a session whose ACP id is no longer in the
+retained stream (it is running, it is in the folder, and "there is something
+here this page cannot rejoin" is the fact a human needs before starting a
+second conversation beside it — so the row is shown and the button is not).
+Suppressing the offer after "leave it running and start a new one" by
+forgetting the session (it is remembered as passed-over for the visit
+instead: a decision about one session, not a decision to stop seeing the
+folder).
+
 **Alternatives rejected.** Persisting the whole transcript in IndexedDB
 (the folder already has the agent's half, and a browser-cached copy would be
 a second source of truth that drifts — which is an argument about the

@@ -9,7 +9,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agentFacts, diagnostics, folder, helper, past, resumed, turn, viewing, type PastConversation } from "../state";
+import { adopted, agentFacts, diagnostics, folder, helper, past, resumed, turn, viewing, type PastConversation } from "../state";
 import { logText } from "../reporter";
 import { currentRoot, endSession, startNewSession } from "../connection";
 import { closePast, openPast } from "../history";
@@ -39,6 +39,9 @@ class AcpTopBar extends SignalWatcher(LitElement) {
     button.danger { color: #ef8a95; border-color: #6b3b40; }
     button.danger:hover { color: #ffd7db; background: #3b2226; }
     .resumed { color: #a3be8c; cursor: help; }
+    /* Not green: "joined" is a weaker claim than "resumed" — the agent's
+       half came back whole and the human's half did not exist to come back. */
+    .joined { color: #d9b477; cursor: help; }
     .pop {
       position: fixed; right: 0.8rem; top: 2.6rem; z-index: 20;
       background: #1c1f26; border: 1px solid #2c313c; border-radius: 8px;
@@ -79,9 +82,11 @@ class AcpTopBar extends SignalWatcher(LitElement) {
             ${a.sandboxed ? "sandboxed" : "NOT sandboxed"}
           </span>`
         : nothing}
-      ${resumed.get()
-        ? html`<span class="resumed" title="This page reattached to a session that was already running — the agent kept going while the tab was gone (D32).">resumed</span>`
-        : nothing}
+      ${adopted.get()
+        ? html`<span class="joined" title="This page joined a conversation that was already in progress and had no record of it (#117). Everything above the note in the transcript is the agent's half only — what was typed into it lived in a browser record this one does not have.">joined in progress</span>`
+        : resumed.get()
+          ? html`<span class="resumed" title="This page reattached to a session that was already running — the agent kept going while the tab was gone (D32).">resumed</span>`
+          : nothing}
       <span class="spacer"></span>
       <span class="turn">
         ${t === "thinking" ? "thinking…" : t === "cancelling" ? "cancelling…" : t === "starting" ? "starting…" : t === "gone" ? "agent gone" : helper.get() === "silent" ? "helper silent" : ""}
