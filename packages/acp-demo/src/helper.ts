@@ -18,7 +18,10 @@ import { execFile } from "node:child_process";
 import { sandboxArgv } from "@fsio/confine";
 import { HostServer } from "@fsio/host";
 import { acpKind } from "./acp-kind.js";
-import { AGENTS, roster, type AgentEntry, type RosterEntry } from "./agents.js";
+import { AGENTS, installLine, roster, type AgentEntry, type RosterEntry } from "./agents.js";
+import { agentDir, confirm, installAgent } from "./install.js";
+import { DEFAULT_PAGE, launchUrl } from "./launch.js";
+import { hasClientDirs, openInChromium, pageIsWatching } from "./open.js";
 import { agentProfile } from "./profile.js";
 
 const fail = (msg: string): never => {
@@ -28,11 +31,18 @@ const fail = (msg: string): never => {
 
 // ---- args
 
-const USAGE = "usage: fsio-acp-demo [dir] [--no-sandbox] [--fixture] [--agent <name>]";
+const USAGE = "usage: fsio-acp-demo [dir] [--no-sandbox] [--fixture] [--agent <name>] [--no-open] [--url <base>]";
 
 let rootArg: string | null = null;
 let wantSandbox = true;
 let wantFixture = false;
+/** The helper opens the page (#124). `--no-open` prints the URL and stops
+ *  there — for anyone driving this from a script, over ssh, or who simply
+ *  does not want a tab. The URL is printed either way. */
+let wantOpen = true;
+/** Where the page lives. Overridable so `npm run dev`'s vite server is one
+ *  flag away rather than a code edit. */
+let urlArg: string | null = null;
 /** Narrow the allow-list to one entry. The page names no agent (it cannot
  *  know what is installed), so the kind takes the first one it can resolve —
  *  which makes "measure *this* agent" impossible once two are installed.
@@ -44,6 +54,11 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i]!;
   if (a === "--no-sandbox") wantSandbox = false;
   else if (a === "--fixture") wantFixture = true;
+  else if (a === "--no-open") wantOpen = false;
+  else if (a === "--url") {
+    urlArg = argv[++i] ?? null;
+    if (!urlArg) fail(`--url needs a base URL — ${USAGE}`);
+  } else if (a.startsWith("--url=")) urlArg = a.slice("--url=".length);
   else if (a === "--agent") {
     agentArg = argv[++i] ?? null;
     if (!agentArg) fail(`--agent needs a name — ${USAGE}`);
@@ -52,6 +67,16 @@ for (let i = 0; i < argv.length; i++) {
   else rootArg = a;
 }
 if (wantFixture && agentArg) fail(`--fixture and --agent are two ways to say the same thing; pick one — ${USAGE}`);
+
+// Checked here rather than at the moment of opening: a typo in `--url`
+// should not be discovered after a successful start, by a browser that
+// silently did not appear.
+const pageBase = urlArg ?? process.env["FSIO_ACP_URL"] ?? DEFAULT_PAGE;
+try {
+  new URL(pageBase);
+} catch {
+  fail(`--url ${JSON.stringify(pageBase)} is not a URL — ${USAGE}`);
+}
 
 // The sandbox is the demo's safety sentence, so running without it is a
 // thing you have to say out loud — and the page is told (`sandboxed: false`
@@ -127,6 +152,12 @@ const catalogue: AgentEntry[] = wantFixture ? [FIXTURE] : agentArg ? AGENTS.filt
 /** The catalogue line for one agent: what it is, and how to get it. */
 const offer = (a: RosterEntry): string => `    ${a.name.padEnd(17)} ${a.title}\n      ${a.install}`;
 
+/** Paths in human output are $HOME-relative: `~/.fsio/agents/x` is a thing
+ *  someone can read at a glance and retype, and it is the same string on
+ *  every machine, which matters for a line whose whole job is to be copied
+ *  back out as an undo. */
+const tilde = (p: string): string => (p.startsWith(os.homedir() + path.sep) ? `~${p.slice(os.homedir().length)}` : p);
+
 // An empty roster is NOT a startup failure any more (#102).
 //
 // It used to be: no agent on PATH, print the catalogue, exit 1. That put
@@ -136,9 +167,10 @@ const offer = (a: RosterEntry): string => `    ${a.name.padEnd(17)} ${a.title}\n
 // for a human; it was going to the wrong surface.
 //
 // So the helper serves an empty roster and the page renders it. The install
-// wall does not disappear — nothing here can install an agent for anyone
-// (P3/P5: a distinct rung wants a distinct gesture, and we are not the
-// party that gets to make it) — it just stops being a process that quit.
+// wall has since become a question rather than a wall (#124, install.ts) —
+// but only one asked in the terminal, only when the scan came back empty,
+// and `N` is still a supported answer, so this path is exactly as live as it
+// was.
 const rosterNow = (): RosterEntry[] => roster(catalogue);
 
 // ---- host
@@ -151,6 +183,13 @@ const log = {
 };
 
 const fsioDir = path.join(rootReal, ".fsio");
+
+// Read before the host's `fresh` sweep empties it, because the sweep is what
+// makes the reading afterwards mean something (#124, open.ts): a client dir
+// that comes *back* is a live page saying so. No client dirs here now means
+// no page has ever reported into this folder, so there is nobody to wait for
+// and a first run opens its tab immediately.
+const folderHasSeenAPage = hasClientDirs(fsioDir);
 
 /** How many ended conversations `.fsio/transcripts/` holds (#119, D26 rule
  *  4). Ten is a demo's worth of history against a directory the human owns
@@ -248,6 +287,53 @@ if (wantSandbox) {
 // page's cached copy stands until there is genuinely news.
 const rosterTimer = setInterval(publishRoster, 3000);
 
+// ---- the install question (#124)
+//
+// Asked here and nowhere else: after everything that can fail fast has
+// failed, before the banner, and only when the scan came back empty. The
+// human is in this terminal — they typed the command a moment ago — which is
+// the one moment the question can be both timely and seen. Every other
+// surface is worse: a prompt raised later would fire behind a browser window
+// nobody is looking at, and the page must never trigger an install at all
+// (install.ts says why at length).
+//
+// `N` is the default and a first-class answer. The helper serves an empty
+// roster perfectly well (#102), the page renders the install card, and the
+// roster rescan above picks up a manual install with no restart.
+const offerable = catalogue.find((a) => a.recommended && a.pkg) ?? catalogue.find((a) => a.pkg);
+if (!wantFixture && offerable && !rosterNow().some((a) => a.installed)) {
+  const dest = agentDir(offerable.name);
+  const yes = await confirm(`
+!! no ACP agent on this machine.
+
+   install ${offerable.title}?
+     ${offerable.pkg!.name}@${offerable.pkg!.version}  →  ${tilde(dest)}
+     ~293 MB; no install scripts are run; nothing is put on your PATH
+     ${offerable.asks ? "it asks before it edits, which is the part of this demo worth watching" : "it edits with its own hands — no permission card"}
+     undo:  rm -rf ${tilde(dest)}
+     pinned on purpose: this helper's sandbox profile was measured against
+     that exact version (F30), so "latest" is the wrong thing to install —
+     and it does mean the copy ages until somebody bumps it here.
+
+   Or answer n and install it yourself, any way you like:  ${installLine(offerable)}
+
+   install it? [y/N] `);
+  if (yes) {
+    console.log(`   installing ${offerable.pkg!.name}@${offerable.pkg!.version}…`);
+    const res = await installAgent(offerable);
+    // A failed install is not a failed helper. The roster stays empty, the
+    // page still shows the card, and npm's own words are printed rather than
+    // paraphrased — a registry outage, a proxy and a full disk all read the
+    // same once somebody summarizes them.
+    if (res.ok) {
+      console.log(`   installed → ${tilde(res.dir)}`);
+      publishRoster();
+    } else {
+      console.log(`   install failed; carrying on without it:\n${res.error}`);
+    }
+  }
+}
+
 // ---- banner: the second UI surface — what to do next, and the honest
 // safety sentence (it is a *write* wall; reads and network are not
 // bounded, and saying otherwise would be the dishonest version).
@@ -273,16 +359,23 @@ fsio ACP demo · serving ${rootReal}${
 }
   ${
     installed.length
-      ? `agents available here: ${installed.map((a) => a.name).join(", ")}${
+      ? // Which copy, every time (#124). Two can exist — a PATH install and
+        // one under ~/.fsio/agents — and a demo that silently drove the
+        // other one is a debugging trap that looks like a version bug.
+        `agents available here: ${installed.map((a) => `${a.name}${a.via === "fsio" ? " (~/.fsio/agents)" : ""}`).join(", ")}${
           missing.length ? `\n  also known, not installed:\n` + missing.map(offer).join("\n") : ""
         }`
-      : `!! no ACP agent on your PATH. The helper is running anyway — the page will
-  show you this same list and update itself when one appears, so you can
-  install without restarting anything:\n\n` +
+      : `!! no ACP agent here. The helper is running anyway — the page shows this
+  same list and updates itself when one appears, so you can install without
+  restarting anything:\n\n` +
         missing.map(offer).join("\n") +
-        `\n\n  fsio ships none of them on purpose (#100): vendoring an adapter costs
-  ~118 MB of transitive dependencies, and an agent you installed is one you
-  can also inspect, update, and revoke.`
+        // 293 MB / 111 packages measured 2026-08-02 against
+        // claude-agent-acp@0.64.2 (install.ts). The old ~118 MB figure was
+        // the deprecated Zed adapter's, and it had outlived the package it
+        // described.
+        `\n\n  fsio ships none of them on purpose (#100): vendoring one costs ~293 MB of
+  transitive dependencies, and an agent you installed is one you can also
+  inspect, update, and revoke.`
   }
   ${
     wantSandbox
@@ -294,12 +387,44 @@ fsio ACP demo · serving ${rootReal}${
   The page is told (the session header says so). Use this only for debugging.`
   }
 
-  → back in the demo page, pick the folder:  ${folderName}
+  in the page: pick this folder — ${folderName} — and allow it twice. Those
+  clicks are Chrome's and cannot be automated (F15); they are also the whole
+  security model, so they are the three gestures worth keeping.
 
-waiting for a browser… (Ctrl-C ends the agents and sweeps .fsio; what each
-  conversation said is kept in .fsio/transcripts/, newest ${TRANSCRIPT_KEEP},
-  and a page that self-reported leaves its report in .fsio/client/)
+(Ctrl-C ends the agents and sweeps .fsio; the newest ${TRANSCRIPT_KEEP} conversations
+  are kept in .fsio/transcripts/, and a page that self-reported leaves its
+  report in .fsio/client/)
 `);
+
+// ---- open the page (#124)
+//
+// Printed before it is opened, always: the human ran `npx`, they did not ask
+// to be sent to a remote address, and a URL that appears without warning is
+// a surprise even when it is the one they wanted.
+//
+// The hints are what this helper already knows and the page would otherwise
+// interview someone for (launch.ts) — the folder to pick, and the agent it
+// would drive when there is exactly one. Both are advisory. Neither is read
+// for anything: the handle still comes from the picker and the roster still
+// rides the folder.
+const soleAgent = rosterNow().filter((a) => a.installed);
+const pageUrl = launchUrl(pageBase, {
+  dir: folderName,
+  agent: soleAgent.length === 1 ? soleAgent[0]!.name : null,
+});
+console.log(`  ${pageUrl}\n`);
+
+if (!wantOpen) {
+  console.log("--no-open: opening nothing. Paste that into a Chromium browser.\n");
+} else if (folderHasSeenAPage && (await pageIsWatching(fsioDir))) {
+  // A restarted helper whose page never went away. Opening here is how you
+  // end up with five tabs after five Ctrl-Cs, and the page has already
+  // reconnected by itself — there is nothing for a new tab to do.
+  console.log("a page is already open on this folder — not opening another tab.\n");
+} else {
+  const res = await openInChromium(pageUrl);
+  console.log(res.opened ? `opened in ${res.browser}.\n` : `${res.why} — open that URL yourself, in Chrome or another Chromium.\n`);
+}
 
 // ---- teardown: close sessions (which kills agents), then sweep the
 // plumbing (D6: the host owns .fsio cleanup) and keep the two things that

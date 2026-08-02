@@ -46,6 +46,14 @@ server in between — the page and the process talk through files in the folder
 you picked (P1). Both helpers are macOS-only for now (confinement is
 `sandbox-exec`); the pages run in any Chromium.
 
+The `/acp` helper opens its page for you ([#124](https://github.com/dglazkov/fsio/issues/124)) —
+it prints the URL first, resolves a Chromium rather than whatever your default
+browser is (the page needs File System Access), and skips the tab entirely if
+one is already open on that folder. `--no-open` prints and stops. What it
+cannot do for you is the grant: picking the folder and allowing it twice are
+Chrome's own gestures, unautomatable by design (F15), and they *are* the
+security model.
+
 ```sh
 # /terminal — a sandboxed shell over your working folder
 npx github:dglazkov/fsio#terminal-demo
@@ -63,8 +71,12 @@ Cloud Run on `v*` tags, each as its own service:
 - [/acp](https://agent-demo.pewter.town)
 
 The `/acp` helper ships **no agent** ([#100](https://github.com/dglazkov/fsio/issues/100)):
-vendoring an ACP adapter costs ~118 MB of transitive dependencies, and an
-agent you installed is one you can also inspect, update and revoke. It starts
+vendoring an ACP adapter costs ~293 MB of transitive dependencies, and an
+agent you installed is one you can also inspect, update and revoke. When it
+finds none it offers to install one — a question in the terminal you are
+already looking at, answered `y` or `n`, never a thing it decides for you —
+into `~/.fsio/agents/<name>/`, which is off your PATH and comes back off in
+one `rm -rf` it prints. It starts
 without one anyway and publishes the roster it found — installed or not, and
 crucially *whether each one asks permission before it edits*, which is the
 thing this demo exists to show and which not every agent does. The page

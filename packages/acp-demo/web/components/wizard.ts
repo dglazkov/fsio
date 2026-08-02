@@ -9,7 +9,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { adoptable, agents, gate, phase, wizardStep, folder, helper, pickError, reconnectTo, resumeError, type AgentOffer, type Adoptable } from "../state";
+import { adoptable, agents, gate, launch, phase, wizardStep, folder, helper, pickError, reconnectTo, resumeError, type AgentOffer, type Adoptable } from "../state";
 import { abandonAndStartNew, adoptSession, chooseAgent, declineRunning, forgetFolder, pickFolder, regrant, retryResume, onMac } from "../connection";
 import { sinceLabel } from "../../src/discovery.js";
 
@@ -32,6 +32,7 @@ class AcpWizard extends SignalWatcher(LitElement) {
     .tagline { color: #9aa5b8; margin: 0.2rem 0 1.1rem; font-size: 0.92rem; }
     .crumbs { display: flex; gap: 1rem; font-size: 0.8rem; color: #5c6675; margin-bottom: 0.9rem; }
     .crumbs .on { color: #88c0d0; }
+    .crumbs .done { color: #a3be8c; }
     .explain { color: #9aa5b8; font-size: 0.9rem; margin: 0.2rem 0 0.8rem; }
     button {
       background: #2e3440; color: #d8dee9; border: 1px solid #4c566a;
@@ -143,11 +144,16 @@ class AcpWizard extends SignalWatcher(LitElement) {
 
   #steps(): TemplateResult {
     const s = wizardStep.get();
+    // The helper opened this page, so step 1 is not a step — it is a fact,
+    // and it is shown as one (#124). Getting told "✓ helper running" is a
+    // different experience from being asked to confirm it: the second is the
+    // page interviewing someone for something the other end already proved.
+    const sent = launch.get().dir !== null;
     return html`${this.#header()}
       <div class="crumbs">
-        <span class=${s === 1 ? "on" : ""}>1 · run the helper</span>
-        <span class=${s === 2 ? "on" : ""}>2 · pick the folder</span>
-        <span class=${s === 3 ? "on" : ""}>3 · the agent</span>
+        <span class=${sent ? "done" : s === 1 ? "on" : ""}>${sent ? "✓ helper running" : "1 · run the helper"}</span>
+        <span class=${s === 2 ? "on" : ""}>${sent ? "pick the folder" : "2 · pick the folder"}</span>
+        <span class=${s === 3 ? "on" : ""}>${sent ? "the agent" : "3 · the agent"}</span>
       </div>
       ${s === 1 ? this.#stepRun() : s === 2 ? this.#stepPick() : this.#stepAgent()}`;
   }
@@ -185,22 +191,48 @@ class AcpWizard extends SignalWatcher(LitElement) {
     `;
   }
 
+  /** The one gesture that is genuinely the human's, and the moment the whole
+   *  demo is about. Everything #124 removed was clerical; this stayed, and
+   *  the copy is written to make it feel like the point rather than a
+   *  formality.
+   *
+   *  When the helper opened this page it named its folder, so the button
+   *  names it too — "Pick myproject" instead of "Choose folder…" and a
+   *  paragraph explaining which one. That is one hint doing the work of a
+   *  sentence, and it is still only a hint: the handle comes from the
+   *  picker, and picking something else works exactly as well. */
   #stepPick(): TemplateResult {
     const err = pickError.get();
     const f = folder.get();
     const h = helper.get();
+    const l = launch.get();
     return html`
       <p class="explain">
-        Pick the <em>same folder</em> the helper is running in. Chrome asks
-        twice — once to view, once to save. That gesture is the whole
-        security model: you are granting this page one folder, and the agent
-        gets exactly the same one.
+        ${l.dir
+          ? html`Pick <code>${l.dir}</code> — the folder the helper is running
+              in. Chrome asks twice, once to view and once to save.`
+          : html`Pick the <em>same folder</em> the helper is running in. Chrome
+              asks twice — once to view, once to save.`}
+        That gesture is the whole security model: you are granting this page
+        one folder, and the agent gets exactly the same one.
       </p>
+      ${l.agent
+        ? html`<p class="fineprint">
+            The helper reports one agent ready to drive: <code>${l.agent}</code>. It
+            starts once the folder is granted, and everything the page says about
+            it after that is read from the folder, not from this line.
+          </p>`
+        : nothing}
       <div class="row">
-        <button class="ghost small" @click=${() => wizardStep.set(1)}>← back</button>
-        <button class="primary" @click=${() => void pickFolder()}>Choose folder…</button>
+        ${l.dir ? nothing : html`<button class="ghost small" @click=${() => wizardStep.set(1)}>← back</button>`}
+        <button class="primary" @click=${() => void pickFolder()}>${l.dir ? `Pick ${l.dir}` : "Choose folder…"}</button>
         ${f ? html`<span class="fineprint">${f.name}/</span>` : nothing}
       </div>
+      ${l.dir
+        ? html`<p class="fineprint">
+            <button class="ghost small" @click=${() => wizardStep.set(1)}>the helper isn't running?</button>
+          </p>`
+        : nothing}
       ${err ? html`<div class="status bad">${err.msg}<span class="hint">${err.hint}</span></div>` : nothing}
       ${!err && f && h === "silent"
         ? html`<div class="status wait">
