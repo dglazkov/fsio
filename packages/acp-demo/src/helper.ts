@@ -102,7 +102,8 @@ const FIXTURE: AgentEntry = {
   args: [path.join(import.meta.dirname, "fixture-agent.js")],
   title: "PUPPET — a scripted test agent, not a real one",
   install: "(built with this repo; re-run the helper with --fixture)",
-  // Asking is the entire reason it exists (F29: 5 asks, 10 `fs/*`).
+  // Asking is the entire reason it exists: 5 permission asks and 10 `fs/*`
+  // calls across the scripted run, measured in test-fixture-agent.ts.
   asks: true,
   state: {
     mode: "place",
@@ -169,7 +170,7 @@ const server = new HostServer({
   // is right that a session pointing at a dead pid is not attachable and
   // right to sweep the plumbing; it was wrong that the out log is plumbing.
   // For this demo that file IS the conversation — the agent's half of it,
-  // which D32 rule 2 deliberately does not persist browser-side because
+  // which the page deliberately does not persist browser-side because
   // "it rode the folder, so the folder is where it is read back from"
   // (P2). The folder now keeps its side of that bargain.
   //

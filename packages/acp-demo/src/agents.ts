@@ -69,7 +69,7 @@ export interface AgentEntry {
    *
    *  Measured, never assumed — and the reason the roster exists at all
    *  (#102). This demo's headline is that the agent's consent question
-   *  becomes page UI (R6), and **the default agent does not ask**: F29
+   *  becomes page UI (R6), and **the default agent does not ask**: #100
    *  counted 0 permission requests and 0 `fs/*` calls from pi-acp across a
    *  driven session, because it reads and edits with its own hands. F30
    *  counted them from the Claude adapter, which does ask. A human choosing
@@ -122,7 +122,7 @@ export const AGENTS: AgentEntry[] = [
     // or `fs/*` (#100). What it exercises is the transport, the framing, the
     // confinement facts and the live workspace — not the consent surface.
     install: "npm i -g pi-acp",
-    // F29: 0 `session/request_permission`, 0 `fs/*` across a driven session.
+    // #100: 0 `session/request_permission`, 0 `fs/*` across a driven session.
     asks: false,
     state: {
       mode: "carve",

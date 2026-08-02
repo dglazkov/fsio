@@ -1,7 +1,7 @@
 // Finding a running conversation the page has no record of (#117): the
 // pure half.
 //
-// Sticky sessions (D32) made the browser's IndexedDB record the only route
+// Sticky sessions (#113) made the browser's IndexedDB record the only route
 // back to a live agent. That is one route too few. The record is a
 // *shortcut* — it names the session so the page can skip straight to it —
 // but the folder is the **index**, and it always was: `listSessions()` is

@@ -1,8 +1,9 @@
 // Folder → client → agent. Gates, the picker, the spawn, and the two
 // pollers. Writes signals (state.ts); owns the FsioClient singleton.
 //
-// Sticky sessions (#113/D32) are mostly here, and they are three separate
-// pieces of memory doing three separate jobs:
+// Sticky sessions ([#113](https://github.com/dglazkov/fsio/issues/113)) are
+// mostly here, and they are three separate pieces of memory doing three
+// separate jobs:
 //
 //   the folder    — a handle in IndexedDB plus `revisit()`, exactly the
 //                   terminal demo's (#58): `granted` reconnects with no
@@ -16,6 +17,17 @@
 //                   page attaches to it with replay. Only the "end session"
 //                   button closes, and that is the only thing that kills
 //                   the agent.
+//
+// That last line is the part this page strains P3 on, and it is worth
+// saying out loud rather than leaving in the button's implementation.
+// Durability of a grant is supposed to be something the human gestured
+// for, and a session surviving a closed tab is a running process the
+// page's absence no longer stops. So "end session" is load-bearing, not a
+// convenience: without a real end gesture, sticky means "a process nobody
+// can kill from the page", which is strictly worse than what came before.
+// Note what is deliberately *not* made sticky — an unanswered permission
+// comes back as a question, never as an inherited yes. The consent gesture
+// does not survive the refresh; only the request does.
 import { FsioClient, RpcError, RpcErrors, type FsioSession } from "@fsio/client";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
@@ -286,7 +298,7 @@ async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | nu
         // there is nothing to come back to (#115). "We could not reattach"
         // is not that verdict: the session may be alive and holding the
         // human's conversation, and starting a second one on top of it is
-        // the silent fork D32 rule 1 exists to forbid. Stop and ask.
+        // the silent fork a reattach exists to forbid. Stop and ask.
         if (outcome === "failed") return;
       }
     }
@@ -297,7 +309,7 @@ async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | nu
     // and a running agent nothing here can name is exactly the state #115
     // produced and exactly the state a second browser profile, an incognito
     // window, or a cleared IndexedDB produces on purpose. Starting a second
-    // conversation beside a live one is the silent fork D32 rule 1 forbids;
+    // conversation beside a live one is that same silent fork (#113);
     // the difference between doing it and not is one directory listing.
     if (await offerRunning(root)) return;
 
@@ -349,7 +361,7 @@ async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | nu
 // rode the uplink, which is not replayed (D18), and the record that carried
 // them across a refresh is the very thing that is missing. So a rejoined
 // conversation is honestly partial, and every permission card in it has an
-// unknowable verdict — D32 rule 3 treats an id it has never seen as
+// unknowable verdict — replay treats an id it has never seen as
 // outstanding, and here "never seen" no longer means "never answered".
 
 /** Anything running in this folder worth offering? Shows the picker and
@@ -470,7 +482,7 @@ export async function chooseAgent(name: string): Promise<void> {
 /** `agent` is the name the human chose, or null to let the helper pick —
  *  which is what a helper too old to publish a roster gets. Either way the
  *  wire carries a **name**, never a path: the allow-list is host-side and
- *  judges it again (D30 rule 4). */
+ *  judges it again (agents.ts, #6). */
 async function startAgent(root: FileSystemDirectoryHandle, name: string | null): Promise<void> {
   if (!client || session) return;
   step(name ? `asking the helper for ${name}` : "asking the helper for an agent");
@@ -491,8 +503,8 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
     facts = (await s.request<Record<string, unknown>>("acp/info")).result;
   } catch (e) {
     // A refusal from the host — no agent on PATH, an unknown name, a
-    // sandbox that could not be applied (D30 rule 5: it fails, it does not
-    // quietly run unconfined). The message is written to be read by a
+    // sandbox that could not be applied (it fails, it does not quietly run
+    // unconfined — R3). The message is written to be read by a
     // human, so show it as one.
     const msg = e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e);
     notice.set({ msg: "the helper refused to start an agent", hint: msg });
@@ -519,7 +531,7 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
     pushEntry({ kind: "note", text: `${init.agentName} ${init.agentVersion} is listening in ${root.name}/` });
     reporter.event("acp-ready", { agent: init.agentName, version: init.agentVersion, sessionId: agent.sessionId });
     step("agent ready");
-    // From here the session is worth coming back to (D32): the record is
+    // From here the session is worth coming back to (#113): the record is
     // what makes the next load a reattach instead of a fresh start.
     beginRecord({
       sessionId: s.id,
@@ -556,7 +568,7 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
   }
 }
 
-/** Coming back to a session this page left running (#113/D32).
+/** Coming back to a session this page left running (#113).
  *
  *  Three outcomes, and the distinction between the last two is the whole
  *  lesson of #115:
@@ -731,7 +743,7 @@ function newConnection(s: FsioSession, held: () => AgentSession | null): AcpConn
   });
 }
 
-/** `acp/info` → the header's facts (D30 rule 5: read, never assumed).
+/** `acp/info` → the header's facts: read from the host, never assumed.
  *  Returns the agent's cwd, which is also what `fs/*` containment is judged
  *  against. */
 function readFacts(facts: Record<string, unknown>): string {
@@ -855,7 +867,7 @@ export function cancelTurn(): void {
 
 // ---------------------------------------------------------------- lifetime
 
-/** Page teardown (#113/D32). One word changed here and it inverted the
+/** Page teardown (#113). One word changed here and it inverted the
  *  demo's whole answer to "what does a refresh mean": `close()` asked the
  *  helper to kill the agent, and it obliged — measured, six milliseconds
  *  after the notification landed. `detach()` is the deliberate walk-away

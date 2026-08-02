@@ -100,8 +100,8 @@ export async function loadRecord(): Promise<StickyRecord | null> {
  *  stop treating the record as *state*: it names a session that is not
  *  there, and a page that acted on it would attach to nothing. None of them
  *  is a reason to throw away the human's own words, which exist nowhere else
- *  — the folder has the agent's half and never had this one (D18, D32 rule
- *  2). So what is dropped is everything that pointed at the live session,
+ *  — the folder has the agent's half and never had this one (D18, #113).
+ *  So what is dropped is everything that pointed at the live session,
  *  and what is kept is the half that is now simply history.
  *
  *  Reads the record back from storage when the page is not holding one: the

@@ -2,7 +2,7 @@
 // the two rules for putting a conversation back together.
 //
 // The shape of the problem. Three lifetimes are involved and only the
-// middle one changed with #113 (D32): the folder grant lives in Chrome,
+// middle one changed with #113: the folder grant lives in Chrome,
 // the fsio session lives in the helper — and now outlives the page — and
 // the ACP conversation lives in the agent process, which never noticed the
 // page was gone.
@@ -59,13 +59,13 @@ export interface StickyRecord {
   /** the fsio session id — what `attachSession()` takes. */
   sessionId: string;
   /** the agent's own conversation id, from `session/new`. Reused verbatim:
-   *  a reattached page does not re-handshake (D32). */
+   *  a reattached page does not re-handshake (#113). */
   acpSessionId: string;
   /** roster name of the agent that was chosen (#102), for the record's own
    *  display and for the fallback when the session turns out to be gone. */
   agent: string;
   /** what `initialize` said. Persisted because there is no second
-   *  `initialize` to ask again (D32). */
+   *  `initialize` to ask again (#113). */
   agentName: string;
   agentVersion: string;
   /** the agent's cwd, from `acp/info`. Needed before `ready` resolves,
@@ -161,7 +161,7 @@ export function demote(rec: StickyRecord): PastRecord {
  *  origin, the turns land where they were typed; different, and they are
  *  somewhere in the right conversation but not the right place in it —
  *  which the view says out loud rather than letting the seam look
- *  deliberate (#57, D32's ceiling). */
+ *  deliberate (#57). */
 export function anchorsAlign(rec: Pick<PastRecord, "gen">, transcriptGen: number): boolean {
   return rec.gen === transcriptGen;
 }

@@ -280,7 +280,7 @@ test("the agent's exit becomes the session's exit, and takes the kind's methods 
   });
 });
 
-// ------------------------------------------------ sticky sessions (D18/D32, #113)
+// ----------------------------------------------------- sticky sessions (D18, #113)
 
 test("detach leaves the agent running, and a reattach replays what it said as history", async () => {
   await withAcp(async (rig) => {
@@ -319,7 +319,7 @@ test("detach leaves the agent running, and a reattach replays what it said as hi
 
     // Same process, same conversation: the kind survived the client, so its
     // methods still answer and the pid has not moved. This is why a
-    // reattached page does not re-handshake (D32) — nothing restarted.
+    // reattached page does not re-handshake (#113) — nothing restarted.
     assert.equal((await s2.request<Record<string, unknown>>("acp/info")).result["pid"], pid);
 
     s2.sendData(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "echo" }));

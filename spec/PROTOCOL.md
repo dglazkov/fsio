@@ -980,8 +980,8 @@ Four rules bound its life:
    unlike live replay, whose frames came from a stream the host was
    writing — so it MUST be parsed defensively and rendered as text,
    never acted on: replaying one MUST NOT re-issue the requests it
-   contains (the rule [D32](DECISIONS.md#d32--a-session-ends-when-the-human-ends-it-refresh-detaches-reattach-does-not-re-handshake)
-   already states for replayed frames, which holds here a fortiori).
+   contains — the rule a client already owes any replayed frame, which
+   holds a fortiori for a file whose writer it cannot identify.
 
 ## Open questions
 

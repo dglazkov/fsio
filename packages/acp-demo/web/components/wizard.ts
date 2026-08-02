@@ -216,7 +216,8 @@ class AcpWizard extends SignalWatcher(LitElement) {
    *  (#115).
    *
    *  The page stops here on purpose. Quietly starting a second conversation
-   *  would be the failure D32 rule 1 forbids — it looks like it worked, and
+   *  would be the failure a reattach exists to prevent — it looks like it
+   *  worked, and
    *  the first conversation keeps running with nothing pointing at it. Both
    *  buttons here are honest: one tries again, the other says out loud that
    *  the old session is being left behind. */
@@ -238,7 +239,7 @@ class AcpWizard extends SignalWatcher(LitElement) {
    *  record of (#117).
    *
    *  This panel is the difference between "the agent is gone" and "the page
-   *  forgot where it was". Sessions live in the helper (D32), the folder
+   *  forgot where it was". Sessions live in the helper (#113), the folder
    *  lists them (D18 discovery), and none of that depends on which browser
    *  profile — or which browser — is looking. What it costs to be honest is
    *  the caveat at the bottom, and it is not a footnote: a rejoined
@@ -338,7 +339,7 @@ class AcpWizard extends SignalWatcher(LitElement) {
 
   /** One roster line. The `asks` sentence is the one that matters: this
    *  demo is about the agent's consent question becoming page UI, and not
-   *  every agent sends one (F29/F30). Saying so before the choice beats
+   *  every agent sends one (F30, #100). Saying so before the choice beats
    *  discovering it after a turn that edited a file silently. */
   #agent(a: AgentOffer): TemplateResult {
     return html`<div class="agent">

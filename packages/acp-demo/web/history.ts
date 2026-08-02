@@ -14,8 +14,8 @@
 //
 // The human's turns are not in the folder and never will be: prompts rode
 // the *uplink*, and the out log is downlink-only (D18) — the same asymmetry
-// D32 rule 2 handles for a refresh by carrying the human's half in the
-// page. So this view asks the page for it (#123). When this browser drove
+// a refresh handles by carrying the human's half in the page (#113). So
+// this view asks the page for it (#123). When this browser drove
 // the conversation, the record it kept was demoted rather than deleted when
 // the session ended, and the same `promptsBefore` weave puts those turns
 // back between the right two things the agent said. When it did not — a
@@ -27,7 +27,7 @@
 // is unfinished:
 //
 //   Nothing here may act. A replayed request never acts even when the
-//   session is alive (D32 rule 3); a *stored* transcript is weaker still —
+//   session is alive (#113); a *stored* transcript is weaker still —
 //   it is a file any co-tenant of the folder can write, with none of live
 //   replay's provenance, and the page cannot tell a real one from a planted
 //   one (D20). So it is parsed defensively, rendered as text, and the
@@ -156,7 +156,7 @@ export async function openPast(root: FileSystemDirectoryHandle, p: PastConversat
   }
   // Turns taken after the agent's last word — and, when the anchors were
   // measured against a stream that has since rotated, every turn whose
-  // anchor overshot this one. Misplaced beats missing (D32's ceiling).
+  // anchor overshot this one. Misplaced beats missing.
   session.flushPrompts();
   if (unread) pushPast({ kind: "error", text: `${unread} segment(s) of this transcript could not be read.` });
   if (!frames) pushPast({ kind: "note", text: "this transcript holds no agent messages — the session ended before the agent said anything." });
