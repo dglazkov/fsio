@@ -25,9 +25,8 @@ import { spawn, execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { shippedShellProfile } from "./shipped-profile.mjs";
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
   const i = argv.indexOf(`--${name}`);
@@ -48,9 +47,9 @@ const CLAUDE = arg("claude", path.join(os.homedir(), ".local/bin/claude"));
 const home = os.homedir();
 const tilde = (p) => String(p).replace(home, "~");
 
-// The shipped demo posture, read from source so this lab tracks the real one.
-const profileSrc = fs.readFileSync(path.join(REPO, "packages/terminal-demo/src/profile.ts"), "utf8");
-const SHIPPED = profileSrc.match(/export const SANDBOX_PROFILE = `([\s\S]*?)`;\n/)[1];
+// The shipped demo posture, imported so this lab measures exactly what
+// ships (see scripts/shipped-profile.mjs; needs `npm run build`).
+const SHIPPED = await shippedShellProfile();
 
 const labTmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "fsio-agent-lab-")));
 const fsioDir = path.join(WS, ".fsio");

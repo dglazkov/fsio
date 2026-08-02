@@ -9,8 +9,8 @@
 // **what does a confined child actually still hold** (OQ4's read wall, plus
 // the env-policy baseline).
 //
-// Method: the shipped profile (packages/terminal-demo/src/profile.ts) and
-// the shipped argv shape (sandbox.ts `sandboxArgv` — same reasoning as D12's
+// Method: the shipped profile (packages/terminal-demo, built) and the
+// shipped argv shape (@fsio/confine `sandboxArgv` — same reasoning as D12's
 // resolveShell sharing: measure the invocation sessions really use), a
 // scratch ROOT, and a canary directory that appears in NO -D parameter.
 // Every escape case asks one question: did a file appear at the canary path?
@@ -26,9 +26,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { shippedShellProfile } from "./shipped-profile.mjs";
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
 const WITH_LAUNCHD = process.argv.includes("--launchd");
 
 if (process.platform !== "darwin") {
@@ -36,15 +35,9 @@ if (process.platform !== "darwin") {
   process.exit(0);
 }
 
-// The profile as source, not as a copy: this lab must fail when the shipped
-// posture changes, which is the point of pointing it at the real file.
-const profileSrc = fs.readFileSync(path.join(REPO, "packages/terminal-demo/src/profile.ts"), "utf8");
-const m = profileSrc.match(/export const SANDBOX_PROFILE = `([\s\S]*?)`;\n/);
-if (!m) {
-  console.error("confinement-lab: could not extract SANDBOX_PROFILE from profile.ts");
-  process.exit(1);
-}
-const PROFILE = m[1];
+// The shipped profile itself, not a copy: this lab must move when the
+// posture moves, which is the point of pointing it at the real thing.
+const PROFILE = await shippedShellProfile();
 
 const mk = (n) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), n)));
 const root = mk("fsio-conf-root-");
@@ -64,7 +57,7 @@ const run = (file, args, opts = {}) =>
     );
   });
 
-/** Exactly what a terminal-demo session runs (sandbox.ts sandboxArgv). */
+/** Exactly what a terminal-demo session runs (@fsio/confine sandboxArgv). */
 const sandboxed = (script, env) =>
   run(
     "/usr/bin/sandbox-exec",

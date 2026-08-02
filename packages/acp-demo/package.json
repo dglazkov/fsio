@@ -29,6 +29,7 @@
       ],
       "clean": "if-file-deleted",
       "dependencies": [
+        "../confine:build",
         "../host:build",
         "../client:build",
         "../bench:build"
@@ -38,7 +39,8 @@
       "command": "node --test --test-concurrency=1 dist/test-framing.js dist/test-paths.js dist/test-markdown.js dist/test-resume.js dist/test-transcripts.js dist/test-discovery.js dist/test-agents.js dist/test-acp-kind.js dist/test-sandbox.js dist/test-fixture-agent.js",
       "files": [
         "../host/src/**",
-        "../client/src/**"
+        "../client/src/**",
+        "../confine/src/**"
       ],
       "output": [],
       "dependencies": [
@@ -62,6 +64,7 @@
   },
   "dependencies": {
     "@fsio/client": "*",
+    "@fsio/confine": "*",
     "@fsio/host": "*",
     "@lit-labs/signals": "^0.1.3",
     "lit": "^3.3.0"

@@ -10,9 +10,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { profileSummary, type SandboxConfig } from "@fsio/confine";
 import { HostServer, type PtyModule } from "@fsio/host";
-import { SANDBOX_PROFILE } from "./profile.js";
-import { sandboxedPty, type SandboxConfig } from "./sandbox.js";
+import { SHELL_PROFILE } from "./profile.js";
+import { sandboxedPty } from "./sandbox.js";
 
 const fail = (msg: string): never => {
   console.error(`fsio terminal-demo: ${msg}`);
@@ -116,7 +117,7 @@ await server.start().catch((e: unknown) => fail(e instanceof Error ? e.message :
 // The profile lands inside .fsio AFTER start() (fresh wipes it) and BEFORE
 // any session can spawn (scan hasn't run a shell yet — spawns need a
 // browser). Written by the helper, unwritable by the shells it confines.
-fs.writeFileSync(profilePath, SANDBOX_PROFILE);
+fs.writeFileSync(profilePath, SHELL_PROFILE);
 
 // ---- preflight: prove the whole chain (sandbox-exec + profile compiles +
 // pty + spawn-helper exec bit) before telling the user anything is ready.
@@ -145,11 +146,19 @@ await new Promise<void>((resolve, reject) => {
 // ---- banner: the second UI surface — it carries the "what next" and the
 // safety framing (#16 storyboard, Frame 2).
 
+// The safety sentence comes from @fsio/confine rather than being written
+// here, and it is longer than the line it replaced on purpose: the old one
+// said "sandboxed… network on; writes outside denied" and never mentioned
+// that reads are unbounded, which is the half F24 made a MUST in the threat
+// model. `/private/tmp` is named because it is a real hole outside the
+// folder; the profile's other carve, `/dev/tty`, is the terminal the user is
+// already looking at, so naming it would be noise rather than disclosure.
 const folderName = path.basename(rootReal);
 console.log(`
 fsio terminal demo · serving ${rootReal}
-  shells are sandboxed to this folder (see .fsio/sandbox.sb — that file
-  is the whole policy). Network on; writes outside this folder: denied.
+  shells are confined to this folder:
+    ${profileSummary(folderName, ["/private/tmp"])}
+  The whole policy is .fsio/sandbox.sb — read it from the folder itself.
 
   → back in the demo page, pick the folder:  ${folderName}
 

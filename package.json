@@ -40,6 +40,7 @@
         "./packages/host:build",
         "./packages/fsiod:build",
         "./packages/workbench:build",
+        "./packages/confine:build",
         "./packages/terminal-demo:build",
         "./packages/acp-demo:build",
         "./packages/bench:build"
@@ -48,6 +49,7 @@
     "test": {
       "dependencies": [
         "./packages/common:test",
+        "./packages/confine:test",
         "./packages/bench:test",
         "./packages/fsiod:test",
         "./packages/terminal-demo:test",

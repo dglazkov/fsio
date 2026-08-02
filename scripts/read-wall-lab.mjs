@@ -32,14 +32,13 @@ import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { shippedShellProfile } from "./shipped-profile.mjs";
 
 if (process.platform !== "darwin") {
   console.log("read-wall-lab: Seatbelt is macOS-only; nothing to measure here.");
   process.exit(0);
 }
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
   const i = argv.indexOf(`--${name}`);
@@ -59,9 +58,9 @@ const fsioDir = path.join(ws, ".fsio");
 const realTmp = fs.realpathSync(os.tmpdir());
 fs.mkdirSync(fsioDir, { recursive: true });
 
-// The shipped demo posture, read from source so this lab measures the real one.
-const profileSrc = fs.readFileSync(path.join(REPO, "packages/terminal-demo/src/profile.ts"), "utf8");
-const SHIPPED = profileSrc.match(/export const SANDBOX_PROFILE = `([\s\S]*?)`;\n/)[1];
+// The shipped demo posture, imported so this lab measures exactly what
+// ships (see scripts/shipped-profile.mjs; needs `npm run build`).
+const SHIPPED = await shippedShellProfile();
 
 // ------------------------------------------------------------------ workspace
 // A workspace shaped like the thing an agent loop is asked to work in: a git

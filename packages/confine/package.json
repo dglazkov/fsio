@@ -1,0 +1,31 @@
+{
+  "name": "@fsio/confine",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio confinement: the Seatbelt write wall around a granted folder — profile text and sandbox-exec argv, no spawn",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit"
+  },
+  "wireit": {
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-profile.js dist/test-posture.js",
+      "files": [],
+      "output": [],
+      "dependencies": ["build"]
+    },
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted"
+    }
+  }
+}

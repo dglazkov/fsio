@@ -29,12 +29,13 @@
 // pipe a file dump.
 import fs from "node:fs";
 import path from "node:path";
+import { profileSummary, type SandboxConfig } from "@fsio/confine";
 import type { KindContext, KindHandler, KindSession } from "@fsio/host";
 import { AGENTS, carveDirs, findAgent, resolveBin, scratchDirs, type AgentEntry } from "./agents.js";
 import { synthesizeEnv } from "./env.js";
 import { classify, isJsonRpc, LineSplitter, toAgentLine } from "./framing.js";
-import { agentProfile, profileSummary } from "./profile.js";
-import { spawnAgent, type AgentProcess, type SandboxConfig } from "./sandbox.js";
+import { agentProfile } from "./profile.js";
+import { spawnAgent, type AgentProcess } from "./sandbox.js";
 
 /** How many stderr lines to keep for `acp/diagnostics`. An agent's stderr
  *  is the only channel that carries "your profile denied me" (R19), so the
@@ -204,7 +205,11 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
     });
     child.stdin.on("error", (e: Error) => keep(`[stdin] ${e.message}`));
 
-    const summary = profileSummary(path.basename(opts.root), stateDirs, scratches);
+    // Both categories of hole, named in one list: the summary's job is that
+    // a human sees every path outside the granted folder, and "state" versus
+    // "the tooling's scratch" is a distinction the profile file draws (it
+    // has a commented section for each) rather than one this sentence needs.
+    const summary = profileSummary(path.basename(opts.root), [...stateDirs, ...scratches]);
     ctx.log.info(`agent ${entry.name} (pid ${child.pid}) ${sandbox ? "confined" : "UNCONFINED"} — ${summary}`);
 
     return {

@@ -16,22 +16,47 @@
   "wireit": {
     "build": {
       "command": "tsc --pretty && tsc --pretty -p web/tsconfig.json && vite build --logLevel warn",
-      "files": ["src/**", "web/**", "vite.config.ts", "tsconfig.json", "../../tsconfig.base.json"],
-      "output": ["dist/**", "dist-web/**"],
+      "files": [
+        "src/**",
+        "web/**",
+        "vite.config.ts",
+        "tsconfig.json",
+        "../../tsconfig.base.json"
+      ],
+      "output": [
+        "dist/**",
+        "dist-web/**"
+      ],
       "clean": "if-file-deleted",
-      "dependencies": ["../host:build", "../client:build"]
+      "dependencies": [
+        "../confine:build",
+        "../host:build",
+        "../client:build"
+      ]
     },
     "test": {
       "command": "node --test --test-concurrency=1 dist/test-sandbox.js",
-      "files": ["../host/src/**"],
+      "files": [
+        "../host/src/**",
+        "../confine/src/**"
+      ],
       "output": [],
-      "dependencies": ["build"]
+      "dependencies": [
+        "build"
+      ]
     },
     "bundle": {
       "command": "node scripts/make-artifact.mjs",
-      "files": ["scripts/make-artifact.mjs", "artifact/**"],
-      "output": ["artifact-dist/**"],
-      "dependencies": ["build"]
+      "files": [
+        "scripts/make-artifact.mjs",
+        "artifact/**"
+      ],
+      "output": [
+        "artifact-dist/**"
+      ],
+      "dependencies": [
+        "build"
+      ]
     }
   },
   "devDependencies": {
@@ -39,6 +64,7 @@
   },
   "dependencies": {
     "@fsio/client": "*",
+    "@fsio/confine": "*",
     "@fsio/host": "*",
     "@lit-labs/signals": "^0.1.3",
     "@xterm/addon-fit": "^0.10.0",
