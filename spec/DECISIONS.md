@@ -638,6 +638,28 @@ works for both live and dead predecessors).
 wait out the silence window), F13 (serialized commits bound the fenced
 client's stranded chunks to a handful).
 
+**The hub is parked.** Nobody is working the direction, and `track: hub`'s
+sequence is not running. `packages/fsiod` exists and is tested, which makes
+the daemon read as further along than it is: it is the parked direction's
+code, not something the shipped host depends on. Stated once, here, rather
+than as a tombstone on each entry
+([#131](https://github.com/dglazkov/fsio/issues/131)).
+
+Parked is a claim about the *direction*, not a verdict on the decisions
+below, and the difference matters because much of what was designed for the
+hub shipped anyway. [D24](#d24--the-service-directory-is-the-origin-facing-capability-document)'s
+service directory, [D25](#d25--capabilities-are-feature-detected-names-protocol-is-the-on-disk-version)'s
+feature-detected capability names, [D22](#d22--workspaces-are-session-parameters-resolved-by-a-daemon-private-registry)'s
+"names, never paths", [D20](#d20--the-hub-folder-carries-transport-and-advertisement-authority-lives-outside-it)'s
+split between what a transport folder carries and where authority lives,
+and [D23](#d23--consent-is-host-served-and-grants-are-proof-of-possession-capabilities)'s
+wire-facing half (`needsGrant`, the consent endpoint, the no-grant error)
+are all cited from `common`, `host`, `client` and the demos today.
+[D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored)
+never involved the daemon at all and has been amended twice since. The two
+entries that are purely the pivot are D19 and D21. A reader can check this
+the same way it was checked: `grep` the entry number under `packages/`.
+
 ## D19 — the hub pivot: one transport folder as a socket, workspaces as resources
 
 **Decision.** fsio's deployment model pivots from folder-as-connection
@@ -1198,11 +1220,16 @@ answers #86's "profiles, shapes, roster entries, and MCP servers are one
 concept wearing four hats" — the concept is the named service, and the
 grant is where reach binds to it.
 
-*2026-07-31:* that walkthrough has since moved out of this repo. The
-decision stands on fsio-native ground regardless: two *origins* granted
-the same workspace (F21's independent grants) already need per-asker
-reach — R14 is the multi-origin case stated generally, with or without
-a cloud layer above the transport.
+**Season two has moved.** The team-facing product that walkthrough belonged
+to lives in its own repository now
+([#78](https://github.com/dglazkov/fsio/issues/78)) — not parked and not
+abandoned, just no longer this repo's to track, so nothing here should be
+read as waiting on it
+([#131](https://github.com/dglazkov/fsio/issues/131)). This decision stands
+on fsio-native ground regardless: two *origins* granted the same workspace
+(F21's independent grants) already need per-asker reach — R14 is the
+multi-origin case stated generally, with or without a cloud layer above the
+transport.
 
 **Alternatives rejected.** Profile-per-workspace (D22 as written —
 cannot say "same workspace, different reach per asker"; forces season
