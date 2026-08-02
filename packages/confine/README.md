@@ -93,7 +93,7 @@ hole outside the granted folder is exactly what a reader needs to see.
 - `test-profile.ts` — the emitted text, any platform.
 - `test-posture.ts` — the wall itself, run through real `sandbox-exec`
   against a real filesystem. Skips off macOS. Includes the three properties
-  D29 rests on: confinement is inherited by descendants and survives
+  this wall rests on: confinement is inherited by descendants and survives
   detachment, a confined child cannot re-enter `sandbox-exec` in either
   direction, and setuid binaries do not execute.
 
