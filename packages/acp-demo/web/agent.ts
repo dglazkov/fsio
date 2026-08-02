@@ -48,7 +48,7 @@
 //   guess is not.
 import { AcpConnection, NO_RESPONSE, type Origin } from "./acp";
 import { log } from "./reporter";
-import { entries, pushEntry, queued, turn, type PermissionEntry, type TextEntry, type ToolEntry } from "./state";
+import { entries, pastEntries, pushEntry, pushPast, queued, turn, type EntrySink, type PermissionEntry, type TextEntry, type ToolEntry } from "./state";
 import { signal } from "@lit-labs/signals";
 import { touched } from "./workspace";
 import { containedRelative } from "../src/paths.js";
@@ -93,15 +93,29 @@ export class AgentSession {
   /** how many of the record's prompts have been woven back in. */
   #promptCursor = 0;
 
+  /** true when this session is a *document*: an ended conversation read
+   *  back from `.fsio/transcripts/` (#119). Same handlers, same rendering,
+   *  three differences — no wire (the connection has no session), no turns
+   *  of the human's to weave (they rode the uplink and the record died with
+   *  the session), and nothing that could act. */
+  #history: boolean;
+  /** Which conversation this session's output belongs to. A property of the
+   *  session, not of the moment: the live agent may well be mid-turn while
+   *  someone is reading a past conversation, and its words belong in the
+   *  live log either way. */
+  #push: EntrySink;
+
   /** `resume` is the record of a session this page is coming back to; null
    *  for one it is starting. Everything a returning page needs before the
    *  attach even completes is in it — the ACP session id, the agent's cwd,
    *  and the id of a turn that was in flight — because replayed frames
    *  start arriving before `ready` resolves. */
-  constructor(conn: AcpConnection, root: FileSystemDirectoryHandle, cwd: string, resume: StickyRecord | null = null) {
+  constructor(conn: AcpConnection, root: FileSystemDirectoryHandle, cwd: string, resume: StickyRecord | null = null, history = false) {
     this.conn = conn;
     this.#root = root;
     this.#cwd = cwd.replace(/\/+$/, "");
+    this.#history = history;
+    this.#push = history ? pushPast : pushEntry;
 
     conn.onNotification("session/update", (params, origin) => this.#update(params, origin));
     conn.onRequest("session/request_permission", (params, origin) => this.#permission(params, origin));
@@ -163,7 +177,7 @@ export class AgentSession {
       // back is a suffix. Say it in the transcript, at the top, where the
       // missing part would have been (#57).
       if (rec && gen !== rec.gen) {
-        pushEntry({
+        this.#push({
           kind: "note",
           text: "the earlier part of this conversation has rotated out of the session's retained stream and cannot be shown — what follows is the tail.",
         });
@@ -187,12 +201,17 @@ export class AgentSession {
   }
 
   #weavePrompts(upTo: number): void {
+    // A past conversation has no human half to weave: the record that
+    // carried it died with the session it described. Reading the *live*
+    // record here would splice the current conversation's prompts into a
+    // document about a different one (#119).
+    if (this.#history) return;
     const rec = currentRecord();
     if (!rec) return;
     const next = promptsBefore(rec.prompts, this.#promptCursor, upTo);
     for (let i = this.#promptCursor; i < next; i++) {
       this.#streaming = null;
-      pushEntry({ kind: "user", text: rec.prompts[i]!.text });
+      this.#push({ kind: "user", text: rec.prompts[i]!.text });
     }
     this.#promptCursor = next;
   }
@@ -203,9 +222,9 @@ export class AgentSession {
   async #finishAdoptedTurn(id: number): Promise<void> {
     try {
       const r = (await this.conn.adopt(id)) as { stopReason?: string };
-      if (r.stopReason && r.stopReason !== "end_turn") pushEntry({ kind: "note", text: `turn ended: ${r.stopReason}` });
+      if (r.stopReason && r.stopReason !== "end_turn") this.#push({ kind: "note", text: `turn ended: ${r.stopReason}` });
     } catch (e) {
-      pushEntry({ kind: "error", text: `the turn that was running when this page reloaded ended: ${e instanceof Error ? e.message : String(e)}` });
+      this.#push({ kind: "error", text: `the turn that was running when this page reloaded ended: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       this.#endTurn();
     }
@@ -215,7 +234,7 @@ export class AgentSession {
 
   async prompt(text: string): Promise<void> {
     if (!this.#sessionId) throw new Error("no ACP session");
-    pushEntry({ kind: "user", text });
+    this.#push({ kind: "user", text });
     this.#streaming = null;
     turn.set("thinking");
     // Anchored *before* the send: the position is "how much of the agent's
@@ -232,12 +251,12 @@ export class AgentSession {
     });
     try {
       const r = await sent.result;
-      if (r.stopReason && r.stopReason !== "end_turn") pushEntry({ kind: "note", text: `turn ended: ${r.stopReason}` });
+      if (r.stopReason && r.stopReason !== "end_turn") this.#push({ kind: "note", text: `turn ended: ${r.stopReason}` });
     } catch (e) {
       // A turn that failed because the session ended has already been
       // narrated by whoever ended it (the agent's exit, or the human's "end
       // session"). Only a failure inside a live session is news here.
-      if (turn.get() !== "gone") pushEntry({ kind: "error", text: `prompt failed: ${e instanceof Error ? e.message : String(e)}` });
+      if (turn.get() !== "gone") this.#push({ kind: "error", text: `prompt failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       this.#endTurn();
     }
@@ -269,7 +288,7 @@ export class AgentSession {
         const text = blockText(u["content"] as ContentBlock);
         if (!text) return;
         if (!this.#streaming || this.#streaming.kind !== kind) {
-          this.#streaming = pushEntry({ kind, text: signal(text) }) as TextEntry;
+          this.#streaming = this.#push({ kind, text: signal(text) }) as TextEntry;
         } else {
           this.#streaming.text.set(this.#streaming.text.get() + text);
         }
@@ -279,7 +298,7 @@ export class AgentSession {
         this.#streaming = null;
         const tc = u as ToolCallShape;
         const id = tc.toolCallId ?? `t-${Math.random().toString(36).slice(2)}`;
-        const entry = pushEntry({
+        const entry = this.#push({
           kind: "tool",
           toolCallId: id,
           title: signal(tc.title ?? "tool call"),
@@ -311,7 +330,7 @@ export class AgentSession {
         const items = (u["entries"] as { content?: string; status?: string }[] | undefined) ?? [];
         if (!items.length) return;
         this.#streaming = null;
-        pushEntry({ kind: "note", text: "plan: " + items.map((i) => `${i.status === "completed" ? "✓" : "•"} ${i.content ?? ""}`).join("  ") });
+        this.#push({ kind: "note", text: "plan: " + items.map((i) => `${i.status === "completed" ? "✓" : "•"} ${i.content ?? ""}`).join("  ") });
         return;
       }
       default:
@@ -337,12 +356,22 @@ export class AgentSession {
       options,
     };
 
+    // From a transcript (#119): the question is in the folder, the answer
+    // never was. Show what was asked, mark it historic, and let the card
+    // say that the verdict is not knowable from here — the alternative is
+    // inferring it from what the agent did next, which D32 already refused
+    // as a guess dressed as a fact.
+    if (this.#history) {
+      this.#push({ ...card, answer: signal<string | null>(null), respond: null, historic: true });
+      return NO_RESPONSE;
+    }
+
     // A question this page already settled: it is transcript now. Render the
     // verdict, say nothing on the wire — the agent read the answer long ago
     // and has moved on.
     const verdict = origin.replayed ? permissionVerdict(currentRecord()?.answers ?? {}, origin.id) : ({ state: "open" } as const);
     if (verdict.state === "settled") {
-      pushEntry({ ...card, answer: signal<string | null>(verdict.option ?? "(cancelled)"), respond: null });
+      this.#push({ ...card, answer: signal<string | null>(verdict.option ?? "(cancelled)"), respond: null });
       return NO_RESPONSE;
     }
 
@@ -352,10 +381,10 @@ export class AgentSession {
     // has been waiting for since before the refresh.
     log(`permission ${origin.replayed ? "still open from before the refresh" : "requested"}: ${tc.title ?? "(untitled)"} [${options.map((o) => o.optionId).join(", ")}]`);
     if (origin.replayed) {
-      pushEntry({ kind: "note", text: "this question was still waiting when the page reloaded — the agent is holding for an answer." });
+      this.#push({ kind: "note", text: "this question was still waiting when the page reloaded — the agent is holding for an answer." });
     }
     return new Promise((resolve) => {
-      const entry = pushEntry({
+      const entry = this.#push({
         ...card,
         answer: signal<string | null>(null),
         respond: (optionId: string | null) => {
@@ -392,13 +421,24 @@ export class AgentSession {
    *  unrecoverable. Returns `NO_RESPONSE` for the silent case, throws for
    *  the refusal, and null when the call is live and should just happen. */
   #replayGuard(method: string, path: string, origin: Origin): typeof NO_RESPONSE | null {
+    // A transcript (#119). This call was served — or refused — by a page
+    // that is gone, against a folder that has moved on, on behalf of an
+    // agent that has exited. Every branch below is about answering someone;
+    // there is nobody to answer. Render the fact and stop.
+    if (this.#history) {
+      this.#push({
+        kind: "note",
+        text: `the agent asked the page to ${method === "fs/write_text_file" ? "write" : "read"} ${path}${path ? "" : "(no path)"} — served then, not now.`,
+      });
+      return NO_RESPONSE;
+    }
     if (!origin.replayed) return null;
     if (origin.id !== undefined && Object.prototype.hasOwnProperty.call(currentRecord()?.answers ?? {}, String(origin.id))) {
       log(`${method} ${path} — replayed, already served before the reload`);
       return NO_RESPONSE;
     }
     log(`${method} ${path} — outstanding since the reload; refusing rather than repeating it`);
-    pushEntry({
+    this.#push({
       kind: "note",
       text: `the agent asked to ${method === "fs/write_text_file" ? "write" : "read"} ${path} while this page was away — it was told to ask again rather than have it done blind.`,
     });

@@ -3,6 +3,9 @@
 // these; components render from them and stay framework-thin.
 import { signal } from "@lit-labs/signals";
 import type { Signal } from "@lit-labs/signals";
+import type { PastConversation } from "../src/transcripts.js";
+
+export type { PastConversation };
 
 /** boot — deciding; wizard — setup dialog; reconnect — a remembered folder
  *  whose grant needs one click back (#58's shape, F15); resume-error — a
@@ -71,6 +74,16 @@ export interface AgentFacts {
 }
 export const agentFacts = signal<AgentFacts | null>(null);
 
+/** What this folder kept from conversations that ended (#119, D26 rule 4).
+ *  Refreshed on connect and whenever a session ends. Rows are parsed
+ *  defensively in `../src/transcripts.ts` — a transcript is a file any
+ *  co-tenant of the folder can write (D20). */
+export const past = signal<PastConversation[]>([]);
+/** The one being read, or null for the live conversation. While it is set
+ *  the chat pane is a document: no composer, nothing clickable, nothing on
+ *  the wire. */
+export const viewing = signal<PastConversation | null>(null);
+
 export type Turn = "starting" | "idle" | "thinking" | "cancelling" | "gone";
 export const turn = signal<Turn>("starting");
 
@@ -119,6 +132,12 @@ export interface PermissionEntry {
   answer: Signal.State<string | null>;
   /** resolves the agent's pending request; null once answered. */
   respond: ((optionId: string | null) => void) | null;
+  /** read out of an ended session's transcript (#119). The question is in
+   *  the folder; the answer never was — it rode the uplink, which is not
+   *  logged. So the card shows what was asked and says plainly that what
+   *  was answered is not knowable from here, rather than inferring it from
+   *  what the agent did next (a guess dressed as a fact, D32's words). */
+  historic?: true;
 }
 export interface NoteEntry {
   kind: "note" | "error";
@@ -132,6 +151,25 @@ export function pushEntry(e: Entry): Entry {
   entries.set([...entries.get(), e]);
   return e;
 }
+
+/** The conversation being *read* (#119) — a document, kept apart from the
+ *  live one on purpose. The agent may still be mid-turn while someone opens
+ *  a past conversation; one list would let its words land in the middle of
+ *  a transcript about a different session, and would lose them on the way
+ *  back. Two lists mean "close" returns to a live conversation that carried
+ *  on without being watched. */
+export const pastEntries = signal<Entry[]>([]);
+
+export function pushPast(e: Entry): Entry {
+  pastEntries.set([...pastEntries.get(), e]);
+  return e;
+}
+
+/** Where a given AgentSession's output goes. Passed to the session rather
+ *  than chosen at each call site: which conversation a message belongs to
+ *  is a property of the session that produced it, never of the moment it
+ *  arrives. */
+export type EntrySink = (e: Entry) => Entry;
 
 // ---------------------------------------------------------------- workspace
 

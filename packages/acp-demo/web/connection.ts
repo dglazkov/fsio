@@ -29,6 +29,7 @@ import {
   gate,
   helper,
   notice,
+  past,
   phase,
   pickError,
   pushEntry,
@@ -42,6 +43,7 @@ import {
   type Diagnostics,
 } from "./state";
 import { startWatching } from "./workspace";
+import { refreshPast } from "./history";
 import { beginRecord, clearRecord, forgetHandle, loadRecord, rememberAgent, saveHandle, savedAgent, savedHandle, updateRecord } from "./store";
 import { type StickyRecord } from "../src/resume.js";
 
@@ -132,6 +134,10 @@ let servicesRev: number | undefined;
  *  already run. */
 let rootHandle: FileSystemDirectoryHandle | null = null;
 
+/** The granted folder, for the parts of the page that read it directly —
+ *  today the past-conversations view (#119), which needs no session. */
+export const currentRoot = (): FileSystemDirectoryHandle | null => rootHandle;
+
 export async function pickFolder(): Promise<void> {
   pickError.set(null);
   step("opening the folder picker");
@@ -182,6 +188,9 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
   // Remembered only once a helper folder connected: a mispick must not
   // become next visit's auto-connect target.
   void saveHandle(root).catch(() => {});
+  // What this folder kept from before (#119). Read here rather than on
+  // demand so the bar can offer it the moment there is something to offer.
+  void refreshPast(root).catch(() => {});
   helperWasAlive = false;
   await refreshHelper(root);
   hostTimer = setInterval(() => void refreshHelper(root), 2000);
@@ -450,6 +459,16 @@ async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Pro
     if (!live) {
       log(`the session from last time is gone (${rec.sessionId}) — starting a new one`);
       await clearRecord();
+      // The commonest way to get here is a helper restart, which used to
+      // take the conversation with it. It no longer does (#119, D26 rule
+      // 4), so say where it went — this is the exact moment someone asks.
+      await refreshPast(root).catch(() => {});
+      if (past.get().some((p) => p.id === rec.sessionId)) {
+        pushEntry({
+          kind: "note",
+          text: "the session from last time is gone — the helper was restarted, which stops the agent. What it said is still in the folder: “past conversations” in the bar above.",
+        });
+      }
       return "gone";
     }
   } catch (e) {
@@ -712,8 +731,12 @@ export async function endSession(): Promise<void> {
     await s?.close(); // the helper kills the child (D6)
   } catch {}
   setQueued([]);
-  pushEntry({ kind: "note", text: "session ended — the agent was stopped, and this conversation is over." });
+  pushEntry({ kind: "note", text: "session ended — the agent was stopped, and this conversation is over. It stays readable: “past conversations” in the bar above." });
   log("session ended by the human");
+  // The host sweeps the session dir a beat after the close and keeps the
+  // transcript on the way out (#119) — look again once it has.
+  const root = rootHandle;
+  if (root) setTimeout(() => void refreshPast(root).catch(() => {}), 1500);
 }
 
 /** The retry on the resume-error panel (#115). The record was kept, so
