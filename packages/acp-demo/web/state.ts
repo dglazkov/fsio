@@ -1,10 +1,13 @@
 // Shared page state: signals are the spine (terminal-demo's shape). The
 // protocol-facing modules (connection.ts, agent.ts, workspace.ts) write
 // these; components render from them and stay framework-thin.
-import { signal } from "@lit-labs/signals";
+import { computed, signal } from "@lit-labs/signals";
 import type { Signal } from "@lit-labs/signals";
+import type { FsioSession } from "@fsio/client";
 import type { PastConversation } from "../src/transcripts.js";
+import type { StickyRecord } from "../src/resume.js";
 import type { Adoptable } from "./discovery";
+import type { AgentSession } from "./agent";
 
 export type { PastConversation, Adoptable };
 
@@ -38,20 +41,17 @@ export const notice = signal<{ msg: string; hint: string } | null>(null);
 
 export const folder = signal<{ name: string; via: "picked" | "restored" | "regranted" } | null>(null);
 
-/** True once the page is driving a session it did not start — a conversation
- *  it came back to (#113). The chat header says so; a demo that silently
- *  resumed would be indistinguishable from one that lost everything. */
-export const resumed = signal(false);
-
 /** Running conversations in this folder that nothing here has a record of
- *  (#117). The record is a shortcut back to one session; the folder is the
- *  index of all of them, and this is what it answered. */
+ *  (#117), as the arrival picker sees them: everything running, minus what
+ *  this page already holds and what it has been told to leave alone. The
+ *  record is a shortcut back to one session; the folder is the index of all
+ *  of them, and this is what it answered. */
 export const adoptable = signal<Adoptable[]>([]);
-/** True when the conversation on screen was joined in progress rather than
- *  started or resumed here. Stronger than `resumed`, and it has to be said
- *  louder: what came back is the agent's half, beginning at whatever the
- *  folder still holds, with no record anywhere of what was typed into it. */
-export const adopted = signal(false);
+/** The same question asked by the "+" menu instead (#120). One list, two
+ *  exclusions: the arrival picker must not re-offer a conversation the human
+ *  just walked away from, and the "+" menu must, because opening it *is* the
+ *  human asking. */
+export const joinable = signal<Adoptable[]>([]);
 
 export type HelperState = "none" | "silent" | "alive" | "wrong-kind";
 export const helper = signal<HelperState>("none");
@@ -84,7 +84,6 @@ export interface AgentFacts {
   state: { mode: string; dirs: string[]; why: string };
   cwd: string;
 }
-export const agentFacts = signal<AgentFacts | null>(null);
 
 /** What this folder kept from conversations that ended (#119, D26 rule 4).
  *  Refreshed on connect and whenever a session ends. Rows are parsed
@@ -109,17 +108,6 @@ export const viewing = signal<PastConversation | null>(null);
 export const viewingHalf = signal<{ prompts: number; placed: boolean; adopted: boolean } | null>(null);
 
 export type Turn = "starting" | "idle" | "thinking" | "cancelling" | "gone";
-export const turn = signal<Turn>("starting");
-
-/** Prompts typed while the agent was busy, oldest first.
- *
- *  ACP has one turn in flight per session, so a second prompt cannot simply
- *  be sent. The composer used to answer that by dropping the text: it
- *  cleared the textarea and `sendPrompt` discarded anything that arrived
- *  outside `idle`, so typing during a turn lost what you typed. Holding it
- *  here instead means the page keeps the one thing it has that the human
- *  cannot get back. */
-export const queued = signal<string[]>([]);
 
 // ---------------------------------------------------------------- transcript
 //
@@ -172,13 +160,6 @@ export interface NoteEntry {
 }
 export type Entry = UserEntry | TextEntry | ToolEntry | PermissionEntry | NoteEntry;
 
-export const entries = signal<Entry[]>([]);
-
-export function pushEntry(e: Entry): Entry {
-  entries.set([...entries.get(), e]);
-  return e;
-}
-
 /** The conversation being *read* (#119) — a document, kept apart from the
  *  live one on purpose. The agent may still be mid-turn while someone opens
  *  a past conversation; one list would let its words land in the middle of
@@ -221,7 +202,150 @@ export interface Diagnostics {
   stderr: string[];
   [k: string]: unknown;
 }
-/** Last snapshot of `acp/diagnostics`. Polled, and deliberately kept after
- *  the agent dies: the kind's methods vanish at exit (#98), so the last
- *  snapshot is all a page will ever have of the stderr that says why. */
-export const diagnostics = signal<Diagnostics | null>(null);
+// ------------------------------------------------------------ conversations
+//
+// N of them (#120). Everything that used to be one page-wide signal — the
+// transcript, the turn, the queue, the agent's facts, the diagnostics — is a
+// field on a conversation now, because the page holds several and they are
+// all live at once. A message arriving belongs to the session that produced
+// it, never to whichever conversation happens to be on screen when it lands.
+//
+// What stayed page-wide is what belongs to the *folder*: the file list, the
+// past conversations, the helper's roster, the grant itself. One folder, N
+// conversations in it — which is also the protocol's own shape, since
+// `FsioClient` has always carried N sessions and it was only the page that
+// insisted on one.
+
+export interface Conv {
+  /** the fsio session id, which is also the tab's identity and what rides in
+   *  the URL (P1, #120). Deliberately not a page-minted tab number: a
+   *  conversation is not this page's to name — it lives in the helper, the
+   *  folder lists it, and a second browser has to be able to mean the same
+   *  one by the same word. */
+  readonly id: string;
+  session: FsioSession | null;
+  agent: AgentSession | null;
+  readonly entries: Signal.State<Entry[]>;
+  readonly turn: Signal.State<Turn>;
+  /** Prompts typed while the agent was busy, oldest first.
+   *
+   *  ACP has one turn in flight per session, so a second prompt cannot simply
+   *  be sent. The composer used to answer that by dropping the text: it
+   *  cleared the textarea and `sendPrompt` discarded anything that arrived
+   *  outside `idle`, so typing during a turn lost what you typed. Holding it
+   *  here instead means the page keeps the one thing it has that the human
+   *  cannot get back. */
+  readonly queued: Signal.State<string[]>;
+  /** What the host said about the agent it started (D30 rule 5). */
+  readonly facts: Signal.State<AgentFacts | null>;
+  /** Last snapshot of `acp/diagnostics`. Polled, and deliberately kept after
+   *  the agent dies: the kind's methods vanish at exit (#98), so the last
+   *  snapshot is all a page will ever have of the stderr that says why. */
+  readonly diagnostics: Signal.State<Diagnostics | null>;
+  /** True once this page is driving a session it did not start — a
+   *  conversation it came back to (#113). The chat header says so; a demo
+   *  that silently resumed would be indistinguishable from one that lost
+   *  everything. */
+  readonly resumed: Signal.State<boolean>;
+  /** True when this conversation was joined in progress rather than started
+   *  or resumed here. Stronger than `resumed`, and it has to be said louder:
+   *  what came back is the agent's half, beginning at whatever the folder
+   *  still holds, with no record anywhere of what was typed into it. */
+  readonly adopted: Signal.State<boolean>;
+  /** The writer epoch that took this conversation over (D18), or 0 while
+   *  this page still holds it.
+   *
+   *  Attach IS takeover, and #120 is what made that ordinary: the URL now
+   *  carries conversations, so handing someone the link — or opening the
+   *  same one twice — fences whoever was there. The terminal demo has shown
+   *  this since #58 and this page never did, because before there were tabs
+   *  a second window on the same conversation was exotic enough to go
+   *  unmentioned. It is not exotic any more, and an unmentioned fence is a
+   *  page whose sends fail silently while the transcript keeps filling in
+   *  with answers to questions it cannot see. */
+  readonly superseded: Signal.State<number>;
+  /** What the tab chip says — the agent's name once `initialize` answers. */
+  readonly title: Signal.State<string>;
+  /** Entries that arrived while this conversation was not on screen. With
+   *  one conversation the page WAS the notification; with N, a tab that says
+   *  nothing is a conversation happening in a room nobody is in. */
+  readonly unread: Signal.State<number>;
+  /** Permission questions this page has been asked and not answered. Its own
+   *  counter rather than a scan of `entries`, because it is the one thing a
+   *  background tab must be able to shout: an agent blocked on a consent
+   *  question in a tab nobody is looking at is this demo's own subject
+   *  matter, failing quietly. */
+  readonly asking: Signal.State<number>;
+  /** The sticky record this conversation writes through (resume.ts), or null
+   *  when there is nothing worth coming back to yet. */
+  record: StickyRecord | null;
+  diagTimer?: ReturnType<typeof setInterval>;
+}
+
+export function newConv(id: string): Conv {
+  return {
+    id,
+    session: null,
+    agent: null,
+    entries: signal<Entry[]>([]),
+    turn: signal<Turn>("starting"),
+    queued: signal<string[]>([]),
+    facts: signal<AgentFacts | null>(null),
+    diagnostics: signal<Diagnostics | null>(null),
+    resumed: signal(false),
+    adopted: signal(false),
+    superseded: signal(0),
+    title: signal("agent"),
+    unread: signal(0),
+    asking: signal(0),
+    record: null,
+  };
+}
+
+/** Open conversations, in tab order. */
+export const convs = signal<Conv[]>([]);
+/** Which one is on screen, by session id. */
+export const activeId = signal<string | null>(null);
+export const active = computed<Conv | null>(() => convs.get().find((c) => c.id === activeId.get()) ?? null);
+
+// The active conversation's fields, for the components that render exactly
+// one at a time. Reading through `active` rather than being handed a Conv is
+// what kept the chat pane and the bar as thin as they were before there were
+// tabs — and the empty defaults are what the page shows between the last tab
+// closing and the next one opening.
+export const entries = computed<Entry[]>(() => active.get()?.entries.get() ?? []);
+export const turn = computed<Turn>(() => active.get()?.turn.get() ?? "starting");
+export const queued = computed<string[]>(() => active.get()?.queued.get() ?? []);
+export const agentFacts = computed<AgentFacts | null>(() => active.get()?.facts.get() ?? null);
+export const diagnostics = computed<Diagnostics | null>(() => active.get()?.diagnostics.get() ?? null);
+export const resumed = computed<boolean>(() => active.get()?.resumed.get() ?? false);
+export const adopted = computed<boolean>(() => active.get()?.adopted.get() ?? false);
+export const superseded = computed<number>(() => active.get()?.superseded.get() ?? 0);
+
+/** Everything an `AgentSession` does that is not ACP: where its output goes,
+ *  what the turn is, and what gets written down.
+ *
+ *  It used to read all of that from module state, which is exactly what made
+ *  one conversation per page a structural fact rather than a choice. Handing
+ *  it a channel instead is what N conversations cost: an arriving message
+ *  belongs to the session that produced it, and now it says so. The
+ *  read-only view (#119) passes a channel with no wire behind it and nothing
+ *  that can act, which is the same statement from the other end. */
+export interface ConvIO {
+  push: EntrySink;
+  /** the entry list changed in place — a card's buttons became a verdict. */
+  touch(): void;
+  turn(): Turn;
+  setTurn(t: Turn): void;
+  setQueued(q: readonly string[]): void;
+  /** an unanswered permission question arrived (+1) or was answered (−1). */
+  waiting(delta: number): void;
+  /** this page can still READ this conversation but no longer drives it: a
+   *  superseded writer (D18), or a stored transcript, which is the same
+   *  statement made permanent. Everything that would act on the agent's
+   *  behalf has to ask, because the answer decides whether a request is ours
+   *  to serve or somebody else's. */
+  fenced(): boolean;
+  record(): StickyRecord | null;
+  update(fn: (r: StickyRecord) => void): void;
+}

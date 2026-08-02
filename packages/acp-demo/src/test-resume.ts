@@ -10,6 +10,7 @@ import {
   anchorsAlign,
   demote,
   firstIdForEpoch,
+  mergeAnswers,
   parsePast,
   parseRecord,
   permissionVerdict,
@@ -298,4 +299,31 @@ test("past: junk inside a demoted record is dropped, and the rest survives", () 
   assert.deepEqual(p?.answers, { "3": "allow", "5": null });
   assert.equal(p?.agentName, "agent");
   assert.equal(p?.gen, 0);
+});
+
+test("answers merge as a union, so a second window cannot erase the first's clicks", () => {
+  // The failure this exists to stop, measured (#120): three permission cards
+  // were answered `allow` on the wire — the out log shows ask → write →
+  // completed, three times — and came back as two OPEN questions on the next
+  // load. Two windows held the same conversation, each with its own copy of
+  // the record, and the one that had not seen the clicks wrote last.
+  const holder = { "1": "allow", "3": "allow", "5": "allow" };
+  const stale: Record<string, string | null> = { "1": "allow" };
+  assert.equal(mergeAnswers(stale, holder), 2);
+  assert.deepEqual(stale, { "1": "allow", "3": "allow", "5": "allow" });
+});
+
+test("answers merge: a cancel is an answer, and the local one wins", () => {
+  // `null` means the human cancelled — a verdict, not a missing entry, so a
+  // union that tested truthiness would quietly re-open a settled question.
+  const mine: Record<string, string | null> = { "7": null };
+  assert.equal(mergeAnswers(mine, { "7": "allow", "9": null }), 1);
+  assert.deepEqual(mine, { "7": null, "9": null });
+});
+
+test("answers merge: nothing to add is not a write", () => {
+  const mine: Record<string, string | null> = { "1": "allow" };
+  assert.equal(mergeAnswers(mine, {}), 0);
+  assert.equal(mergeAnswers(mine, { "1": "reject" }), 0);
+  assert.deepEqual(mine, { "1": "allow" });
 });

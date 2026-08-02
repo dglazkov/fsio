@@ -22,6 +22,12 @@ class Reporter {
   flushing = false;
   lastWrite = 0;
   timer: ReturnType<typeof setInterval> | undefined;
+  /** Injected by conversations.ts (avoids an import cycle): live tab state,
+   *  so a cooperative run can read multi-conversation behaviour straight out
+   *  of report.json (#120). The same hook the terminal demo has, for the same
+   *  reason — N tabs is exactly what the native side cannot otherwise see. */
+  convSummary: () => Record<string, unknown>[] = () => [];
+
   async attach(fsioDir: FileSystemDirectoryHandle): Promise<void> {
     const clientRoot = await fsioDir.getDirectoryHandle("client", { create: true });
     this.dir = await clientRoot.getDirectoryHandle(this.clientId, { create: true });
@@ -62,6 +68,7 @@ class Reporter {
             userAgent: navigator.userAgent,
             hasObserver,
             currentStep: lastStep,
+            conversations: this.convSummary(),
             events: this.events,
           },
           null,

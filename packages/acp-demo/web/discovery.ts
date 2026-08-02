@@ -88,6 +88,27 @@ export async function listAdoptable(root: FileSystemDirectoryHandle, client: Fsi
   return out;
 }
 
+/** What the folder can say about ONE session, for a caller that already
+ *  knows it is running (#120): a URL named it, so there is no picker to
+ *  build — only the fields a rejoin needs. Null when the folder cannot
+ *  supply the agent's own conversation id, which is the difference between
+ *  a conversation this page can speak to and one it can only watch.
+ *
+ *  The same read the picker does, on one row instead of all of them. That it
+ *  is the same read is the point: a link handed to a browser that has never
+ *  seen this conversation gets exactly what the picker would have offered,
+ *  and no more. */
+export async function peekAdoptable(
+  root: FileSystemDirectoryHandle,
+  id: string
+): Promise<{ agent: string; agentName: string; agentVersion: string; acpSessionId: string | null } | null> {
+  const dir = await sessionsDir(root);
+  if (!dir) return null;
+  const one = await describe(dir, id).catch(() => null);
+  if (!one) return null;
+  return { agent: one.agent, agentName: one.peek.agentName, agentVersion: one.peek.agentVersion, acpSessionId: one.peek.acpSessionId };
+}
+
 const sessionsDir = async (root: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle | null> => {
   try {
     return await (await root.getDirectoryHandle(".fsio")).getDirectoryHandle("sessions");

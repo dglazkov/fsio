@@ -48,12 +48,11 @@
 //   guess is not.
 import { AcpConnection, NO_RESPONSE, type Origin } from "./acp";
 import { log } from "./reporter";
-import { entries, pastEntries, pushEntry, pushPast, queued, turn, type EntrySink, type PermissionEntry, type TextEntry, type ToolEntry } from "./state";
+import type { ConvIO, EntrySink, PermissionEntry, TextEntry, ToolEntry } from "./state";
 import { signal } from "@lit-labs/signals";
 import { touched } from "./workspace";
 import { containedRelative } from "../src/paths.js";
 import { permissionVerdict, promptsBefore, type PastRecord, type StickyRecord } from "../src/resume.js";
-import { currentRecord, updateRecord } from "./store";
 
 /** The protocol version this client speaks. */
 const PROTOCOL_VERSION = 1;
@@ -100,14 +99,18 @@ export class AgentSession {
    *
    *  `past` is what this browser kept of its own half of that conversation
    *  (#123), or null for one it did not drive. Deliberately a field on the
-   *  session rather than a lookup in `currentRecord()`: the live record
-   *  belongs to a different conversation, and splicing it in here would be
-   *  the one mistake this view cannot survive. */
+   *  session rather than a lookup through the channel: the live records
+   *  belong to other conversations, and splicing one in here would be the
+   *  one mistake this view cannot survive. */
   #history: { past: PastRecord | null } | null;
-  /** Which conversation this session's output belongs to. A property of the
-   *  session, not of the moment: the live agent may well be mid-turn while
-   *  someone is reading a past conversation, and its words belong in the
-   *  live log either way. */
+  /** Which conversation this session's state belongs to (#120). A property
+   *  of the session, not of the moment: the page now holds N of these and
+   *  several may be mid-turn at once, so an arriving message's home is
+   *  decided by which session received it and never by which tab is on
+   *  screen. It used to be module state, which is what made one conversation
+   *  per page a structural fact rather than a choice. */
+  #io: ConvIO;
+  /** `io.push`, hoisted because half this file is a push. */
   #push: EntrySink;
 
   /** This conversation was joined in progress (#117), so the record driving
@@ -132,6 +135,7 @@ export class AgentSession {
     conn: AcpConnection,
     root: FileSystemDirectoryHandle,
     cwd: string,
+    io: ConvIO,
     resume: StickyRecord | null = null,
     history: { past: PastRecord | null } | null = null
   ) {
@@ -139,7 +143,8 @@ export class AgentSession {
     this.#root = root;
     this.#cwd = cwd.replace(/\/+$/, "");
     this.#history = history;
-    this.#push = history ? pushPast : pushEntry;
+    this.#io = io;
+    this.#push = io.push;
     this.#adopted = history ? history.past?.adopted === true : resume?.adopted === true;
 
     conn.onNotification("session/update", (params, origin) => this.#update(params, origin));
@@ -154,7 +159,7 @@ export class AgentSession {
     // before the first replayed frame is delivered or the reply is dropped
     // as an unknown id and the turn spins forever.
     if (resume.pendingPromptId !== null) {
-      turn.set("thinking");
+      io.setTurn("thinking");
       void this.#finishAdoptedTurn(resume.pendingPromptId);
     }
   }
@@ -207,7 +212,7 @@ export class AgentSession {
 
   /** The library's replay bracket (D18), forwarded by the connection. */
   onReplay(replaying: boolean, gen: number): void {
-    const rec = currentRecord();
+    const rec = this.#io.record();
     if (replaying) {
       // Replay is head-segment-only (D26): a generation higher than the one
       // this page left behind means older frames rotated away and what comes
@@ -219,7 +224,7 @@ export class AgentSession {
           text: "the earlier part of this conversation has rotated out of the session's retained stream and cannot be shown — what follows is the tail.",
         });
       }
-      updateRecord((r) => {
+      this.#io.update((r) => {
         r.gen = gen;
       });
       return;
@@ -238,7 +243,7 @@ export class AgentSession {
       });
       this.#refusedOnJoin = 0;
     }
-    if (rec?.queued.length) queued.set([...rec.queued]);
+    if (rec?.queued.length) this.#io.setQueued(rec.queued);
   }
 
   /** Called once per incoming DATA frame, before it is dispatched. A
@@ -263,7 +268,7 @@ export class AgentSession {
     // the record it is driving. Reading the live record in a document would
     // splice the current conversation's prompts into one about a different
     // one, which is why the source is a field and not a lookup.
-    const prompts = (this.#history ? this.#history.past : currentRecord())?.prompts;
+    const prompts = (this.#history ? this.#history.past : this.#io.record())?.prompts;
     if (!prompts?.length) return;
     const next = promptsBefore(prompts, this.#promptCursor, upTo);
     for (let i = this.#promptCursor; i < next; i++) {
@@ -293,7 +298,7 @@ export class AgentSession {
     if (!this.#sessionId) throw new Error("no ACP session");
     this.#push({ kind: "user", text });
     this.#streaming = null;
-    turn.set("thinking");
+    this.#io.setTurn("thinking");
     // Anchored *before* the send: the position is "how much of the agent's
     // stream this turn had seen when it was typed", which is what puts it
     // back between the right two things on the way home.
@@ -302,7 +307,7 @@ export class AgentSession {
       sessionId: this.#sessionId,
       prompt: [{ type: "text", text }],
     });
-    updateRecord((r) => {
+    this.#io.update((r) => {
       r.prompts.push({ text, atFrame });
       r.pendingPromptId = sent.id;
     });
@@ -313,7 +318,7 @@ export class AgentSession {
       // A turn that failed because the session ended has already been
       // narrated by whoever ended it (the agent's exit, or the human's "end
       // session"). Only a failure inside a live session is news here.
-      if (turn.get() !== "gone") this.#push({ kind: "error", text: `prompt failed: ${e instanceof Error ? e.message : String(e)}` });
+      if (this.#io.turn() !== "gone") this.#push({ kind: "error", text: `prompt failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       this.#endTurn();
     }
@@ -321,15 +326,15 @@ export class AgentSession {
 
   #endTurn(): void {
     this.#streaming = null;
-    updateRecord((r) => {
+    this.#io.update((r) => {
       r.pendingPromptId = null;
     });
-    turn.set(turn.get() === "gone" ? "gone" : "idle");
+    this.#io.setTurn(this.#io.turn() === "gone" ? "gone" : "idle");
   }
 
   cancel(): void {
     if (!this.#sessionId) return;
-    turn.set("cancelling");
+    this.#io.setTurn("cancelling");
     this.conn.notify("session/cancel", { sessionId: this.#sessionId });
   }
 
@@ -435,7 +440,7 @@ export class AgentSession {
     // A question this page already settled: it is transcript now. Render the
     // verdict, say nothing on the wire — the agent read the answer long ago
     // and has moved on.
-    const verdict = origin.replayed ? permissionVerdict(currentRecord()?.answers ?? {}, origin.id) : ({ state: "open" } as const);
+    const verdict = origin.replayed ? permissionVerdict(this.#io.record()?.answers ?? {}, origin.id) : ({ state: "open" } as const);
     if (verdict.state === "settled") {
       this.#push({ ...card, answer: signal<string | null>(verdict.option ?? "(cancelled)"), respond: null });
       return NO_RESPONSE;
@@ -461,6 +466,11 @@ export class AgentSession {
           : "this question was still waiting when the page reloaded — the agent is holding for an answer.",
       });
     }
+    // Counted while it is unanswered (#120). With one conversation the page
+    // itself was the notification; with N, an agent blocked on a consent
+    // question in a tab nobody is looking at is this demo's own subject
+    // matter failing quietly, so the tab chip carries the count.
+    this.#io.waiting(1);
     return new Promise((resolve) => {
       const entry = this.#push({
         ...card,
@@ -469,13 +479,14 @@ export class AgentSession {
           if (entry.answer.get() !== null) return;
           entry.answer.set(optionId ?? "(cancelled)");
           entry.respond = null;
-          entries.set([...entries.get()]); // the card's buttons become a verdict
+          this.#io.waiting(-1);
+          this.#io.touch(); // the card's buttons become a verdict
           log(`permission answered: ${optionId ?? "cancelled"}`);
           // Written down before the response goes out: a card answered but
           // not remembered would be asked again on the next visit, which is
           // the failure this record exists to prevent.
           if (origin.id !== undefined) {
-            updateRecord((r) => {
+            this.#io.update((r) => {
               r.answers[String(origin.id)] = optionId;
             });
           }
@@ -510,8 +521,21 @@ export class AgentSession {
       });
       return NO_RESPONSE;
     }
+    // Superseded (D18, #120). The downlink is a BROADCAST — every page
+    // reading this folder sees the agent's `fs/*` requests, not just the one
+    // holding the uplink — so a fenced window would happily perform the
+    // write and then discover it cannot answer. Two windows serving one
+    // request is two writes through two grants for a question the human
+    // answered once, in the other window; and the response this one composed
+    // could never go out anyway. So it does nothing, silently: the page that
+    // holds the uplink is serving this, and its transcript is where the
+    // record of it belongs.
+    if (this.#io.fenced()) {
+      log(`${method} ${path} — another window holds this conversation; leaving it to serve this`);
+      return NO_RESPONSE;
+    }
     if (!origin.replayed) return null;
-    if (origin.id !== undefined && Object.prototype.hasOwnProperty.call(currentRecord()?.answers ?? {}, String(origin.id))) {
+    if (origin.id !== undefined && Object.prototype.hasOwnProperty.call(this.#io.record()?.answers ?? {}, String(origin.id))) {
       log(`${method} ${path} — replayed, already served before the reload`);
       return NO_RESPONSE;
     }
@@ -532,7 +556,7 @@ export class AgentSession {
 
   #remember(origin: Origin): void {
     if (origin.id === undefined) return;
-    updateRecord((r) => {
+    this.#io.update((r) => {
       r.answers[String(origin.id)] = "fs";
     });
   }

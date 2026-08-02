@@ -88,6 +88,9 @@ export interface AcpConnectionOptions {
   /** replay bracket (D18): `true` when the library starts re-emitting the
    *  session's history, `false` when it is back to live traffic. */
   onReplay?: (replaying: boolean, gen: number) => void;
+  /** a fire-and-forget send that could not go out — in practice a superseded
+   *  writer (D18): the uplink moved to another page mid-conversation. */
+  onSendFailed?: (e: unknown) => void;
 }
 
 export class AcpConnection {
@@ -182,7 +185,26 @@ export class AcpConnection {
 
   /** client → agent notification (`session/cancel`, …). */
   notify(method: string, params?: Record<string, unknown>): void {
-    this.#send({ jsonrpc: "2.0", method, ...(params ? { params } : {}) });
+    this.#trySend({ jsonrpc: "2.0", method, ...(params ? { params } : {}) });
+  }
+
+  /** A send that is allowed to fail: notifications and responses.
+   *
+   *  The uplink can be gone under us — a superseded writer's `sendData`
+   *  throws (D18/F8) — and for a *request* that must reject, because
+   *  somebody is awaiting an answer that will never come. For a
+   *  fire-and-forget it must not: an exception out of a cancel notification
+   *  or a permission response propagates into a click handler, and the last
+   *  thing a page that has just lost the uplink should also do is break the
+   *  button. Returns whether it went. */
+  #trySend(msg: unknown): boolean {
+    try {
+      this.#send(msg);
+      return true;
+    } catch (e) {
+      this.#opts.onSendFailed?.(e);
+      return false;
+    }
   }
 
   /** Answer an agent → client request. This is where the demo lives:
@@ -266,21 +288,22 @@ export class AcpConnection {
       this.#opts.onUnhandled?.(method, params);
       // Silence on replay: the previous connection already refused this, and
       // the agent has long since read that refusal.
-      if (!origin.replayed) this.#send({ jsonrpc: "2.0", id, error: { code: -32601, message: `no handler in this client for ${method}` } });
+      if (!origin.replayed) this.#trySend({ jsonrpc: "2.0", id, error: { code: -32601, message: `no handler in this client for ${method}` } });
       return;
     }
+    let response: unknown;
     try {
       const result = await fn(params, origin);
       if (result === NO_RESPONSE) return;
-      this.#send({ jsonrpc: "2.0", id, result: result ?? null });
+      response = { jsonrpc: "2.0", id, result: result ?? null };
     } catch (e) {
       const err = e as { code?: number; message?: string };
-      this.#send({
-        jsonrpc: "2.0",
-        id,
-        error: { code: typeof err.code === "number" ? err.code : -32603, message: err.message ?? String(e) },
-      });
+      response = { jsonrpc: "2.0", id, error: { code: typeof err.code === "number" ? err.code : -32603, message: err.message ?? String(e) } };
     }
+    // Outside the try, so a send that fails cannot be mistaken for the
+    // handler failing and answered a second time with an error that would
+    // also fail to send.
+    this.#trySend(response);
   }
 
   #failAll(e: Error): void {
