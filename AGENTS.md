@@ -69,6 +69,20 @@ the diff touches (often none — say so and move on).
 
 ## Operating loop
 
+**You write the issues — the human never does.** The tracker is agent-authored
+memory: a past session's grounding for a future one, alongside the code and
+the records. Write for that reader — enough context to pick one up cold. Two
+things follow from who the author is:
+
+- **An issue is never the human's opinion.** Not the priority, not the
+  framing, not the "we should." It is a previous you, reasoning with less
+  than you have now. When a call needs their judgment, ask them; never quote
+  an issue back at them as though they had said it.
+- **Issues go stale.** They were true when written and nothing updates them
+  when the code moves underneath. Check an issue's claims against the code
+  and the records before acting on them, and when one has gone stale, retitle
+  or close it rather than building around it.
+
 1. Issue-driven: `gh issue list` → pick by priority label (`p1` first;
    `p3` = blocked or deferred, don't start it) → implement → commit with
    `Closes #N` → push → **watch the CI run to conclusion** → verify the
