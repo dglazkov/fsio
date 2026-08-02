@@ -684,7 +684,8 @@ helper; `@agentclientprotocol/claude-agent-acp` 0.64.0, which bundles
 [#100](https://github.com/dglazkov/fsio/issues/100) leg a scripted puppet
 could not answer, because a puppet writes its own card.
 
-**The headline: R6 has a real consumer.** In manual permission mode the
+**The headline: the consent question has a real consumer.** In manual
+permission mode the
 adapter sends `session/request_permission`, the page renders it, and a human
 answers it:
 
@@ -724,8 +725,8 @@ wrote is legible enough to decide on.
   unable to inspect the project at all. (b) Every Bash call also writes
   `/tmp/claude-<random hex>-cwd`, directly in `/tmp`. Denying (b) does **not**
   stop the command — stdout arrives intact — but zsh exits 1, so the agent is
-  told every command it ran failed. That is R19 in miniature: a denial that
-  reports the wrong cause, and a tool lying about its own success is worse
+  told every command it ran failed. That is the interpret-denials problem in
+  miniature: a denial that reports the wrong cause, and a tool lying about its own success is worse
   than one plainly blocked. Both are now per-agent declarations
   (`scratch` / `scratchPatterns`), scoped to one workspace's dir and one
   filename shape — never the `/tmp/claude-<uid>` root, which holds an entry

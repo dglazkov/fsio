@@ -504,7 +504,7 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
   } catch (e) {
     // A refusal from the host — no agent on PATH, an unknown name, a
     // sandbox that could not be applied (it fails, it does not quietly run
-    // unconfined — R3). The message is written to be read by a
+    // unconfined). The message is written to be read by a
     // human, so show it as one.
     const msg = e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e);
     notice.set({ msg: "the helper refused to start an agent", hint: msg });

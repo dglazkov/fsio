@@ -7,7 +7,7 @@
 // inheritance was measured to carry the whole environment, including
 // `SSH_AUTH_SOCK` (packages/confine/MEASUREMENTS.md).
 //
-// So this helper does what #86's env program (R4/R17) says: **synthesize,
+// So this helper does what #86's env program says: **synthesize,
 // place, then add by exact name.** The floor below is the measured one
 // (MEASUREMENTS.md) —
 // eight variables ran an agent CLI identically to 48-variable inheritance —

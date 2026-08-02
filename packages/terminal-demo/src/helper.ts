@@ -77,18 +77,19 @@ process.env["HISTFILE"] = path.join(tmpReal, "fsio-terminal-demo-history");
 // higher than a history file. Measured under this exact profile: with the
 // default `~/.claude`, the run **exits 0 with a correct answer** while its
 // transcript writes are denied. Nothing surfaces — the loss is
-// discovered later, when resume finds no session. R3 ("a broken
-// confinement must look broken") applies to state placement too, so this
-// is a fix and not a nicety.
+// discovered later, when resume finds no session. "A broken confinement
+// must look broken" applies to state placement too, so this is a fix and
+// not a nicety.
 //
-// Placement, not a carve-out (R4/R2): the wall stays where it is. TMP over
+// Placement, not a carve-out: fix the friction in the child's environment,
+// never by widening the wall. TMP over
 // the field test's in-folder `$PWD/.claude-demo`, which would litter the
 // user's working folder, land in their repo, and be co-tenant-readable
 // (D20) — and this demo promises the folder back pristine on exit.
 // One flat dir is enough: the CLI partitions transcripts by workspace
 // itself (`projects/<ws>/`).
 //
-// Interim, deliberately. The destination R17 wants is the host-owned slot
+// Interim, deliberately. The destination (#86) is a host-owned slot
 // `~/.fsio/state/<workspace>/<service>/`, which needs #71 and a profile
 // carve exactly that wide. Note also what placement does NOT move: the
 // credential lives in the login Keychain, reached by mach-lookup —

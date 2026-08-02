@@ -1,7 +1,8 @@
 // The browser-side wall, tested in Node (paths.ts): what the page will and
 // will not touch on the agent's behalf. The grant is the boundary — for
 // edits there is no profile to author, because the browser is the sandbox
-// (R8, #74's rung 2) — so these refusals ARE the enforcement.
+// (#74's rung 2 — don't duplicate a wall another party enforces), so these
+// refusals ARE the enforcement.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { containedRelative, normalize } from "./paths.js";
@@ -27,7 +28,7 @@ test("paths: traversal out of the folder is refused, however it is spelled", () 
   }
 });
 
-test("paths: the refusal names the folder, so the agent can relay it (R9)", () => {
+test("paths: the refusal names the folder, so the agent can relay it", () => {
   const r = containedRelative(CWD, "/etc/passwd");
   assert.equal(r.ok, false);
   assert.match((r as { reason: string }).reason, /\/Users\/x\/project/);

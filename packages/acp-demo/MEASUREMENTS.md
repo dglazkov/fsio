@@ -10,11 +10,10 @@ where a coding agent keeps its credential. This demo does, and it is the
 only thing in the repo that has to choose. The numbers are spent and are not
 reused.
 
-The requirement numbers these entries used to cite (R1–R19) were never
-defined in a file; they live in
-[#86](https://github.com/dglazkov/fsio/issues/86)'s body and comments, and
-are named here by what they say. The wall itself is measured in
-`packages/confine/MEASUREMENTS.md`.
+The requirement numbers these entries used to cite were never defined in a
+file; they live in [#86](https://github.com/dglazkov/fsio/issues/86)'s body
+and comments, and are named here by what they say. The wall itself is
+measured in `packages/confine/MEASUREMENTS.md`.
 
 This file is the demo's, and goes when the demo goes.
 

@@ -6,15 +6,15 @@
 //   `session/request_permission` — the agent asks whether it may act. The
 //   page renders the question as UI, next to the file it is about, and the
 //   human answers there. Nothing in the terminal, nothing the agent drew
-//   itself, no ambient yes. (R6; P5: the party asking is not the party
+//   itself, no ambient yes. (P5: the party asking is not the party
 //   deciding.)
 //
 //   `fs/read_text_file` / `fs/write_text_file` — the agent asks the *page*
 //   to touch a file, and the page serves it through the directory handle
 //   the human granted. A path outside the folder is refused here, in the
-//   browser, with an error the agent can relay (R9). There is no profile to
+//   browser, with an error the agent can relay. There is no profile to
 //   author for this rung — the browser is the sandbox
-//   ([#74](https://github.com/dglazkov/fsio/issues/74)'s rung 2, R8: don't
+//   ([#74](https://github.com/dglazkov/fsio/issues/74)'s rung 2: don't
 //   duplicate a wall another party enforces).
 //
 // Both are the agent's choice to use, and that is the honest caveat: an
@@ -583,7 +583,7 @@ export class AgentSession {
 
   /** Absolute path → path relative to the granted folder, or a refusal.
    *  The rule and its tests live in `../src/paths.ts` (Node-testable);
-   *  here it becomes a JSON-RPC error the agent can relay (R9). */
+   *  here it becomes a JSON-RPC error the agent can relay. */
   #contain(abs: string): string {
     // No cwd yet (#117: a conversation joined in progress, before `acp/info`
     // has said where it is rooted). `containedRelative("", …)` would treat

@@ -12,7 +12,7 @@
 // per-agent fact, not a policy this helper can guess:
 //
 //   - "place"  — the agent honors an env var pointing at its state dir, so
-//     the profile needs no carve at all (R4/R17: placement, not carve-out).
+//     the profile needs no carve at all (placement, not carve-out).
 //   - "carve"  — the agent's state dir is also where its credential lives,
 //     so placing it into an empty slot would log the child out
 //     (MEASUREMENTS.md, second instance). The profile opens exactly those
@@ -21,7 +21,8 @@
 // Measured for pi-acp, 2026-08-01, under this demo's profile: with no carve,
 // `initialize` succeeds and **`session/new` fails** with a JSON-RPC -32603
 // whose message is "Cannot call write after a stream was destroyed" — a
-// denial that is legible (R9) and wrong about its cause (R19). With
+// denial that is legible — the agent can relay it — and wrong about its
+// cause. With
 // `~/.pi` carved, the same run completes.
 //
 // Every entry is looked up on PATH and **installed by the human, never by
@@ -41,7 +42,8 @@ export type StatePosture =
       mode: "place";
       /** env var → subdirectory name inside the helper's state area. */
       env: string;
-      /** one honest line, shown in the page and the banner (R15). */
+      /** one honest line, shown in the page and the banner: a posture has
+       *  to be describable to a third party in a sentence. */
       why: string;
     }
   | {
@@ -70,7 +72,7 @@ export interface AgentEntry {
    *
    *  Measured, never assumed — and the reason the roster exists at all
    *  (#102). This demo's headline is that the agent's consent question
-   *  becomes page UI (R6), and **the default agent does not ask**: #100
+   *  becomes page UI, and **the default agent does not ask**: #100
    *  counted 0 permission requests and 0 `fs/*` calls from pi-acp across a
    *  driven session, because it reads and edits with its own hands. F30
    *  counted them from the Claude adapter, which does ask. A human choosing
@@ -106,7 +108,7 @@ export interface AgentEntry {
    *  workspace dir. Denying it does not stop the command — stdout arrives
    *  intact — but zsh exits 1, so the agent is told every command it ran
    *  failed. A tool that lies about its own success is worse than one that
-   *  is blocked outright (R19: a denial that names the wrong cause). */
+   *  is blocked outright — a denial that names the wrong cause. */
   scratchPatterns?: string[];
 }
 
@@ -147,7 +149,8 @@ export const AGENTS: AgentEntry[] = [
     //
     // Unlike pi-acp this one *does* send `session/request_permission`, which
     // is why it is the standing answer to #100 for anyone who wants to see
-    // R6 fire against a real agent. It is a PATH install on purpose (see the
+    // the consent question fire against a real agent. It is a PATH install
+    // on purpose (see the
     // note at the top of this file) and needs its own Claude credential.
     name: "claude-agent-acp",
     bin: "claude-agent-acp",
@@ -171,8 +174,8 @@ export const AGENTS: AgentEntry[] = [
     // That is MEASUREMENTS.md's headline reaching its conclusion. Two agents
     // out of two now keep identity and state inseparable (pi in subject 2,
     // claude here),
-    // so R17's placed slot is the nicer design for a kind of agent neither
-    // of ours is. Carve, and say why.
+    // so a placed host-owned slot is the nicer design for a kind of agent
+    // neither of ours is. Carve, and say why.
     //
     // Note the carve does NOT cover `~/.claude.json` — that is a file beside
     // the dir, not in it. Auth works anyway because it only needs to *read*

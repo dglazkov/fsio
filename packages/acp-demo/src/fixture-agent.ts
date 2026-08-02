@@ -16,12 +16,13 @@
 //     serves it through the human's grant. An agent with hands can skip the
 //     client; this one cannot, which is exactly why it exercises it.
 //   - **It blocks on the human.** The edit does not happen until a
-//     `session/request_permission` comes back answered. R6 asks that the
+//     `session/request_permission` comes back answered. The demo asks that
+//     the
 //     mechanism compose with a consent surface it does not own; this is the
 //     thing that presupposes such a surface.
 //   - **It reports its own refusals.** When it reaches for a path outside
 //     the folder, the browser refuses it — and the puppet writes the refusal
-//     *text* into the transcript. R9 says that text is written to be
+//     *text* into the transcript, and that text is written to be
 //     relayed; until now nothing had ever relayed it, so nobody had read one.
 //
 // It is a **test asset, not a demo**. Nothing here calls a model, opens a
@@ -210,7 +211,8 @@ async function scenarioEdit(): Promise<void> {
   say(`Done — ${NOTES} was written through your grant, not by me. I never touched the disk.`);
 }
 
-/** The R9 leg: reach where the folder does not go, and read the refusal out
+/** The relayable-refusal leg: reach where the folder does not go, and read
+ *  the refusal out
  *  loud so a human can judge whether it makes sense on the receiving end. */
 async function scenarioRefuse(): Promise<void> {
   const probes = [

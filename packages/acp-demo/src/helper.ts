@@ -4,7 +4,7 @@
 // Run it in your working folder, pick that folder in the demo page, and the
 // page becomes an ACP client driving a real coding agent — the agent's
 // stdio riding DATA frames over the filesystem, no server, no websocket, no
-// extension. The agent's permission prompts arrive as page UI (R6).
+// extension. The agent's permission prompts arrive as page UI.
 //
 // This is demo-specific code consuming @fsio/host as a library; the generic
 // CLI lives in packages/host/src/fsio-host.ts, and the terminal demo (whose
@@ -55,7 +55,7 @@ if (wantFixture && agentArg) fail(`--fixture and --agent are two ways to say the
 
 // The sandbox is the demo's safety sentence, so running without it is a
 // thing you have to say out loud — and the page is told (`sandboxed: false`
-// in the spawn result, D13 extra fields). R3: never silently unconfined.
+// in the spawn result, D13 extra fields). Never silently unconfined.
 if (wantSandbox && process.platform !== "darwin") {
   fail(`confinement here is sandbox-exec (macOS); got ${process.platform}. Re-run with --no-sandbox to drive an UNCONFINED agent anyway.`);
 }
@@ -76,10 +76,10 @@ if (rootReal.startsWith("/private/tmp") || rootReal.startsWith(tmpReal)) {
 
 // ---- the agent's two dirs outside the folder: scratch and placed state.
 //
-// Interim, deliberately, exactly as terminal-demo's placement is: R17's
-// destination is the host-owned slot `~/.fsio/state/<workspace>/<service>/`,
+// Interim, deliberately, exactly as terminal-demo's placement is: the
+// destination is a host-owned slot `~/.fsio/state/<workspace>/<service>/`,
 // which needs #71 and a profile carve exactly that wide. What matters
-// already is that state is *placed* and not carved out of $HOME (R4), and
+// already is that state is *placed* and not carved out of $HOME, and
 // that the scratch dir the child gets as TMPDIR is ours, not the user's.
 const demoDir = path.join(tmpReal, "fsio-acp-demo");
 const scratch = path.join(demoDir, "scratch");
@@ -108,7 +108,7 @@ const FIXTURE: AgentEntry = {
   state: {
     mode: "place",
     env: "FSIO_FIXTURE_STATE",
-    why: "the puppet keeps no state; a placed dir it never writes to leaves the profile with no carve at all (R4/R17).",
+    why: "the puppet keeps no state; a placed dir it never writes to leaves the profile with no carve at all.",
   },
 };
 

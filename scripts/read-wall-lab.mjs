@@ -163,7 +163,7 @@ const ruleCount = (s) =>
 
 // ------------------------------------------------------------------ battery
 // What an agent loop is asked to do in a workspace. Each is a separate spawn,
-// because that is how a tool call arrives (R7: per spawn, machine frequency).
+// because that is how a tool call arrives: per spawn, at machine frequency.
 const BATTERY = [
   { name: "node runs", cmd: `"${NODE}" --version` },
   { name: "read the workspace", cmd: `"${NODE}" -e 'require("fs").readFileSync("index.ts")'` },

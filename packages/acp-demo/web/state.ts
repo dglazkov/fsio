@@ -144,7 +144,7 @@ export interface ToolEntry {
   detail: Signal.State<string>;
 }
 /** The reason this demo exists: the agent's own consent question, rendered
- *  by the page that can also show you the file it is about (R6). */
+ *  by the page that can also show you the file it is about. */
 export interface PermissionEntry {
   kind: "permission";
   id: string;
