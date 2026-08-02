@@ -20,7 +20,7 @@ import path from "node:path";
 import { HostServer } from "@fsio/host";
 import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
 import { RpcErrors } from "@fsio/common";
-import { ShimDirectory } from "@fsio/bench/dist/fs-shim.js";
+import { ShimDirectory, type ShimFaults } from "@fsio/bench/dist/fs-shim.js";
 import { acpKind } from "./acp-kind.js";
 import { ENV_FLOOR } from "./env.js";
 import type { AgentEntry } from "./agents.js";
@@ -55,6 +55,8 @@ interface Rig {
   /** every DATA frame, decoded — one entry per frame, on purpose. */
   frames: string[];
   session: FsioSession;
+  /** fault injection (#37/#116): armed mid-test to abort the next commits. */
+  faults: ShimFaults;
   /** send one ACP message as one DATA frame. */
   send: (msg: unknown) => void;
   /** await the reply carrying this id, parsed. */
@@ -83,7 +85,8 @@ async function withAcp(
     })
   );
   await server.start();
-  const client = new FsioClient(new ShimDirectory(root));
+  const faults: ShimFaults = {};
+  const client = new FsioClient(new ShimDirectory(root, faults));
   const frames: string[] = [];
   let session: FsioSession | null = null;
   try {
@@ -96,6 +99,7 @@ async function withAcp(
       root,
       frames,
       session: s,
+      faults,
       send: (msg) => s.sendData(JSON.stringify(msg)),
       reply: async (id) => {
         const hit = await waitFor(() => frames.find((f) => (JSON.parse(f) as { id?: unknown }).id === id), `reply ${id}`);
@@ -326,6 +330,45 @@ test("detach leaves the agent running, and a reattach replays what it said as hi
     // now it is the only thing that does.
     await s2.close();
     await waitFor(() => !alive(pid), "the agent process to die on an explicit close");
+  });
+});
+
+test("an aborted attach commit retries with a fresh aid instead of losing the session (#116)", async () => {
+  await withAcp(async (rig) => {
+    await rig.session.ready;
+    const pid = (await rig.session.request<Record<string, unknown>>("acp/info")).result["pid"] as number;
+    rig.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    await rig.reply(1);
+    await rig.session.detach();
+
+    // The field failure (#115), reproduced: Chrome aborts the bootstrap
+    // commit's close(). One abort used to reject `ready`, and the /acp page
+    // read that as "the session is gone" and started a second conversation
+    // on top of a live agent.
+    rig.faults.closeAborts = 1;
+    const notes: string[] = [];
+    const s2 = rig.client.attachSession(rig.session.id, { pollMs: 5, replay: true, client: "b1-retry" });
+    s2.on("note", (n) => notes.push(n));
+    const attached = (await s2.ready) as unknown as { epoch: number };
+
+    assert.equal(rig.faults.closeAborts, 0, "the injected abort must actually have been consumed");
+    assert.ok(
+      notes.some((n) => n.includes("attach request")),
+      `the retry should be observable, got: ${JSON.stringify(notes)}`
+    );
+    assert.ok((s2.stats.commitRetries ?? 0) >= 1, "the retry is counted (#37's stat, same purpose)");
+    // Same agent, one epoch: the retry granted exactly once. A same-aid
+    // retry would have granted twice and left this client writing to the
+    // older epoch's uplink — fenced by its own second request (D18).
+    assert.equal((await s2.request<Record<string, unknown>>("acp/info")).result["pid"], pid);
+    assert.equal(attached.epoch, 1, "one grant, not two");
+
+    // And the recovered attach is a working one, not just a resolved promise.
+    const live: string[] = [];
+    s2.on("data", (b) => live.push(new TextDecoder().decode(b)));
+    s2.sendData(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "echo" }));
+    await waitFor(() => live.find((f) => (JSON.parse(f) as { id?: unknown }).id === 2), "a reply after the retried attach");
+    await s2.close();
   });
 });
 

@@ -211,6 +211,26 @@ Only filler-padded pings and DATA batches spill to the file lane.
   (`AbortError: Aborted due to security policy`,
   [#37](https://github.com/dglazkov/fsio/issues/37)) — the write-side
   analogue of invariant 3's transient read failures.
+- **The bootstrap commits are covered by that rule too, with their own
+  retry keys** ([#116](https://github.com/dglazkov/fsio/issues/116)). This
+  was left implicit and cost a live session: the rule above was read as
+  being about chunk sequence numbers, so `spawn.json` and
+  `attach.<aid>.json` shipped as one-shot commits, and a single abort on
+  the attach bootstrap rejected an attach to a running, attachable session.
+  They are *more* exposed than chunks, not less — single files on the
+  critical path, no pump behind them, and both are file-lane writes (a real
+  `close()`, the operation Chrome aborts).
+  - `spawn.json` retries the **same file**: the host reads it and never
+    deletes it, and start is guarded, so a re-commit of identical bytes is
+    inert whether or not the first became visible.
+  - `attach.<aid>.json` MUST retry with a **fresh `aid`**, never the same
+    one. The host unlinks it *before* deciding — that delete is its
+    consumption ack — so a same-aid retry after a "landed but still threw"
+    abort produces a second grant and a second epoch bump, and the attacher,
+    still writing to the first grant's `in.<epoch>/`, reads the higher epoch
+    from `status.json` and fences *itself*
+    ([D18](DECISIONS.md#d18--attach-is-takeover-writer-epochs-fence-the-old-client)).
+    A superseded attempt's grant resolves an expectation nobody awaits.
 - **Two lanes, one sequence space**
   ([D5](DECISIONS.md#d5--dirname-fast-lane-for-small-uplink-batches); F7, F10):
   frame batches ≤180 raw bytes SHOULD be committed as a created directory

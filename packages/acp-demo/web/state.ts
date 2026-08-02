@@ -5,8 +5,11 @@ import { signal } from "@lit-labs/signals";
 import type { Signal } from "@lit-labs/signals";
 
 /** boot — deciding; wizard — setup dialog; reconnect — a remembered folder
- *  whose grant needs one click back (#58's shape, F15); chat — the app. */
-export type Phase = "boot" | "wizard" | "reconnect" | "chat";
+ *  whose grant needs one click back (#58's shape, F15); resume-error — a
+ *  session that is probably still running and that we failed to rejoin
+ *  (#115: the page stops here rather than starting a second conversation
+ *  on top of it); chat — the app. */
+export type Phase = "boot" | "wizard" | "reconnect" | "resume-error" | "chat";
 export const phase = signal<Phase>("boot");
 /** The remembered handle waiting on that click. `requestPermission` needs a
  *  user activation (F15), so this is a button the human presses, never
@@ -20,6 +23,12 @@ export const wizardStep = signal<1 | 2 | 3>(1);
 /** Hard gate (non-Chromium browser): replaces the wizard outright. */
 export const gate = signal<{ msg: string; hint: string } | null>(null);
 export const pickError = signal<{ msg: string; hint: string } | null>(null);
+/** Why rejoining a remembered session failed (#115). Distinct from
+ *  `pickError` because the remedy is different: the folder is fine, the
+ *  session is probably fine, and the honest options are "try again" or
+ *  "leave it running and start another" — never a silent second
+ *  conversation. */
+export const resumeError = signal<{ msg: string; hint: string } | null>(null);
 export const notice = signal<{ msg: string; hint: string } | null>(null);
 
 export const folder = signal<{ name: string; via: "picked" | "restored" | "regranted" } | null>(null);

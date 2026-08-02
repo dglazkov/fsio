@@ -352,6 +352,9 @@ export class FsioSession {
   #uplinkReady: Promise<void>;
   #epoch = 0;
   #attach: { replay: boolean; aid: string; params: AttachParams; replayTo: { gen: number; end: number } | null } | null = null;
+  /** the grant expectation for the aid whose bootstrap commit actually
+   *  landed (#116) — set by #initAttach, awaited by `ready`. */
+  #granted: Promise<{ result: AttachResult }> | null = null;
   /** non-null while attaching: live frames buffered until grant + replay
    *  have run, so replayed scrollback precedes them. */
   #hold: [Frame, number][] | null = null;
@@ -424,16 +427,16 @@ export class FsioSession {
       // Attach mode (D18): the request rides attach.<aid>.json (bootstrap
       // file, like spawn.json); the grant arrives on the out stream we are
       // already reading. Only after the grant is there an uplink lane.
-      const aid = `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const params: AttachParams = { aid };
+      const params: AttachParams = { aid: "" }; // aid is set per attempt (#116)
       if (attach.client !== undefined) params.client = attach.client;
       if (typeof webOrigin === "string") params.origin = webOrigin; // D15, same stamping rule
-      this.#attach = { replay: attach.replay, aid, params, replayTo: null };
-      const granted = this.#rpc.expect<AttachResult>(`attach:${aid}`);
-      granted.catch(() => {});
+      this.#attach = { replay: attach.replay, aid: "", params, replayTo: null };
       this.#initDone = this.#initAttach(sessionsDir);
+      // The grant expectation is registered per attempt inside #initAttach
+      // (each retry carries a fresh aid), so it can only be awaited once
+      // init has settled on one.
       this.ready = this.#initDone
-        .then(() => granted)
+        .then(() => this.#granted!)
         .then(async ({ result }) => {
           await this.#completeAttach(result);
           return result;
@@ -491,8 +494,38 @@ export class FsioSession {
     // It carries a JSON-RPC spawn *request*; the host answers on the out
     // stream, so spawn failures arrive as real error objects (code,
     // message) instead of a status.json state to poll for.
-    await this.#writeFile("spawn.json", new TextEncoder().encode(JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spec))));
+    //
+    // Retrying the SAME file is idempotent (#116, and the same reasoning as
+    // #commitChunk's same-seq retry): the host reads spawn.json and never
+    // deletes it, and `tryStart` is guarded by `if (!s.started)`. So either
+    // the first commit was never visible and the retry is the only start, or
+    // it landed and the guard refuses a second one.
+    const bytes = new TextEncoder().encode(JSON.stringify(rpcRequest(SPAWN_REQUEST_ID, "spawn", spec)));
+    await this.#commitBootstrap("spawn.json", () => this.#writeFile("spawn.json", bytes));
     await this.#startNotifier();
+  }
+
+  /** Bootstrap commits are file-lane writes on the critical path with no
+   *  pump behind them, and Chrome aborts `close()` mid-stream often enough
+   *  to have its own finding (#37: `AbortError: Aborted due to security
+   *  policy`). spec/PROTOCOL.md's "retry with bounded backoff" rule was
+   *  written for chunks and left these exposed — one abort killed a reattach
+   *  to a live session in the field (#115/#116).
+   *
+   *  `attempt` re-runs the whole commit, so callers that must vary something
+   *  per try (attach's aid) do it inside the closure. */
+  async #commitBootstrap(what: string, attempt: () => Promise<void>): Promise<void> {
+    for (let i = 0; ; i++) {
+      try {
+        await attempt();
+        return;
+      } catch (e) {
+        if (i >= COMMIT_RETRY_MS.length || this.#closed) throw e;
+        this.stats.commitRetries = (this.stats.commitRetries ?? 0) + 1;
+        this.#emit("note", `retrying ${what} after a transient commit failure (${e instanceof Error ? e.message : String(e)})`);
+        await new Promise((r) => setTimeout(r, COMMIT_RETRY_MS[i]!));
+      }
+    }
   }
 
   async #initAttach(sessionsDir: FsDirectory): Promise<void> {
@@ -512,7 +545,25 @@ export class FsioSession {
       if (a.replay) a.replayTo = { gen: sig.gen, end: sig.size };
     } catch {} // no out.sig yet: brand-new stream, position 0/0
     this.#hold = []; // buffer live frames so replayed scrollback precedes them
-    await this.#writeFile(`attach.${a.aid}.json`, new TextEncoder().encode(JSON.stringify(rpcRequest(`attach:${a.aid}`, "attach", a.params))));
+    // Unlike spawn.json, an attach retry must carry a FRESH aid (#116). The
+    // host unlinks attach.<aid>.json *before* deciding — that delete is its
+    // consumption ack — so a same-aid retry after a "landed but still threw"
+    // abort yields a second grant and a second epoch bump, and this client,
+    // still writing to in.<first epoch>/, would read the higher epoch out of
+    // status.json and fence itself. Fresh aids cannot collide: a superseded
+    // attempt's grant resolves an expectation nobody awaits, and the epoch
+    // this client uses is whichever attempt it is actually waiting on. The
+    // host's own comment prescribes exactly this ("it retries with a fresh
+    // aid").
+    await this.#commitBootstrap("the attach request", async () => {
+      a.aid = `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      a.params.aid = a.aid;
+      // Registered BEFORE the commit so the host's answer cannot race us.
+      const granted = this.#rpc.expect<AttachResult>(`attach:${a.aid}`);
+      granted.catch(() => {}); // settled via `ready`; never an unhandled rejection
+      this.#granted = granted;
+      await this.#writeFile(`attach.${a.aid}.json`, new TextEncoder().encode(JSON.stringify(rpcRequest(`attach:${a.aid}`, "attach", a.params))));
+    });
     await this.#startNotifier();
   }
 

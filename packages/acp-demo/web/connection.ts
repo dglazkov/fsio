@@ -16,7 +16,7 @@
 //                   page attaches to it with replay. Only the "end session"
 //                   button closes, and that is the only thing that kills
 //                   the agent.
-import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
+import { FsioClient, RpcError, RpcErrors, type FsioSession } from "@fsio/client";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
 import { log, reporter, step } from "./reporter";
@@ -34,6 +34,7 @@ import {
   pushEntry,
   queued,
   reconnectTo,
+  resumeError,
   resumed,
   turn,
   wizardStep,
@@ -251,7 +252,16 @@ async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | nu
     if (!resumeChecked) {
       resumeChecked = true;
       const rec = await loadRecord();
-      if (rec && (await reattach(root, rec))) return;
+      if (rec) {
+        const outcome = await reattach(root, rec);
+        if (outcome === "resumed") return;
+        // Falling through to a fresh spawn requires a POSITIVE verdict that
+        // there is nothing to come back to (#115). "We could not reattach"
+        // is not that verdict: the session may be alive and holding the
+        // human's conversation, and starting a second one on top of it is
+        // the silent fork D32 rule 1 exists to forbid. Stop and ask.
+        if (outcome === "failed") return;
+      }
     }
 
     // A helper that publishes no roster is a pre-#102 one. Unknown detail is
@@ -403,13 +413,33 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
 
 /** Coming back to a session this page left running (#113/D32).
  *
- *  Returns false when there is nothing to come back to — the helper was
- *  restarted (it runs `fresh: true` and wipes `.fsio`, deliberately), or the
- *  agent exited while the page was away, or the attach was refused. In every
- *  one of those the caller starts a fresh session instead, which is why this
- *  reports rather than throws. */
-async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Promise<boolean> {
-  if (!client) return false;
+ *  Three outcomes, and the distinction between the last two is the whole
+ *  lesson of #115:
+ *
+ *    "resumed" — we are back in the conversation.
+ *    "gone"    — there is provably nothing to come back to: the helper was
+ *                restarted (it runs `fresh: true` and wipes `.fsio`,
+ *                deliberately), the agent exited, or the host refused the
+ *                attach outright. Forgetting the record and starting fresh
+ *                is correct.
+ *    "failed"  — we could not reattach, and the session may well be alive.
+ *                The record is KEPT and the caller must not start a second
+ *                conversation. One aborted file commit used to land here and
+ *                be treated as "gone", which deleted the human's turns and
+ *                orphaned a running agent nothing could name again. */
+type ResumeOutcome = "resumed" | "gone" | "failed";
+
+/** Errors that mean the session itself is unreachable, as opposed to our
+ *  side failing to ask. Everything else is "failed" — the safe direction,
+ *  because the cost of being wrong is a stuck page the human can retry,
+ *  against a lost conversation and a leaked process. */
+function saysSessionIsGone(e: unknown): boolean {
+  if (!(e instanceof RpcError)) return false;
+  return e.code === RpcErrors.ATTACH_FAILED || e.code === RpcErrors.SPAWN_DENIED || e.code === RpcErrors.SHELL_NOT_ALLOWED;
+}
+
+async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Promise<ResumeOutcome> {
+  if (!client) return "failed";
   let live = false;
   try {
     // D18 discovery: the session listing is the only honest answer to "is
@@ -417,13 +447,18 @@ async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Pro
     const row = (await client.listSessions()).find((r) => r.id === rec.sessionId);
     live = !!row && row.kind === "acp" && row.status?.state === "running";
     reporter.event("resume-lookup", { sessionId: rec.sessionId, found: !!row, state: row?.status?.state ?? null });
-  } catch {
-    return false; // a torn scan reads as "don't know"; a fresh session is safe
-  }
-  if (!live) {
-    log(`the session from last time is gone (${rec.sessionId}) — starting a new one`);
-    await clearRecord();
-    return false;
+    if (!live) {
+      log(`the session from last time is gone (${rec.sessionId}) — starting a new one`);
+      await clearRecord();
+      return "gone";
+    }
+  } catch (e) {
+    // The listing itself failed, so we know nothing about the session —
+    // including that it is dead. Not a licence to start another one.
+    resumeError.set({ msg: "could not read the sessions in this folder", hint: e instanceof Error ? e.message : String(e) });
+    phase.set("resume-error");
+    reporter.event("resume-failed", { error: String(e), stage: "list" });
+    return "failed";
   }
 
   step(`reattaching to ${rec.agentName || rec.agent}`);
@@ -454,8 +489,9 @@ async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Pro
     facts = (await s.request<Record<string, unknown>>("acp/info")).result;
   } catch (e) {
     const msg = e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e);
+    const gone = saysSessionIsGone(e);
     log(`could not reattach: ${msg}`);
-    reporter.event("resume-failed", { error: msg });
+    reporter.event("resume-failed", { error: msg, code: e instanceof RpcError ? e.code : null, verdict: gone ? "gone" : "failed" });
     // Not `conn.close()`: its rejections land a microtask later, i.e. after
     // the transcript below is cleared, and would leave an error from a
     // session this page is about to pretend it never saw.
@@ -464,8 +500,20 @@ async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Pro
     entries.set([]);
     resumed.set(false);
     turn.set("starting");
-    await clearRecord();
-    return false;
+    if (gone) {
+      await clearRecord();
+      return "gone";
+    }
+    // The record SURVIVES (#115). The session is probably still there
+    // holding the conversation, and the human's own turns exist nowhere
+    // else — deleting them to recover from a failed file write is a trade
+    // nobody would make on purpose.
+    resumeError.set({
+      msg: `could not rejoin the conversation with ${rec.agentName || rec.agent}`,
+      hint: `${msg}\n\nThe session looks like it is still running, so nothing was started in its place. Trying again is usually enough.`,
+    });
+    phase.set("resume-error");
+    return "failed";
   }
 
   readFacts(facts);
@@ -482,7 +530,7 @@ async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Pro
   });
   reporter.event("resumed", { sessionId: rec.sessionId, epoch, prompts: rec.prompts.length, frames: conn.frameIndex });
   step("reattached");
-  return true;
+  return "resumed";
 }
 
 /** The connection every session gets. The two hooks are what a rebuild needs
@@ -666,6 +714,41 @@ export async function endSession(): Promise<void> {
   setQueued([]);
   pushEntry({ kind: "note", text: "session ended — the agent was stopped, and this conversation is over." });
   log("session ended by the human");
+}
+
+/** The retry on the resume-error panel (#115). The record was kept, so
+ *  there is still something to come back to; a failed attempt does not
+ *  consume it. */
+export async function retryResume(): Promise<void> {
+  if (!rootHandle || session) return;
+  const rec = await loadRecord();
+  if (!rec) {
+    // The record went away underneath us (an exit cleared it). Nothing to
+    // rejoin, so the ordinary arrival is now the right answer.
+    resumeError.set(null);
+    resumeChecked = true;
+    await arrive(rootHandle, agents.get());
+    return;
+  }
+  resumeError.set(null);
+  step("trying to rejoin the session again");
+  const outcome = await reattach(rootHandle, rec);
+  if (outcome === "gone") await arrive(rootHandle, agents.get());
+}
+
+/** "Leave it and start a new one" on the resume-error panel. Deliberately a
+ *  separate gesture from the retry: abandoning a running conversation is the
+ *  human's call to make, never a fallback the page takes on their behalf.
+ *  The old session keeps running — this page just stops naming it, which is
+ *  what [#117](https://github.com/dglazkov/fsio/issues/117) is for. */
+export async function abandonAndStartNew(): Promise<void> {
+  if (!rootHandle || session) return;
+  reporter.event("resume-abandoned", {});
+  log("the human chose to leave the old session and start a new one");
+  await clearRecord();
+  resumeError.set(null);
+  entries.set([]);
+  await arrive(rootHandle, agents.get());
 }
 
 /** After an explicit end: clear the transcript and go around again. Kept
