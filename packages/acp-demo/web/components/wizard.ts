@@ -1,12 +1,16 @@
 // Setup: a <dialog> over the empty chat. Two steps — run the helper, pick
-// the folder — and then it dissolves. Same shape as the terminal demo's,
-// minus the session picker (an agent session is not something you resume;
-// #58's story would arrive with a transcript story, not before it).
+// the folder — and then it dissolves. Same shape as the terminal demo's.
+//
+// A returning visit usually never sees it: the folder handle is remembered
+// (#58) and, since #113, so is the session. What it does still own is the
+// one case Chrome will not let a page automate — a remembered folder whose
+// permission came back `prompt`, which needs a user activation to re-grant
+// (F15). That is the reconnect panel, and it is one click.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agents, gate, phase, wizardStep, folder, helper, pickError, type AgentOffer } from "../state";
-import { chooseAgent, pickFolder, onMac } from "../connection";
+import { agents, gate, phase, wizardStep, folder, helper, pickError, reconnectTo, type AgentOffer } from "../state";
+import { chooseAgent, forgetFolder, pickFolder, regrant, onMac } from "../connection";
 
 // The one-liner (#106): CI force-pushes the bundled helper to the `acp-demo`
 // branch on every green main, so this installs and runs the same code the
@@ -66,15 +70,41 @@ class AcpWizard extends SignalWatcher(LitElement) {
   override render(): TemplateResult {
     const g = gate.get();
     return html`<dialog @cancel=${(e: Event) => e.preventDefault()}>
-      ${g ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>` : this.#steps()}
+      ${g
+        ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
+        : phase.get() === "reconnect"
+          ? this.#reconnect()
+          : this.#steps()}
     </dialog>`;
   }
 
   protected override updated(): void {
     const d = this.renderRoot.querySelector("dialog")!;
-    const open = gate.get() !== null || phase.get() === "wizard";
+    const p = phase.get();
+    const open = gate.get() !== null || p === "wizard" || p === "reconnect";
     if (open && !d.open) d.showModal();
     else if (!open && d.open) d.close();
+  }
+
+  /** The remembered folder, one click from being usable again.
+   *
+   *  This panel exists because of F15: `requestPermission` needs a user
+   *  activation, so a page that remembers your folder still cannot reopen it
+   *  by itself. Saying that plainly is better than a picker that looks like
+   *  the page forgot. */
+  #reconnect(): TemplateResult {
+    const h = reconnectTo.get();
+    return html`${this.#header()}
+      <p class="explain">
+        Last time you granted <code>${h?.name ?? ""}/</code>. Chrome kept the
+        folder but not the permission — it wants one click from you before
+        this page can open it again. If an agent is still running in there,
+        this puts you back in the same conversation.
+      </p>
+      <div class="row">
+        <button class="primary" @click=${() => void regrant()}>Reconnect to ${h?.name ?? "the folder"}/</button>
+        <button class="ghost small" @click=${() => void forgetFolder()}>use a different folder</button>
+      </div>`;
   }
 
   #header(): TemplateResult {

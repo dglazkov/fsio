@@ -9,8 +9,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { agentFacts, diagnostics, folder, helper, turn } from "../state";
+import { agentFacts, diagnostics, folder, helper, resumed, turn } from "../state";
 import { logText } from "../reporter";
+import { endSession, startNewSession } from "../connection";
 
 class AcpTopBar extends SignalWatcher(LitElement) {
   static override styles = css`
@@ -33,6 +34,9 @@ class AcpTopBar extends SignalWatcher(LitElement) {
       color: #9aa5b8; font: inherit; font-size: 0.8rem; padding: 0.1rem 0.5rem; cursor: pointer;
     }
     button:hover { color: #d8dee9; }
+    button.danger { color: #ef8a95; border-color: #6b3b40; }
+    button.danger:hover { color: #ffd7db; background: #3b2226; }
+    .resumed { color: #a3be8c; cursor: help; }
     .pop {
       position: fixed; right: 0.8rem; top: 2.6rem; z-index: 20;
       background: #1c1f26; border: 1px solid #2c313c; border-radius: 8px;
@@ -46,6 +50,9 @@ class AcpTopBar extends SignalWatcher(LitElement) {
   `;
 
   #open = false;
+  /** The end button arms on first click and fires on second — a sticky
+   *  session's one irreversible gesture should cost two. */
+  #armed = false;
 
   override render(): TemplateResult {
     const f = folder.get();
@@ -59,13 +66,39 @@ class AcpTopBar extends SignalWatcher(LitElement) {
             ${a.sandboxed ? "sandboxed" : "NOT sandboxed"}
           </span>`
         : nothing}
+      ${resumed.get()
+        ? html`<span class="resumed" title="This page reattached to a session that was already running — the agent kept going while the tab was gone (D32).">resumed</span>`
+        : nothing}
       <span class="spacer"></span>
       <span class="turn">
         ${t === "thinking" ? "thinking…" : t === "cancelling" ? "cancelling…" : t === "starting" ? "starting…" : t === "gone" ? "agent gone" : helper.get() === "silent" ? "helper silent" : ""}
       </span>
+      ${this.#lifetime(a, t)}
       <button @click=${() => { this.#open = !this.#open; this.requestUpdate(); }}>details</button>
       ${this.#open ? this.#details() : nothing}
     `;
+  }
+
+  /** The other half of sticky sessions (#113): closing the tab no longer
+   *  kills the agent, so the page owes the human a control that does — and
+   *  it has to say what it costs, because nothing else here is irreversible. */
+  #lifetime(a: ReturnType<typeof agentFacts.get>, t: ReturnType<typeof turn.get>): TemplateResult | typeof nothing {
+    if (t === "gone") {
+      return html`<button @click=${() => void startNewSession()}>new session</button>`;
+    }
+    if (!a) return nothing;
+    if (!this.#armed) {
+      return html`<button
+        title="Ends this conversation and stops the agent. Closing the tab does not — the session waits for you."
+        @click=${() => { this.#armed = true; this.requestUpdate(); }}
+      >
+        end session
+      </button>`;
+    }
+    return html`<button class="danger" @click=${() => { this.#armed = false; void endSession(); }}>
+      end it — this stops ${a.agent}
+    </button>
+    <button @click=${() => { this.#armed = false; this.requestUpdate(); }}>cancel</button>`;
   }
 
   #details(): TemplateResult {

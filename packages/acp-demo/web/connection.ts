@@ -1,5 +1,21 @@
 // Folder → client → agent. Gates, the picker, the spawn, and the two
 // pollers. Writes signals (state.ts); owns the FsioClient singleton.
+//
+// Sticky sessions (#113/D32) are mostly here, and they are three separate
+// pieces of memory doing three separate jobs:
+//
+//   the folder    — a handle in IndexedDB plus `revisit()`, exactly the
+//                   terminal demo's (#58): `granted` reconnects with no
+//                   clicks, `prompt` offers the one click F15 requires,
+//                   `denied` forgets and falls back to the wizard.
+//   the agent     — the roster name the human chose, re-offered next visit
+//                   and dropped if it has left the roster (which is live:
+//                   an agent can be uninstalled between visits).
+//   the session   — the sticky record. `pagehide` now DETACHES rather than
+//                   closing, so the agent keeps running, and a returning
+//                   page attaches to it with replay. Only the "end session"
+//                   button closes, and that is the only thing that kills
+//                   the agent.
 import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
@@ -8,6 +24,7 @@ import {
   agentFacts,
   agents,
   diagnostics,
+  entries,
   folder,
   gate,
   helper,
@@ -16,12 +33,16 @@ import {
   pickError,
   pushEntry,
   queued,
+  reconnectTo,
+  resumed,
   turn,
   wizardStep,
   type AgentOffer,
   type Diagnostics,
 } from "./state";
 import { startWatching } from "./workspace";
+import { beginRecord, clearRecord, forgetHandle, loadRecord, rememberAgent, saveHandle, savedAgent, savedHandle, updateRecord } from "./store";
+import { type StickyRecord } from "../src/resume.js";
 
 let client: FsioClient | null = null;
 let session: FsioSession | null = null;
@@ -41,6 +62,60 @@ export function checkGates(): void {
 /** The helper is macOS-only while confinement is sandbox-exec; the wizard
  *  says so louder when the page isn't on a Mac. */
 export const onMac = navigator.platform.startsWith("Mac");
+
+// ---------------------------------------------------- persisted folder (#58)
+
+/** On load: a remembered folder skips the wizard. `granted` reconnects with
+ *  zero clicks; `prompt` needs one, because `requestPermission` requires a
+ *  user activation (F15) — that is the reconnect offer; `denied` forgets the
+ *  handle and falls back to the wizard. Identical in shape to
+ *  terminal-demo/web/connection.ts, on purpose. */
+export async function revisit(): Promise<void> {
+  if (gate.get()) return; // non-Chrome: the gate panel already speaks
+  let saved: FileSystemDirectoryHandle | null = null;
+  try {
+    saved = await savedHandle();
+  } catch {} // IndexedDB unavailable (private mode etc.) — the wizard still works
+  if (!saved) return void phase.set("wizard");
+  let perm: FsaPermissionState;
+  try {
+    perm = await saved.queryPermission({ mode: "readwrite" });
+  } catch {
+    return void phase.set("wizard");
+  }
+  reporter.event("revisit", { folder: saved.name, permission: perm });
+  log(`remembered folder ${saved.name}/ — permission on load: ${perm}`);
+  if (perm === "granted") {
+    await connectTo(saved, "restored");
+  } else if (perm === "prompt") {
+    reconnectTo.set(saved);
+    phase.set("reconnect");
+  } else {
+    await forgetHandle().catch(() => {});
+    phase.set("wizard");
+  }
+}
+
+/** The reconnect offer's button ("prompt" → one click, F15). */
+export async function regrant(): Promise<void> {
+  const h = reconnectTo.get();
+  if (!h) return;
+  step("asking Chrome to re-grant the folder");
+  const res = await h.requestPermission({ mode: "readwrite" });
+  reporter.event("regrant", { folder: h.name, result: res });
+  if (res !== "granted") return;
+  reconnectTo.set(null);
+  await connectTo(h, "regranted");
+}
+
+/** "Not this folder" on the reconnect offer: forget it and start over. */
+export async function forgetFolder(): Promise<void> {
+  reconnectTo.set(null);
+  await forgetHandle().catch(() => {});
+  await clearRecord();
+  phase.set("wizard");
+  wizardStep.set(1);
+}
 
 // ---------------------------------------------------------------- connect
 
@@ -65,15 +140,16 @@ export async function pickFolder(): Promise<void> {
   } catch {
     return; // cancelled — not an error
   }
-  await connectTo(root);
+  await connectTo(root, "picked");
 }
 
-async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
+async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "restored" | "regranted"): Promise<void> {
   step(`connecting to ${root.name}/`);
   pickError.set(null);
-  folder.set({ name: root.name });
+  folder.set({ name: root.name, via });
   rootHandle = root;
   servicesRev = undefined;
+  resumeChecked = false;
   clearInterval(hostTimer);
   // Probe for .fsio WITHOUT creating it: `connect()` would create one in
   // whatever folder was picked, littering the wrong folder and hiding the
@@ -102,11 +178,16 @@ async function connectTo(root: FileSystemDirectoryHandle): Promise<void> {
     wizardStep.set(2);
     return;
   }
+  // Remembered only once a helper folder connected: a mispick must not
+  // become next visit's auto-connect target.
+  void saveHandle(root).catch(() => {});
   helperWasAlive = false;
   await refreshHelper(root);
   hostTimer = setInterval(() => void refreshHelper(root), 2000);
   if (helper.get() !== "alive") {
-    wizardStep.set(2);
+    // A revisit whose helper isn't running re-opens at step 1 (the command);
+    // a fresh pick that found no heartbeat re-opens at step 2 (the folder).
+    wizardStep.set(via === "picked" ? 2 : 1);
     phase.set("wizard");
   }
 }
@@ -150,26 +231,61 @@ async function refreshHelper(root: FileSystemDirectoryHandle): Promise<void> {
   const roster = readRoster(acp.detail);
   agents.set(roster);
   if (session) return; // an agent is already running; a roster change is news for nobody
+  await arrive(root, roster);
+}
 
-  // A helper that publishes no roster is a pre-#102 one. Unknown detail is
-  // "not supported", never an error (D25), so let it choose for itself —
-  // exactly what every run did before this existed.
-  if (roster === null) {
-    await startAgent(root, null);
-    return;
-  }
+/** Everything that happens between "the helper is alive" and "there is a
+ *  conversation on screen".
+ *
+ *  Re-runnable on purpose: the roster is live, so a page sitting on the
+ *  "install an agent" card must act the moment one appears. The one part
+ *  that runs exactly once is the reattach lookup — asking twice would mean
+ *  taking over a session this page already holds. */
+let resumeChecked = false;
+let arriving = false;
+async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer[] | null): Promise<void> {
+  if (arriving || session) return;
+  arriving = true;
+  try {
+    // The session first: coming back to a conversation outranks starting one.
+    if (!resumeChecked) {
+      resumeChecked = true;
+      const rec = await loadRecord();
+      if (rec && (await reattach(root, rec))) return;
+    }
 
-  const ready = roster.filter((a) => a.installed);
-  reporter.event("roster", { installed: ready.map((a) => a.name), known: roster.length });
-  // One agent: name it and go — the page has nothing to ask about. Zero or
-  // several: the human decides, which is the whole point (the helper used
-  // to pick the first that resolved, silently).
-  if (ready.length === 1) {
-    await startAgent(root, ready[0]!.name);
-    return;
+    // A helper that publishes no roster is a pre-#102 one. Unknown detail is
+    // "not supported", never an error (D25), so let it choose for itself —
+    // exactly what every run did before this existed.
+    if (roster === null) {
+      await startAgent(root, null);
+      return;
+    }
+
+    const ready = roster.filter((a) => a.installed);
+    reporter.event("roster", { installed: ready.map((a) => a.name), known: roster.length });
+    // The agent the human chose last time, if this machine still has it. The
+    // roster is live, so "still has it" is a question with a real answer:
+    // uninstall the agent between visits and the chooser comes back.
+    const remembered = await savedAgent().catch(() => null);
+    if (remembered && ready.some((a) => a.name === remembered)) {
+      reporter.event("agent-remembered", { agent: remembered });
+      await startAgent(root, remembered);
+      return;
+    }
+    if (remembered && ready.length) log(`${remembered} is no longer installed here — asking again`);
+    // One agent: name it and go — the page has nothing to ask about. Zero or
+    // several: the human decides, which is the whole point (the helper used
+    // to pick the first that resolved, silently).
+    if (ready.length === 1) {
+      await startAgent(root, ready[0]!.name);
+      return;
+    }
+    phase.set("wizard");
+    wizardStep.set(3);
+  } finally {
+    arriving = false;
   }
-  phase.set("wizard");
-  wizardStep.set(3);
 }
 
 /** The roster as published by the helper (#102). Everything here arrives as
@@ -218,34 +334,8 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
   phase.set("chat");
   const s = client.createSession({ kind: "acp", client: "acp-demo", ...(name ? { agent: name } : {}) }, { pollMs: 15 });
   session = s;
-  const conn = new AcpConnection(s, {
-    onTraffic: (dir, msg) => reporter.event("acp", { dir, method: (msg as { method?: string }).method ?? null }),
-    onUnhandled: (method) => log(`agent asked for something this client doesn't implement: ${method}`),
-  });
-
-  s.on("status", (st) => {
-    if (st.state !== "exited" && st.state !== "error") return;
-    turn.set("gone");
-    // #98: the kind's methods are gone the moment it exits, so the last
-    // diagnostics snapshot is all we will ever have of the stderr that
-    // says why. Stop polling and keep what we hold.
-    clearInterval(diagTimer);
-    // Nothing will ever send these now; say so rather than leaving them
-    // sitting under a composer that looks like it is still going somewhere.
-    if (queued.get().length) {
-      pushEntry({ kind: "note", text: `${queued.get().length} queued prompt(s) never sent — the agent is gone` });
-      reporter.event("queue-dropped", { count: queued.get().length, why: "agent-exited" });
-      queued.set([]);
-    }
-    const tail = diagnostics.get()?.stderr ?? [];
-    pushEntry({
-      kind: "error",
-      text:
-        `the agent exited${st.exitCode === undefined || st.exitCode === null ? "" : ` (code ${st.exitCode})`}` +
-        (tail.length ? `\nlast stderr:\n${tail.slice(-6).join("\n")}` : ""),
-    });
-    reporter.event("agent-exited", { exitCode: st.exitCode ?? null, stderrTail: tail.slice(-6) });
-  });
+  const conn = newConnection(s, () => agent);
+  watchExit(s);
 
   let facts: Record<string, unknown>;
   try {
@@ -264,28 +354,38 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
     return;
   }
 
-  agentFacts.set({
-    agent: String(facts["agent"] ?? "agent"),
-    title: String(facts["title"] ?? ""),
-    sandboxed: !!facts["sandboxed"],
-    confinement: String(facts["confinement"] ?? ""),
-    profile: (facts["profile"] as string | null) ?? null,
-    state: facts["state"] as { mode: string; dirs: string[]; why: string },
-    cwd: String(facts["cwd"] ?? ""),
-  });
+  const cwd = readFacts(facts);
   reporter.event("agent-started", { agent: facts["agent"], sandboxed: facts["sandboxed"] });
   log(`agent ${String(facts["agent"])} · ${String(facts["confinement"])}`);
+  // Remembered on a start that worked, not on the click: an agent that
+  // refuses to spawn is not the one to re-offer next visit.
+  void rememberAgent(String(facts["agent"] ?? name ?? "")).catch(() => {});
 
   startWatching(root);
   diagTimer = setInterval(() => void pollDiagnostics(), 3000);
 
-  agent = new AgentSession(conn, root, String(facts["cwd"] ?? ""));
+  agent = new AgentSession(conn, root, cwd);
   try {
     const init = await agent.start();
     turn.set("idle");
     pushEntry({ kind: "note", text: `${init.agentName} ${init.agentVersion} is listening in ${root.name}/` });
     reporter.event("acp-ready", { agent: init.agentName, version: init.agentVersion, sessionId: agent.sessionId });
     step("agent ready");
+    // From here the session is worth coming back to (D32): the record is
+    // what makes the next load a reattach instead of a fresh start.
+    beginRecord({
+      sessionId: s.id,
+      acpSessionId: agent.sessionId!,
+      agent: String(facts["agent"] ?? name ?? ""),
+      agentName: init.agentName,
+      agentVersion: init.agentVersion,
+      cwd,
+      gen: 0,
+      prompts: [],
+      queued: [],
+      answers: {},
+      pendingPromptId: null,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     // The F28 shape: `initialize` passes and `session/new` fails, with a
@@ -299,6 +399,149 @@ async function startAgent(root: FileSystemDirectoryHandle, name: string | null):
     turn.set("gone");
     reporter.event("acp-start-failed", { error: msg });
   }
+}
+
+/** Coming back to a session this page left running (#113/D32).
+ *
+ *  Returns false when there is nothing to come back to — the helper was
+ *  restarted (it runs `fresh: true` and wipes `.fsio`, deliberately), or the
+ *  agent exited while the page was away, or the attach was refused. In every
+ *  one of those the caller starts a fresh session instead, which is why this
+ *  reports rather than throws. */
+async function reattach(root: FileSystemDirectoryHandle, rec: StickyRecord): Promise<boolean> {
+  if (!client) return false;
+  let live = false;
+  try {
+    // D18 discovery: the session listing is the only honest answer to "is
+    // the thing I remember still there".
+    const row = (await client.listSessions()).find((r) => r.id === rec.sessionId);
+    live = !!row && row.kind === "acp" && row.status?.state === "running";
+    reporter.event("resume-lookup", { sessionId: rec.sessionId, found: !!row, state: row?.status?.state ?? null });
+  } catch {
+    return false; // a torn scan reads as "don't know"; a fresh session is safe
+  }
+  if (!live) {
+    log(`the session from last time is gone (${rec.sessionId}) — starting a new one`);
+    await clearRecord();
+    return false;
+  }
+
+  step(`reattaching to ${rec.agentName || rec.agent}`);
+  turn.set("starting");
+  phase.set("chat");
+  // The record has to be live before the first replayed frame arrives: the
+  // handlers read it to tell a permission card they already answered from
+  // one the agent is still waiting on.
+  beginRecord(rec);
+  const s = client.attachSession(rec.sessionId, { pollMs: 15, replay: true, client: "acp-demo" });
+  session = s;
+  const conn = newConnection(s, () => agent);
+  watchExit(s);
+  // Constructed before `ready` is awaited, because replay runs inside the
+  // attach grant — the frames rebuilding this conversation arrive before
+  // that promise settles, and there would be no one to receive them.
+  agent = new AgentSession(conn, root, rec.cwd, rec);
+
+  let facts: Record<string, unknown>;
+  let epoch = 1;
+  try {
+    const attached = (await s.ready) as { epoch?: number };
+    // D18 writer epochs, borrowed for a second job: they partition this
+    // connection's JSON-RPC ids from the ones the page it replaced used, so
+    // a reply to the old page's request can never settle one of ours.
+    epoch = attached.epoch ?? 1;
+    conn.seedIds(epoch);
+    facts = (await s.request<Record<string, unknown>>("acp/info")).result;
+  } catch (e) {
+    const msg = e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e);
+    log(`could not reattach: ${msg}`);
+    reporter.event("resume-failed", { error: msg });
+    // Not `conn.close()`: its rejections land a microtask later, i.e. after
+    // the transcript below is cleared, and would leave an error from a
+    // session this page is about to pretend it never saw.
+    session = null;
+    agent = null;
+    entries.set([]);
+    resumed.set(false);
+    turn.set("starting");
+    await clearRecord();
+    return false;
+  }
+
+  readFacts(facts);
+  resumed.set(true);
+  startWatching(root);
+  diagTimer = setInterval(() => void pollDiagnostics(), 3000);
+  // "starting" still means nothing else claimed the turn — a prompt that was
+  // in flight across the refresh has already set it to "thinking" and owns
+  // it until the agent answers.
+  if (turn.get() === "starting") turn.set("idle");
+  pushEntry({
+    kind: "note",
+    text: `back in the same conversation — ${rec.agentName || rec.agent} kept running while this page was away.`,
+  });
+  reporter.event("resumed", { sessionId: rec.sessionId, epoch, prompts: rec.prompts.length, frames: conn.frameIndex });
+  step("reattached");
+  return true;
+}
+
+/** The connection every session gets. The two hooks are what a rebuild needs
+ *  and a fresh session never fires. */
+function newConnection(s: FsioSession, held: () => AgentSession | null): AcpConnection {
+  return new AcpConnection(s, {
+    onTraffic: (dir, msg) => reporter.event("acp", { dir, method: (msg as { method?: string }).method ?? null }),
+    onUnhandled: (method) => log(`agent asked for something this client doesn't implement: ${method}`),
+    onFrame: (index, replayed) => held()?.onFrame(index, replayed),
+    onReplay: (replaying, gen) => held()?.onReplay(replaying, gen),
+  });
+}
+
+/** `acp/info` → the header's facts (D30 rule 5: read, never assumed).
+ *  Returns the agent's cwd, which is also what `fs/*` containment is judged
+ *  against. */
+function readFacts(facts: Record<string, unknown>): string {
+  const cwd = String(facts["cwd"] ?? "");
+  agentFacts.set({
+    agent: String(facts["agent"] ?? "agent"),
+    title: String(facts["title"] ?? ""),
+    sandboxed: !!facts["sandboxed"],
+    confinement: String(facts["confinement"] ?? ""),
+    profile: (facts["profile"] as string | null) ?? null,
+    state: facts["state"] as { mode: string; dirs: string[]; why: string },
+    cwd,
+  });
+  return cwd;
+}
+
+/** The agent's death, whoever caused it. */
+function watchExit(s: FsioSession): void {
+  s.on("status", (st) => {
+    if (st.state !== "exited" && st.state !== "error") return;
+    turn.set("gone");
+    // #98: the kind's methods are gone the moment it exits, so the last
+    // diagnostics snapshot is all we will ever have of the stderr that
+    // says why. Stop polling and keep what we hold.
+    clearInterval(diagTimer);
+    // A session nobody can come back to is not worth remembering — and a
+    // record pointing at a dead session would send the next load down the
+    // reattach path for nothing.
+    void clearRecord();
+    // Nothing will ever send these now; say so rather than leaving them
+    // sitting under a composer that looks like it is still going somewhere.
+    if (queued.get().length) {
+      pushEntry({ kind: "note", text: `${queued.get().length} queued prompt(s) never sent — the agent is gone` });
+      reporter.event("queue-dropped", { count: queued.get().length, why: "agent-exited" });
+      setQueued([]);
+    }
+    const tail = diagnostics.get()?.stderr ?? [];
+    pushEntry({
+      kind: "error",
+      text:
+        `the agent exited${st.exitCode === undefined || st.exitCode === null ? "" : ` (code ${st.exitCode})`}` +
+        (tail.length ? `\nlast stderr:\n${tail.slice(-6).join("\n")}` : ""),
+    });
+    reporter.event("agent-exited", { exitCode: st.exitCode ?? null, stderrTail: tail.slice(-6) });
+  });
 }
 
 async function pollDiagnostics(): Promise<void> {
@@ -325,11 +568,21 @@ export function sendPrompt(text: string): void {
   const t = turn.get();
   if (t === "gone" || t === "starting") return;
   if (t !== "idle") {
-    queued.set([...queued.get(), text]);
+    setQueued([...queued.get(), text]);
     reporter.event("prompt-queued", { depth: queued.get().length });
     return;
   }
   void runTurn(a, text);
+}
+
+/** The queue is the one thing on this page the human cannot get back, so it
+ *  is written through to the record on every change — a refresh mid-queue
+ *  returns the text, not an apology. */
+function setQueued(list: string[]): void {
+  queued.set(list);
+  updateRecord((r) => {
+    r.queued = [...list];
+  });
 }
 
 /** One turn, then the next queued prompt if the session is still healthy.
@@ -341,7 +594,7 @@ async function runTurn(a: AgentSession, text: string): Promise<void> {
   // `turn` is whatever prompt() left behind — `gone` if the agent exited,
   // and cancelTurn() empties the queue — so both stop the drain.
   if (!q.length || turn.get() !== "idle" || agent !== a) return;
-  queued.set(q.slice(1));
+  setQueued(q.slice(1));
   void runTurn(a, q[0]!);
 }
 
@@ -349,7 +602,7 @@ async function runTurn(a: AgentSession, text: string): Promise<void> {
 export function unqueue(index: number): void {
   const q = queued.get();
   if (index < 0 || index >= q.length) return;
-  queued.set(q.filter((_, i) => i !== index));
+  setQueued(q.filter((_, i) => i !== index));
 }
 
 /** Stop is the human's brake, so it stops what is coming too: a queue that
@@ -358,17 +611,72 @@ export function unqueue(index: number): void {
 export function cancelTurn(): void {
   const dropped = queued.get().length;
   if (dropped) {
-    queued.set([]);
+    setQueued([]);
     pushEntry({ kind: "note", text: `stopped — ${dropped} queued prompt${dropped === 1 ? "" : "s"} dropped` });
     reporter.event("queue-dropped", { count: dropped, why: "cancel" });
   }
   agent?.cancel();
 }
 
-/** Page teardown: close the session so the helper kills the agent (D6). */
-export function closeOnPagehide(): void {
-  agent?.conn.close();
-  void session?.close();
+// ---------------------------------------------------------------- lifetime
+
+/** Page teardown (#113/D32). One word changed here and it inverted the
+ *  demo's whole answer to "what does a refresh mean": `close()` asked the
+ *  helper to kill the agent, and it obliged — measured, six milliseconds
+ *  after the notification landed. `detach()` is the deliberate walk-away
+ *  (D18): the host marks the session detached NOW, with no wait on D17's
+ *  180 s silence window, and leaves state, process and stream untouched for
+ *  the attach that comes next.
+ *
+ *  The record is already durable — it is written through on every change,
+ *  never flushed here, because an IndexedDB write started at `pagehide` is a
+ *  race against document teardown that the write loses.
+ *
+ *  The ACP connection is deliberately NOT closed. Closing it rejects the
+ *  in-flight `session/prompt`, whose rejection handler would clear the very
+ *  id the next page needs to adopt in order to see that turn finish. A
+ *  connection whose document is being torn down does not need tidying;
+ *  a record that lies about a running turn does. */
+export function detachOnPagehide(): void {
+  void session?.detach();
   session = null;
   agent = null;
+}
+
+/** The explicit end (#113). A sticky session that only the tab could close
+ *  would be a process the page cannot kill, which is worse than what came
+ *  before — so this exists, it says what it does, and it is the ONLY thing
+ *  in the page that stops the agent. */
+export async function endSession(): Promise<void> {
+  const s = session;
+  const a = agent;
+  session = null;
+  agent = null;
+  // "gone" before the connection goes: a turn cut short by this button has
+  // already been explained by the note below, and does not need an error
+  // above it saying the connection closed.
+  turn.set("gone");
+  a?.conn.close();
+  clearInterval(diagTimer);
+  reporter.event("session-ended", {});
+  await clearRecord();
+  try {
+    await s?.close(); // the helper kills the child (D6)
+  } catch {}
+  setQueued([]);
+  pushEntry({ kind: "note", text: "session ended — the agent was stopped, and this conversation is over." });
+  log("session ended by the human");
+}
+
+/** After an explicit end: clear the transcript and go around again. Kept
+ *  separate from `endSession` so that ending a session never silently
+ *  starts another one. */
+export async function startNewSession(): Promise<void> {
+  if (!rootHandle || session) return;
+  entries.set([]);
+  resumed.set(false);
+  agentFacts.set(null);
+  diagnostics.set(null);
+  turn.set("starting");
+  await arrive(rootHandle, agents.get());
 }

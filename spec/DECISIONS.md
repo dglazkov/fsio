@@ -1380,3 +1380,129 @@ Depends on D24, D25, D13. Feeds
 one-liner) and [#107](https://github.com/dglazkov/fsio/issues/107) (probing,
 which would fill the same field with richer facts and does not change this
 shape).
+
+## D32 — a session ends when the human ends it: refresh detaches, reattach does not re-handshake
+
+**Decision.** The `/acp` page's session outlives the page. `pagehide` sends
+`detach` ([D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client))
+instead of `close`; a returning page finds the session with `listSessions()`
+and takes it over with `attachSession(id, {replay: true})`; and the only
+thing that stops the agent is an explicit "end session" control that calls
+`close()` and says so. Six rules make that safe:
+
+1. **A reattached connection sends no handshake.** Not `initialize`, not
+   `session/new`, not `session/load`. The agent's ACP connection is to the
+   helper's child-process stdio, which never broke — the page detached from
+   the *fsio uplink*, three layers up, and the agent never observed a
+   disconnect. A second `initialize` is undefined territory, `session/new`
+   would silently start a second conversation while abandoning the first
+   (the worst outcome, because it looks like it worked), and `session/load`
+   is for resuming into an agent process that *did* die. The page keeps
+   using the ACP session id it already had.
+2. **The agent's half of the transcript comes back from the folder; the
+   page carries only the human's half.** Replay re-emits the out stream, so
+   re-running the same `session/update` handlers rebuilds every message,
+   tool call and question the agent produced (P2 — it rode the folder, so
+   the folder is where it is read back from). Prompts rode the *uplink*,
+   which is not replayed, so each one is persisted with an anchor — the
+   count of DATA frames consumed when it was sent — and woven back in at
+   that position.
+3. **A replayed request never acts.** The downlink carries the agent's
+   `fs/*` calls as well as its words; re-running a write approved an hour
+   ago, against a folder that has moved on, is the worst thing this page
+   could do. A request the page already answered is history and gets
+   silence. One it never answered is a request the agent is *still* blocked
+   on: a `session/request_permission` comes back as a live card, because
+   answering it writes the response the agent has been holding for since
+   before the refresh; an `fs/*` call comes back **refused**, because the
+   page cannot prove its predecessor's answer never landed and an error
+   ("ask again") is recoverable where a blind write is not.
+4. **Replayed and live must be distinguishable at the frame level**, which
+   is a client-library obligation, not a page one: `FsioSession` brackets
+   the re-emission with a `replay` event carrying the segment generation.
+   Without it the two are the same `data` callback and rule 3 is
+   unimplementable.
+5. **Writer epochs partition the JSON-RPC id space.** The agent may still
+   answer a request the *previous* page sent, and that response arrives live
+   on this connection. Ids are seeded from the attach grant's epoch, so an
+   old reply can never settle a new request. The one id that is deliberately
+   inherited is a `session/prompt` left in flight across the gap: the
+   returning page adopts it, so the turn that outlived the tab ends in the
+   UI instead of spinning forever.
+6. **The page must not leave the agent blocked, whatever it decides.** Rules
+   3 and 5 are the whole of that promise: every outstanding request either
+   comes back answerable or is answered with an error.
+
+**Context.** [#113](https://github.com/dglazkov/fsio/issues/113). Reloading
+`/acp` used to cost the folder, the agent choice, and the agent — measured:
+`closeOnPagehide()`'s notification wins the race against document teardown,
+the child dies 6 ms later, and the session directory is gone 500 ms after
+that. So "the agent dies on a refresh" was never a limitation inherited from
+the transport; it was a request the page made. The host was already prepared
+for the other answer —
+[D17](#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill) marks
+a registered kind detached rather than killing it, exactly as it does a
+shell — and
+[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client) already
+had discovery, takeover and replay, which
+[#58](https://github.com/dglazkov/fsio/issues/58) built the terminal demo's
+session picker on. The folder half of this is that same machinery ported:
+handle in IndexedDB, `granted` reconnects silently, `prompt` offers the one
+click
+[F15](FINDINGS.md#f15--browser-write-access-is-gated-per-session-and-cannot-be-automated-one-gesture-unlocks-the-whole-session)
+requires, `denied` forgets.
+
+**Why sticky rather than a clean conversation with a note.** The cheap
+option — restore the folder, remember the agent, start a fresh session and
+say so — is honest and small, and it was rejected because it answers the
+wrong question. What a person means by refreshing a chat is "put me back",
+and a demo whose whole claim is that the folder carries a real session
+should demonstrate a session that survives the page. It also cashes a
+promise the transport had already made and nothing here was collecting.
+
+**The principle this strains.** [P3](PRINCIPLES.md) — trust is a noun, and
+durability of a grant is supposed to be something the human gestured for.
+A session that survives a closed tab is a running process the page's absence
+no longer stops, which is why the "end session" control is load-bearing
+rather than a convenience: without a real end gesture, sticky means "a
+process nobody can kill from the page", which is strictly worse than what
+came before. Note what is *not* made sticky: an unanswered permission comes
+back as a question, never as an inherited yes. The consent gesture does not
+survive the refresh — only the request does.
+
+**The ceiling, stated rather than discovered.** Replay reads the head
+segment only
+([D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored),
+[#57](https://github.com/dglazkov/fsio/issues/57)), so a conversation past
+the rotation size comes back as a suffix and prompt anchors recorded against
+the longer stream overshoot. The page detects it (the generation moved),
+says so in the transcript, and puts the orphaned turns at the end —
+misplaced, not lost. For chat volumes that is a long way off, and the day it
+is not is the day #57 gets pulled.
+
+**Out of scope, deliberately.** Surviving a *helper* restart: the demo
+helper runs `fresh: true` and wipes `.fsio` on start, so a restarted helper
+has no sessions to inherit and the returning page falls back to the wizard.
+Resuming into a *new* agent process — that is what ACP's `session/load` is
+for, it is gated on an agent advertising `loadSession`, and it is per-agent
+([#103](https://github.com/dglazkov/fsio/issues/103) is where that gets
+measured rather than guessed).
+
+**Alternatives rejected.** Persisting the whole transcript in IndexedDB
+(the folder already has the agent's half, and a browser-cached copy would be
+a second source of truth that drifts). Cancelling every outstanding request
+at `detach` (simple, and it throws away the reason to be sticky at all — an
+agent that stops working the moment you close the tab has not survived
+anything). Inferring which permission cards were already answered from
+whether the agent spoke afterwards (a guess dressed as a fact; the answered
+ids are cheap to carry and exact). Gating reattach on `detached: true`
+(D18 already rejected it for shells, for the same reason: the D17 silence
+window would make a refresh cost three minutes).
+
+**Findings.** F15 (the re-grant gesture), F16 (why a backgrounded tab's
+silence is not death), F11 (torn reads during replay).
+Depends on [D6](#d6--one-writer-per-file-one-cleanup-owner),
+[D17](#d17--client-heartbeats-opt-in-detached-marking-instead-of-kill),
+[D18](#d18--attach-is-takeover-writer-epochs-fence-the-old-client),
+[D26](#d26--scrollback-hygiene-retention--the-replay-window-terminal-sessions-are-swept-fsio-is-git-ignored),
+[D30](#d30--acp-is-payload-the-host-frames-the-browser-is-the-client).

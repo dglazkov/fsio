@@ -276,6 +276,59 @@ test("the agent's exit becomes the session's exit, and takes the kind's methods 
   });
 });
 
+// ------------------------------------------------ sticky sessions (D18/D32, #113)
+
+test("detach leaves the agent running, and a reattach replays what it said as history", async () => {
+  await withAcp(async (rig) => {
+    await rig.session.ready;
+    const pid = (await rig.session.request<Record<string, unknown>>("acp/info")).result["pid"] as number;
+    rig.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    await rig.reply(1);
+    assert.equal(rig.frames.length, 1);
+
+    // The one-word change #113 is built on: the page walks away instead of
+    // closing, and the agent it was talking to is still there.
+    await rig.session.detach();
+    await sleep(200);
+    assert.equal(alive(pid), true, "detach must not kill the agent — a session ends when the human ends it");
+
+    // What a returning page does. `replay: true` re-delivers the stream's
+    // head, and the bracket is what makes it distinguishable from live
+    // traffic: an ACP client that cannot tell the two apart would re-run the
+    // agent's file writes against a folder that has moved on.
+    const marks: string[] = [];
+    const replayed: string[] = [];
+    const live: string[] = [];
+    let replaying = false;
+    const s2 = rig.client.attachSession(rig.session.id, { pollMs: 5, replay: true, client: "b1-acp-again" });
+    s2.on("replay", (phase, gen) => {
+      marks.push(`${phase}@${gen}`);
+      replaying = phase === "start";
+    });
+    s2.on("data", (b) => (replaying ? replayed : live).push(new TextDecoder().decode(b)));
+    await s2.ready;
+
+    assert.deepEqual(marks, ["start@0", "end@0"], "one bracket, and it names the segment it replayed (#57's ceiling)");
+    assert.equal(replayed.length, 1, "everything the agent said before the walk-away comes back");
+    assert.equal((JSON.parse(replayed[0]!) as { id: number }).id, 1);
+    assert.equal(live.length, 0, "and none of it is mistaken for live traffic");
+
+    // Same process, same conversation: the kind survived the client, so its
+    // methods still answer and the pid has not moved. This is why a
+    // reattached page does not re-handshake (D32) — nothing restarted.
+    assert.equal((await s2.request<Record<string, unknown>>("acp/info")).result["pid"], pid);
+
+    s2.sendData(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "echo" }));
+    await waitFor(() => live.find((f) => (JSON.parse(f) as { id?: unknown }).id === 2), "the reply on the reattached uplink");
+    assert.equal(replayed.length, 1, "replay is a bracket, not a mode — live frames stay live");
+
+    // The other half of the bargain: closing is still what kills it, and
+    // now it is the only thing that does.
+    await s2.close();
+    await waitFor(() => !alive(pid), "the agent process to die on an explicit close");
+  });
+});
+
 test("closing the session kills the agent (D6: cleanup stays host-owned)", async () => {
   let pid = 0;
   await withAcp(async (rig) => {
