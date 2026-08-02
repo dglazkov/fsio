@@ -1554,8 +1554,9 @@ helper runs `fresh: true` and wipes `.fsio` on start, so a restarted helper
 has no sessions to inherit and the returning page falls back to the wizard.
 Resuming into a *new* agent process — that is what ACP's `session/load` is
 for, it is gated on an agent advertising `loadSession`, and it is per-agent
-([#103](https://github.com/dglazkov/fsio/issues/103) is where that gets
-measured rather than guessed).
+([#125](https://github.com/dglazkov/fsio/issues/125) is where that gets
+measured rather than guessed — this line said #103 until #119, which is
+the puppet agent, not this).
 
 **Amended ([#119](https://github.com/dglazkov/fsio/issues/119)).** The
 paragraph above gave a policy as if it were a constraint. `fresh: true`
@@ -1569,7 +1570,8 @@ children, so no amount of retention makes a live session survive its exit.
 A helper restart can offer the conversation back to *read* — the same
 frames through the same `session/update` handlers, no live agent, no
 protocol change — and resuming it into a new agent process remains gated
-on `session/load` and #103. The expectation people bring from
+on `session/load` ([#125](https://github.com/dglazkov/fsio/issues/125)).
+The expectation people bring from
 `claude --resume` is transcript-shaped; what this decision built is
 process-shaped; rule 4 closes the gap from the cheap end.
 
