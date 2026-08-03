@@ -24,12 +24,12 @@ style.
   `spec/PRINCIPLES.md` — platform principles, P-numbered (handles below).
 - `TESTING.md` — test tiers and what deliberately isn't tested.
 - `NARRATIVE.md` — the demo through-line: which act each demo plays.
-- `packages/{common,client,host,fsiod,confine,workbench,terminal-demo,acp-demo,bench}`
+- `packages/{common,client,host,fsiod,confine,ui,workbench,terminal-demo,acp-demo,bench}`
   — npm workspaces; `common` is the single source of protocol truth (types +
   codec + JSON-RPC), both sides import it. `confine` is the Seatbelt write
-  wall, extracted from the two demos that wrote it (PROCESS.md rule 6). The
-  `*-demo` packages are page + native helper pairs consuming `@fsio/host` as
-  a library.
+  wall and `ui` is the two pages' shared chrome, both extracted from the two
+  demos that wrote them (PROCESS.md rule 6). The `*-demo` packages are page +
+  native helper pairs consuming `@fsio/host` as a library.
 
 ## Principles (P1–P6)
 

@@ -1,113 +1,59 @@
-// The setup wizard (#34): a <dialog> floating over the empty terminal. The
-// current three-step list, recast — step 1 the npx one-liner (+ gates),
-// step 2 pick-folder (+ wrong-folder recovery inline), then the dialog
-// dissolves (or the #58 session picker intercepts first).
-import { LitElement, html, css, nothing } from "lit";
+// Setup: a modal over the empty terminal. Two steps — run the helper, pick
+// the folder — and then it dissolves, unless the arrival picker intercepts
+// first. The frame is `@fsio/ui`'s (the agent demo opens exactly the same
+// way); the panels are this page's.
+import { LitElement, html, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
+import { friendlyName, wizardStyles } from "@fsio/ui";
+import type { Crumb } from "@fsio/ui";
 import { gate, phase, wizardStep, folder, helper, pickError, reconnectTo, resumable, tabs } from "../state";
 import { pickFolder, regrant, dismissPicker, onMac } from "../connection";
 import { openTab } from "../tabs";
-import { friendlyName } from "../names";
 
 const CMD = "npx github:dglazkov/fsio#terminal-demo";
 
+const TAGLINE =
+  "a terminal to your own machine, served from this page — transported " +
+  "through nothing but files in a folder.";
+
 class FsioWizard extends SignalWatcher(LitElement) {
-  static override styles = css`
-    dialog {
-      background: #1c1f26; color: #d8dee9; border: 1px solid #2c313c;
-      border-radius: 12px; padding: 1.4rem 1.6rem; width: min(34rem, 92vw);
-      font: inherit; line-height: 1.5;
-    }
-    dialog::backdrop { background: rgba(10, 12, 16, 0.55); backdrop-filter: blur(2px); }
-    h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
-    h1 .dim { color: #5e81ac; font-weight: 400; }
-    h2 { font-size: 1rem; margin: 0 0 0.3rem; }
-    .tagline { color: #9aa5b8; margin: 0.2rem 0 1.1rem; font-size: 0.92rem; }
-    .crumbs { display: flex; gap: 1rem; font-size: 0.8rem; color: #5c6675; margin-bottom: 0.9rem; }
-    .crumbs .on { color: #88c0d0; }
-    .explain { color: #9aa5b8; font-size: 0.9rem; margin: 0.2rem 0 0.8rem; }
-    button {
-      background: #2e3440; color: #d8dee9; border: 1px solid #4c566a;
-      border-radius: 6px; padding: 0.45rem 1rem; font: inherit; cursor: pointer;
-    }
-    button:hover { background: #3b4252; }
-    button.primary { background: #5e81ac; border-color: #5e81ac; color: #eceff4; font-weight: 600; }
-    button.primary:hover { background: #6d8fb8; }
-    button.small { font-size: 0.8rem; padding: 0.2rem 0.6rem; }
-    button.ghost { background: none; border: none; color: #81a1c1; padding: 0.2rem 0.3rem; }
-    button.ghost:hover { background: none; text-decoration: underline; }
-    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .cmd {
-      display: flex; align-items: center; gap: 0.6rem; background: #14161a;
-      border-radius: 6px; padding: 0.5rem 0.8rem; margin: 0.4rem 0 0.6rem;
-    }
-    .cmd code { font-size: 0.85rem; overflow-x: auto; white-space: nowrap; flex: 1; }
-    .fineprint { color: #7b8598; font-size: 0.82rem; margin: 0.5rem 0 0; }
-    .fineprint code { font-size: 0.78rem; }
-    .status { font-size: 0.9rem; margin-top: 0.7rem; }
-    .status.ok::before { content: "✅ "; }
-    .status.wait::before { content: "⏳ "; }
-    .status.bad::before { content: "❌ "; }
-    .status .hint { color: #9aa5b8; font-size: 0.85rem; display: block; margin-top: 0.15rem; }
-    .row { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-top: 1rem; }
-    .sess {
-      display: flex; align-items: center; gap: 0.7rem; background: #14161a;
-      border-radius: 6px; padding: 0.5rem 0.8rem; margin: 0.4rem 0;
-    }
-    .sess-info { flex: 1; min-width: 0; }
-    .sess-info .name { font-weight: 600; color: #eceff4; }
-    .sess-info .hint { color: #9aa5b8; font-size: 0.82rem; display: block; margin-top: 0.1rem; }
-    .gate strong { color: #ef8a95; }
-    .gate .hint { color: #d8b9bc; font-size: 0.9rem; margin-top: 0.4rem; }
-  `;
+  // Nothing of its own: every panel below is built out of the shared
+  // vocabulary, which is the point of having one.
+  static override styles = wizardStyles;
 
   override render(): TemplateResult {
     const g = gate.get();
     const p = phase.get();
-    return html`<dialog @cancel=${this.#onCancel}>
+    const steps = !g && p === "wizard";
+    return html`<fsio-wizard-frame
+      edition="terminal"
+      .tagline=${g ? "" : TAGLINE}
+      .crumbs=${steps ? this.#crumbs() : []}
+      ?open=${g !== null || (p !== "shell" && p !== "boot")}
+      ?dismissible=${p === "picker" && tabs.get().length > 0}
+      @dismiss=${() => dismissPicker()}
+    >
       ${g
         ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
         : p === "reconnect"
           ? this.#reconnect()
           : p === "picker"
             ? this.#picker()
-            : this.#steps()}
-    </dialog>`;
+            : this.#step()}
+    </fsio-wizard-frame>`;
   }
 
-  // Open/close tracks the phase; the dialog element itself is stable across
-  // renders, only its contents swap.
-  protected override updated(): void {
-    const d = this.renderRoot.querySelector("dialog")!;
-    const open = gate.get() !== null || (phase.get() !== "shell" && phase.get() !== "boot");
-    if (open && !d.open) d.showModal();
-    else if (!open && d.open) d.close();
-  }
-
-  #onCancel(e: Event): void {
-    e.preventDefault(); // setup isn't skippable…
-    if (phase.get() === "picker" && tabs.get().length > 0) dismissPicker(); // …but a done picker is
-  }
-
-  #header(): TemplateResult {
-    return html`<header>
-      <h1>fsio <span class="dim">/ terminal</span></h1>
-      <p class="tagline">
-        a terminal to your own machine, served from this page — transported
-        through nothing but files in a folder.
-      </p>
-    </header>`;
-  }
-
-  #steps(): TemplateResult {
+  #crumbs(): Crumb[] {
     const s = wizardStep.get();
-    return html`${this.#header()}
-      <div class="crumbs">
-        <span class=${s === 1 ? "on" : ""}>1 · run the helper</span>
-        <span class=${s === 2 ? "on" : ""}>2 · pick the folder</span>
-      </div>
-      ${s === 1 ? this.#stepRun() : this.#stepPick()}`;
+    return [
+      { label: "1 · run the helper", state: s === 1 ? "on" : "" },
+      { label: "2 · pick the folder", state: s === 2 ? "on" : "" },
+    ];
+  }
+
+  #step(): TemplateResult {
+    return wizardStep.get() === 1 ? this.#stepRun() : this.#stepPick();
   }
 
   #stepRun(): TemplateResult {
@@ -116,10 +62,7 @@ class FsioWizard extends SignalWatcher(LitElement) {
         In a terminal, <code>cd</code> into a folder you're comfortable
         handing to this page, then:
       </p>
-      <div class="cmd">
-        <code>${CMD}</code>
-        <button class="small" @click=${() => void navigator.clipboard.writeText(CMD)}>copy</button>
-      </div>
+      <fsio-cmd command=${CMD}></fsio-cmd>
       <p class="fineprint">
         ${onMac
           ? html`macOS only (for now). The shell you'll get is sandboxed to
@@ -139,6 +82,8 @@ class FsioWizard extends SignalWatcher(LitElement) {
     `;
   }
 
+  /** The one gesture that is genuinely the human's, and the moment the whole
+   *  demo is about. */
   #stepPick(): TemplateResult {
     const err = pickError.get();
     const f = folder.get();
@@ -154,7 +99,7 @@ class FsioWizard extends SignalWatcher(LitElement) {
         <button class="primary" @click=${() => void pickFolder()}>Choose folder…</button>
         ${f ? html`<span class="fineprint">${f.name}/${f.via === "picked" ? "" : " (remembered from last visit)"}</span>` : nothing}
       </div>
-      ${err ? html`<div class="status bad">${err.msg}<span class="hint">${err.hint}</span></div> ` : nothing}
+      ${err ? html`<div class="status bad">${err.msg}<span class="hint">${err.hint}</span></div>` : nothing}
       ${!err && f && h === "silent"
         ? html`<div class="status wait">
             folder connected, but no helper heartbeat
@@ -165,9 +110,14 @@ class FsioWizard extends SignalWatcher(LitElement) {
     `;
   }
 
+  /** The remembered folder, one click from being usable again.
+   *
+   *  This panel exists because of F15: `requestPermission` needs a user
+   *  activation, so a page that remembers your folder still cannot reopen it
+   *  by itself. */
   #reconnect(): TemplateResult {
     const name = reconnectTo.get()?.name ?? "your folder";
-    return html`${this.#header()}
+    return html`
       <h2>Welcome back</h2>
       <p class="explain">
         This page remembers <code>${name}/</code> from last visit. One click
@@ -179,32 +129,32 @@ class FsioWizard extends SignalWatcher(LitElement) {
       </div>`;
   }
 
+  /** Shells already running in this folder, offered on arrival. Filtered
+   *  against live tabs at render time so a just-resumed row disappears
+   *  immediately — the 2 s poll would lag behind the click. */
   #picker(): TemplateResult {
-    // Filter against live tabs at render time so a just-resumed row
-    // disappears immediately (the 2 s poll would lag behind the click).
     const held = new Set(tabs.get().filter((t) => t.session).map((t) => t.sessionId));
     const rows = resumable.get().filter((r) => !held.has(r.id));
-    return html`${this.#header()}
+    return html`
       <h2>Your shells are still here</h2>
       <p class="explain">
-        shells live in the helper, not the tab — closing the page doesn't end
-        them. resume one (scrollback included), or start fresh. each resume
+        Shells live in the helper, not the tab — closing the page doesn't end
+        them. Resume one (scrollback included), or start fresh. Each resume
         opens its own tab.
       </p>
       ${rows.length === 0
-        ? html`<p class="fineprint">no running shells right now — start a new one below.</p>`
+        ? html`<p class="fineprint">No running shells right now — start a new one below.</p>`
         : rows.map(
-            (r) => html`<div class="sess">
-              <div class="sess-info">
-                <span class="name" title=${r.id}>${friendlyName(r.id)}</span>
-                <span class="hint">
-                  ${r.status?.detached
-                    ? "detached — no tab is holding it, safe to resume"
-                    : `held by ${r.client ?? "another client"}${r.origin ? ` at ${r.origin}` : ""} — resuming takes it over (that tab keeps watching, read-only)`}
-                </span>
-              </div>
-              <button class="small" @click=${() => openTab(r.id)}>resume</button>
-            </div>`
+            (r) => html`<fsio-session-row
+              boxed
+              .name=${friendlyName(r.id)}
+              .meta=${r.status?.detached
+                ? "detached — no tab is holding it, safe to resume"
+                : `held by ${r.client ?? "another client"}${r.origin ? ` at ${r.origin}` : ""} — resuming takes it over (that tab keeps watching, read-only)`}
+              .action=${"Resume"}
+              primary
+              @action=${() => openTab(r.id)}
+            ></fsio-session-row>`
           )}
       <div class="row">
         <button @click=${() => { openTab(); dismissPicker(); }}>Start a new shell</button>
