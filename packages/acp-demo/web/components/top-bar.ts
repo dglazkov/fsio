@@ -21,28 +21,32 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
+import { tokens } from "@fsio/ui";
 import { adopted, folder, helper, resumed } from "../state";
 import "./tab-bar";
 
 class AcpTopBar extends SignalWatcher(LitElement) {
-  static override styles = css`
-    :host {
-      display: flex; align-items: center; gap: 0.7rem;
-      padding: 0.35rem 0.9rem; background: #14161a;
-      border-bottom: 1px solid #262b34; font-size: 0.85rem;
-    }
-    .name { font-weight: 600; color: #eceff4; flex: none; }
-    /* The strip takes the middle and does its own pushing: its internal
-       spacer is what keeps "+" beside the last chip instead of at the far
-       right, so this row needs no spacer of its own. */
-    acp-tab-bar { flex: 1; min-width: 0; }
-    .dim { color: #7b8598; }
-    .turn { color: #88c0d0; }
-    .resumed { color: #a3be8c; cursor: help; }
-    /* Not green: "joined" is a weaker claim than "resumed" — the agent's
-       half came back whole and the human's half did not exist to come back. */
-    .joined { color: #d9b477; cursor: help; }
-  `;
+  static override styles = [
+    tokens,
+    css`
+      :host {
+        display: flex; align-items: center; gap: 0.7rem;
+        padding: 0.35rem 0.9rem; background: var(--fsio-bg);
+        border-bottom: 1px solid var(--fsio-line); font-size: 0.85rem;
+      }
+      .name { font-weight: 600; color: var(--fsio-fg-bright); flex: none; }
+      /* The strip takes the middle and does its own pushing: its internal
+         spacer is what keeps "+" beside the last chip instead of at the far
+         right, so this row needs no spacer of its own. */
+      acp-tab-bar { flex: 1; min-width: 0; }
+      .dim { color: var(--fsio-dimmer); }
+      .quiet { color: var(--fsio-warn-quiet); cursor: help; flex: none; }
+      .resumed { color: var(--fsio-good); cursor: help; }
+      /* Not green: "joined" is a weaker claim than "resumed" — the agent's
+         half came back whole and the human's half did not exist to come back. */
+      .joined { color: var(--fsio-warn-quiet); cursor: help; }
+    `,
+  ];
 
   override render(): TemplateResult {
     const f = folder.get();
@@ -54,14 +58,21 @@ class AcpTopBar extends SignalWatcher(LitElement) {
         : resumed.get()
           ? html`<span class="resumed" title="This page reattached to a session that was already running — the agent kept going while the tab was gone.">resumed</span>`
           : nothing}
-      <!-- The helper is the folder's, so it says so here. The turn is the
-           conversation's and moved into the log with the rest of the
-           conversation layer: "thinking…" is the newest thing in a
+      <!-- The helper is the folder's, so it says so here — and only its
+           silence is worth saying, in the same words the terminal demo uses.
+           A helper that is answering is the normal case, and a light
+           confirming it every second is a light nobody reads; a helper that
+           has stopped is why the page feels stuck.
+
+           The turn is the conversation's and moved into the log with the rest
+           of the conversation layer: "thinking…" is the newest thing in a
            transcript, not a property of the page, and up here it was being
            said about whichever conversation happened to be on screen.
            "agent gone" went with it — the chip's dot and the composer both
            already say it, in the places you are looking when it matters. -->
-      <span class="turn">${helper.get() === "silent" ? "helper silent" : ""}</span>
+      ${helper.get() === "silent"
+        ? html`<span class="quiet" title="The helper writes a heartbeat into this folder every 2 seconds and we are not seeing it. Is it still running, in this exact folder?">no helper heartbeat</span>`
+        : nothing}
     `;
   }
 }

@@ -8,11 +8,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { tabs, activeTabId, type TabRecord, type TabPhase } from "./state";
 import { reporter, log, step, showNotice } from "./reporter";
 import { getClient, arrive, refreshResumable } from "./connection";
-import { friendlyName } from "./names";
+import { friendlyName } from "@fsio/ui";
 
 let nextTabId = 1;
 
-reporter.tabSummary = () =>
+reporter.summary = () =>
   tabs.get().map((t) => ({
     tab: t.tabId,
     session: t.sessionId,
@@ -188,13 +188,13 @@ async function startSession(tab: TabRecord, resumeId?: string): Promise<void> {
 
 /** Close = end the session (D6-clean close; the host kills the pty and owns
  *  cleanup). Deliberately distinct from detach — closing is honest about
- *  killing, so a live shell asks first. */
+ *  killing, so a live shell asks first. The asking is the tab strip's now
+ *  (components/tab-bar.ts supplies the words, @fsio/ui puts them in a real
+ *  dialog); this used to be a `window.confirm()`, which is the same idea with
+ *  none of the page's voice in it and no way to name the alternative. */
 export async function closeTab(tab: TabRecord): Promise<void> {
   const st = tab.state.get();
   const s = tab.session;
-  if (s && (st === "running" || st === "starting")) {
-    if (!confirm("Close this shell? The session ends and the shell process is killed.\n(Use “detach” instead to keep it running.)")) return;
-  }
   reporter.event("tab-close", { tab: tab.tabId, session: tab.sessionId, state: st });
   tab.session = null;
   // A superseded tab no longer holds the uplink — close() can't reach the

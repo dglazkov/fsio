@@ -56,18 +56,10 @@ export function startedAt(id: string): number | null {
   return Number.isFinite(ms) && ms >= MIN_TS && ms < MAX_TS ? ms : null;
 }
 
-/** "started 28 minutes ago" — the half of that sentence that varies. Takes
- *  `now` rather than reading the clock so it is testable, and rounds down
- *  because "an hour ago" reading as 59 minutes is the harmless direction. */
-export function sinceLabel(started: number | null, now: number): string {
-  if (started === null) return "start time unknown";
-  const s = Math.max(0, Math.round((now - started) / 1000));
-  if (s < 45) return "started just now";
-  const plural = (n: number, unit: string): string => `started ${n} ${unit}${n === 1 ? "" : "s"} ago`;
-  if (s < 5400) return plural(Math.max(1, Math.round(s / 60)), "minute");
-  if (s < 172800) return plural(Math.round(s / 3600), "hour");
-  return plural(Math.round(s / 86400), "day");
-}
+// `sinceLabel` — "started 28 minutes ago" — used to live here. It is a
+// string a page says about a row a person is choosing from, the terminal
+// demo wanted the same sentence, and it never had anything to do with
+// discovery, so it is `@fsio/ui`'s now along with its tests.
 
 /** One row of `listSessions()`, as much of it as the filter needs. Structural
  *  rather than the imported `SessionSummary` so this file stays testable

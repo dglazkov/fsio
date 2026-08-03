@@ -52,7 +52,9 @@ export interface TabRecord {
   session: FsioSession | null;
   readonly title: Signal.State<string>;
   readonly state: Signal.State<TabPhase>;
-  /** Status-bar / overlay text for the current state. */
+  /** What this shell is doing, in a sentence: the exited/failed card's text,
+   *  and what the corner "i" says under "this shell". It used to be the
+   *  status bar's middle column, which is why it reads like a status line. */
   readonly detail: Signal.State<string>;
   readonly host: HTMLDivElement;
   readonly term: Terminal;

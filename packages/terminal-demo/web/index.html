@@ -5,7 +5,7 @@
   <title>fsio · terminal</title>
 
   <style>
-    /* App shell (#34): three fixed regions, terminal takes the rest. All
+    /* App shell: one bar, and the terminal takes everything under it. All
        real styling lives in the components' shadow roots; this sheet only
        lays out the light-DOM skeleton (and the slotted xterm hosts live in
        light DOM, so xterm.css applies to them untouched). */
@@ -24,7 +24,7 @@
 <body>
   <fsio-top-bar></fsio-top-bar>
   <fsio-terminal-pane></fsio-terminal-pane>
-  <fsio-status-bar></fsio-status-bar>
+  <fsio-details-panel></fsio-details-panel>
   <fsio-wizard></fsio-wizard>
 
   <script type="module" src="/main.ts"></script>

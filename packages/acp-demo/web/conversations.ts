@@ -790,7 +790,7 @@ export function detachAllOnPagehide(): void {
 // (TESTING.md) — the same hook the terminal demo injects, for the same
 // reason: multi-tab behaviour is exactly what an agent reading verdicts from
 // the native side cannot otherwise see.
-reporter.convSummary = () =>
+reporter.summary = () =>
   convs.get().map((c) => ({
     session: c.id,
     agent: c.title.get(),

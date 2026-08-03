@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FrameType, encodeFrame, jsonFrame } from "@fsio/common";
-import { adoptableIds, peekConversation, sinceLabel, startedAt, type SessionRow } from "./discovery.js";
+import { adoptableIds, peekConversation, startedAt, type SessionRow } from "./discovery.js";
 
 // ---------------------------------------------------------------- fixtures
 
@@ -133,15 +133,8 @@ test("discovery: a directory name this library did not mint has no birthday", ()
   assert.equal(startedAt("whatever"), null);
 });
 
-test("discovery: the age reads as a human would say it", () => {
-  const t = 1_754_000_000_000;
-  assert.equal(sinceLabel(t, t + 10_000), "started just now");
-  assert.equal(sinceLabel(t, t + 60_000), "started 1 minute ago");
-  assert.equal(sinceLabel(t, t + 28 * 60_000), "started 28 minutes ago");
-  assert.equal(sinceLabel(t, t + 3 * 3_600_000), "started 3 hours ago");
-  assert.equal(sinceLabel(t, t + 4 * 86_400_000), "started 4 days ago");
-  assert.equal(sinceLabel(null, t), "start time unknown");
-});
+// The age's wording — "started 28 minutes ago" — moved to @fsio/ui with
+// `sinceLabel`, and its assertions went along: packages/ui/src/test-text.ts.
 
 // ---------------------------------------------------------------- the filter
 
