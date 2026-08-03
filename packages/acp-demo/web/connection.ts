@@ -43,6 +43,7 @@ import {
   gate,
   helper,
   joinable,
+  launch,
   notice,
   past,
   phase,
@@ -61,6 +62,7 @@ import { listAdoptable } from "./discovery";
 import { activate, closeConv, detachAllOnPagehide, join, leaveConv, openIds, openNew, retake } from "./conversations";
 import { forgetHandle, loadOpen, rememberAgent, saveHandle, savedAgent, savedHandle, sweepRecords } from "./store";
 import { wantedOpen, parseHash, type OpenSet } from "../src/tabs.js";
+import { noHelperHint } from "../src/launch.js";
 
 let client: FsioClient | null = null;
 
@@ -97,12 +99,29 @@ export async function revisit(): Promise<void> {
   try {
     saved = await savedHandle();
   } catch {} // IndexedDB unavailable (private mode etc.) — the wizard still works
-  if (!saved) return void phase.set("wizard");
+  if (!saved) return void openWizard();
+  // A helper that names a folder outranks a remembered one that isn't it
+  // (#124). Without this, running the helper in project B opens a page that
+  // reconnects to project A — yesterday's grant is still good, so it
+  // succeeds — and only discovers there is no helper there a beat later,
+  // having flashed the wrong folder's files on the way past.
+  //
+  // Still not load-bearing: this changes which step the page opens on, never
+  // where it can get to. Skipping the restore lands on "pick B", which is
+  // exactly where the reconnect-then-fail path lands too, one step slower —
+  // and the handle is kept, not forgotten, so nothing is lost if B was the
+  // mistake. Basenames can collide; a collision just means the old behaviour.
+  const expected = launch.get().dir;
+  if (expected && saved.name !== expected) {
+    reporter.event("revisit-deferred", { remembered: saved.name, expected });
+    log(`remembered folder ${saved.name}/, but the helper that opened this page serves ${expected}/ — asking`);
+    return void openWizard();
+  }
   let perm: FsaPermissionState;
   try {
     perm = await saved.queryPermission({ mode: "readwrite" });
   } catch {
-    return void phase.set("wizard");
+    return void openWizard();
   }
   reporter.event("revisit", { folder: saved.name, permission: perm });
   log(`remembered folder ${saved.name}/ — permission on load: ${perm}`);
@@ -113,8 +132,22 @@ export async function revisit(): Promise<void> {
     phase.set("reconnect");
   } else {
     await forgetHandle().catch(() => {});
-    phase.set("wizard");
+    openWizard();
   }
+}
+
+/** Open the setup dialog at the first step that still has a question in it
+ *  (#124).
+ *
+ *  Step 1 asks the human to go run the helper and then tell us they did.
+ *  When the helper opened this page, both halves of that are already
+ *  answered — it is up, and it is up in a folder it named — so starting
+ *  there is asking someone to confirm something we can see. A page opened by
+ *  hand carries no hint and still starts at 1, which is the same wizard it
+ *  has always been. */
+export function openWizard(): void {
+  phase.set("wizard");
+  wizardStep.set(launch.get().dir ? 2 : 1);
 }
 
 /** The reconnect offer's button ("prompt" → one click, F15). */
@@ -138,14 +171,21 @@ export async function forgetFolder(): Promise<void> {
   await forgetHandle().catch(() => {});
   detachAllOnPagehide();
   convs.set([]);
-  phase.set("wizard");
-  wizardStep.set(1);
+  openWizard();
 }
 
 // ---------------------------------------------------------------- connect
 
 let hostTimer: ReturnType<typeof setInterval> | undefined;
 let helperWasAlive = false;
+/** Whether this page has *ever* seen the helper alive on this folder. The
+ *  difference between "the first beat after connecting" and "the first beat
+ *  after the helper came back from the dead" — the second one means a
+ *  restart, and a restart sweeps what this page writes into. */
+let helperEverAlive = false;
+/** The `.fsio` handle from `connectTo`, kept so the reporter can be
+ *  re-attached after a restart swept its directory out from under it. */
+let fsioHandle: FileSystemDirectoryHandle | null = null;
 /** The revision of the service directory this page has already read. The
  *  heartbeat carries it (D3's doorbell), so re-reading is free to skip
  *  until it moves — which is also what makes "install an agent and watch it
@@ -195,10 +235,7 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
     fsioDir = await root.getDirectoryHandle(".fsio");
   } catch {
     helper.set("none");
-    pickError.set({
-      msg: `no helper in ${root.name}/`,
-      hint: "Is the command from step 1 running, in exactly this folder? The helper creates a .fsio directory there — we don't see one. (Nothing was written to the folder you just picked.)",
-    });
+    pickError.set({ msg: `no helper in ${root.name}/`, hint: noHelperHint(root.name, launch.get().dir) });
     phase.set("wizard");
     wizardStep.set(2);
     return;
@@ -207,7 +244,8 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
     client = new FsioClient(root);
     await client.connect();
     await reporter.attach(fsioDir);
-    reporter.event("connected", { folder: root.name });
+    fsioHandle = fsioDir;
+    reporter.event("connected", { folder: root.name, expected: launch.get().dir });
   } catch (e) {
     pickError.set({ msg: `could not open ${root.name}/.fsio`, hint: e instanceof Error ? e.message : String(e) });
     phase.set("wizard");
@@ -223,12 +261,15 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
   void refreshPast(root).catch(() => {});
   startWatching(root);
   helperWasAlive = false;
+  helperEverAlive = false;
   await refreshHelper(root);
   hostTimer = setInterval(() => void refreshHelper(root), 2000);
   if (helper.get() !== "alive") {
     // A revisit whose helper isn't running re-opens at step 1 (the command);
     // a fresh pick that found no heartbeat re-opens at step 2 (the folder).
-    wizardStep.set(via === "picked" ? 2 : 1);
+    // A page the helper opened is never sent back to step 1 — it was started
+    // by the very thing step 1 asks about (#124).
+    wizardStep.set(via === "picked" || launch.get().dir ? 2 : 1);
     phase.set("wizard");
   }
 }
@@ -247,6 +288,21 @@ async function refreshHelper(root: FileSystemDirectoryHandle): Promise<void> {
   const rev = host.info?.servicesRev;
   const first = !helperWasAlive;
   if (!first && rev === servicesRev) return;
+  // A helper that went silent and came back restarted itself, and a
+  // restarting helper sweeps `.fsio` — including the dir this page reports
+  // into. The reporter's handle is now pointing at something that is not
+  // there, so every subsequent flush throws into its own catch and the page
+  // stops self-reporting for the rest of its life, silently. Re-attaching
+  // costs one directory create and fixes it (#109's contract is "read the
+  // newest dir under client/", which a page that stopped writing quietly
+  // breaks).
+  //
+  // It is also the signal the helper reads to decide whether to open a tab
+  // (#124, open.ts): a client dir reappearing after the sweep is a live page
+  // saying so, which is why this runs on the transition rather than lazily
+  // at the next event.
+  if (first && helperEverAlive && fsioHandle) await reporter.attach(fsioHandle).catch(() => {});
+  helperEverAlive = true;
   helperWasAlive = true;
   servicesRev = rev;
 

@@ -25,16 +25,29 @@
 // cause. With
 // `~/.pi` carved, the same run completes.
 //
-// Every entry is looked up on PATH and **installed by the human, never by
-// us** ([#100](https://github.com/dglazkov/fsio/issues/100)): vendoring an
-// adapter was measured at +118 MB and +115 transitive packages (the Zed
-// adapter bundles the whole Claude Code harness — an 11.5 MB `cli.js` — plus
-// native libvips), against a 164 MB tree, for a demo that exists to show a
-// small protocol. So each entry carries an `install` line the helper prints
-// verbatim, and this file stays a list of *names*, not a dependency set.
+// Nothing here is vendored, and that has not changed
+// ([#100](https://github.com/dglazkov/fsio/issues/100)): shipping an adapter
+// was measured at +118 MB and +115 transitive packages against a 164 MB
+// tree, for a demo that exists to show a small protocol. So this file stays
+// a list of *names and npm coordinates*, never a dependency set, and an
+// agent arrives on the machine only because somebody asked for it.
+//
+// What did change is who does the typing (#124). This file used to say the
+// install was "installed by the human, never by us — installing software is
+// their gesture to make (P3/P5)", and the second half of that sentence was
+// doing work the first half did not need. The gesture is still theirs: the
+// helper finds nothing installed, says what it would install and what it
+// costs, and waits for a `y` on a terminal. What it no longer does is make
+// them carry a command to a second terminal to prove it. The enforcer is the
+// person at the keyboard — who predates this software and gains nothing from
+// it, which is the whole of P5 — and the rung stays distinct and revocable
+// in P3's sense, because the install has an address (`~/.fsio/agents/<name>`)
+// rather than disappearing into PATH. `install.ts` holds the argument; the
+// only thing this file owes it is the coordinates.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { managedBin } from "./install.js";
 
 /** Where an agent's state (transcripts, session index, credentials) goes. */
 export type StatePosture =
@@ -63,11 +76,29 @@ export interface AgentEntry {
   args: string[];
   /** human-facing one-liner for the wizard/banner. */
   title: string;
-  /** how to get it, printed verbatim when this machine does not have it.
-   *  Never run for the human — installing software is their gesture to
-   *  make, not this helper's (P3: a distinct rung wants a distinct
-   *  gesture; P5: we are not the party that gets to grant it). */
-  install: string;
+  /** Where this agent comes from, pinned.
+   *
+   *  The pin is not caution, it is a correctness requirement: this file
+   *  builds `claude-agent-acp`'s sandbox profile out of measurements against
+   *  one specific release — the `~/.claude` carve, the
+   *  `/tmp/claude-{uid}/{cwdSlug}` scratch dir, the random-hex `-cwd` marker
+   *  regex (F30). Installing whatever npm calls latest would make the
+   *  profile a set of claims about software nobody guaranteed the user has,
+   *  and the skew would present as a sandbox bug.
+   *
+   *  It cuts both ways and the banner says so: a pinned copy will eventually
+   *  be older than what npm would hand you today, with nothing here to
+   *  notice. The version is printed at install so the number is at least
+   *  never a secret.
+   *
+   *  Absent for entries that are not npm packages — the puppet is built with
+   *  this repo. */
+  pkg?: { name: string; version: string };
+  /** How to get it by hand, printed verbatim when this machine does not have
+   *  it. Derived from `pkg` when absent (see `installLine`) — the two must
+   *  not be able to drift, or the line we print and the install we run stop
+   *  being the same software. */
+  install?: string;
   /** Does this agent send `session/request_permission` before it edits?
    *
    *  Measured, never assumed — and the reason the roster exists at all
@@ -110,7 +141,17 @@ export interface AgentEntry {
    *  failed. A tool that lies about its own success is worse than one that
    *  is blocked outright — a denial that names the wrong cause. */
   scratchPatterns?: string[];
+  /** The entry the helper offers to install when this machine has none
+   *  (#124). At most one; the reason is on the entry that sets it. */
+  recommended?: boolean;
 }
+
+/** What to type to get this agent by hand. Pinned to the same version the
+ *  helper would install, so the two paths land on the same software — an
+ *  unpinned printed line and a pinned automatic one is a support question
+ *  waiting to happen. */
+export const installLine = (a: AgentEntry): string =>
+  a.install ?? (a.pkg ? `npm i -g ${a.pkg.name}@${a.pkg.version}` : "");
 
 export const AGENTS: AgentEntry[] = [
   {
@@ -118,13 +159,15 @@ export const AGENTS: AgentEntry[] = [
     bin: "pi-acp",
     args: [],
     title: "pi coding agent (ACP adapter)",
+    // 0.0.32: the version MEASUREMENTS.md measured the `~/.pi` carve
+    // against, for the same reason the entry below pins F30's. Not latest.
+    pkg: { name: "pi-acp", version: "0.0.32" },
     // The demo's default subject: one small package, and model-agnostic —
     // which keeps the page an *ACP* client rather than a client of any one
     // vendor's agent. Caveat worth knowing before you drive it: pi reads and
     // edits with its own hands, so it never sends `session/request_permission`
     // or `fs/*` (#100). What it exercises is the transport, the framing, the
     // confinement facts and the live workspace — not the consent surface.
-    install: "npm i -g pi-acp",
     // #100: 0 `session/request_permission`, 0 `fs/*` across a driven session.
     asks: false,
     state: {
@@ -149,14 +192,29 @@ export const AGENTS: AgentEntry[] = [
     //
     // Unlike pi-acp this one *does* send `session/request_permission`, which
     // is why it is the standing answer to #100 for anyone who wants to see
-    // the consent question fire against a real agent. It is a PATH install
-    // on purpose (see the
-    // note at the top of this file) and needs its own Claude credential.
+    // the consent question fire against a real agent — and why it is the one
+    // the helper offers to install when a machine has none (`recommended`
+    // below). It needs its own Claude credential either way.
     name: "claude-agent-acp",
     bin: "claude-agent-acp",
     args: [],
     title: "Claude Code (ACP adapter)",
-    install: "npm i -g @agentclientprotocol/claude-agent-acp",
+    // **0.64.0 because that is the version F30 measured**, not because it is
+    // the newest — npm was already offering 0.64.2 when this was written,
+    // and taking it would have been "install whatever is current" wearing a
+    // pin's clothing. The profile below is a set of claims about one
+    // release; the pin's whole job is to make those claims true of the copy
+    // that actually runs. Bumping it means re-measuring F30 first.
+    //
+    // Install measured 2026-08-02 against this exact version: 111 packages,
+    // 293 MB (260 MB of it the bundled Claude Code CLI), ~3 s, and
+    // `--ignore-scripts` produces a byte-identical tree (install.ts).
+    pkg: { name: "@agentclientprotocol/claude-agent-acp", version: "0.64.0" },
+    /** The one a machine with no agent is offered. It asks before it edits,
+     *  and the consent card is what this demo is *for* — offering the other
+     *  one would install an agent that never fires the surface the human came
+     *  to look at (#100, F30). */
+    recommended: true,
     // F30: it asks, and the page renders the card with the file named and
     // three options. Caveat the roster cannot carry and the page copy must:
     // only in manual permission mode, which is inherited from the
@@ -208,11 +266,17 @@ export const agentNames = (agents: AgentEntry[] = AGENTS): string[] => agents.ma
 export interface RosterEntry {
   name: string;
   title: string;
-  /** printed verbatim when `installed` is false; the human runs it, we
-   *  never do (P3/P5). */
+  /** printed verbatim when `installed` is false: the other way to get it,
+   *  for anyone who would rather type it themselves or put it on PATH. */
   install: string;
   installed: boolean;
   asks: boolean;
+  /** Which copy the page would be driving (#124). Two can exist at once —
+   *  someone with a global install who also answered `y` here — and a demo
+   *  that silently ran the other one is a debugging trap. A word, never a
+   *  path: this rides `services.json`, which one file serves every granted
+   *  origin (D24). */
+  via: "PATH" | "fsio" | null;
 }
 
 /** What this machine can actually serve, right now.
@@ -228,13 +292,17 @@ export interface RosterEntry {
  *  running appear in the page without a restart — the service directory
  *  only republishes when the content actually changes (D24). */
 export function roster(agents: AgentEntry[] = AGENTS): RosterEntry[] {
-  return agents.map((a) => ({
-    name: a.name,
-    title: a.title,
-    install: a.install,
-    installed: resolveBin(a) !== null,
-    asks: a.asks,
-  }));
+  return agents.map((a) => {
+    const found = resolve(a);
+    return {
+      name: a.name,
+      title: a.title,
+      install: installLine(a),
+      installed: found !== null,
+      asks: a.asks,
+      via: found?.via ?? null,
+    };
+  });
 }
 
 /** Look up a name from the wire. Returns null for anything not listed —
@@ -244,20 +312,35 @@ export function findAgent(name: unknown, agents: AgentEntry[] = AGENTS): AgentEn
   return agents.find((a) => a.name === name) ?? null;
 }
 
-/** Resolve `bin` against PATH ourselves rather than relying on the spawn to
- *  fail: a missing agent is an operator condition with an obvious fix, and
- *  it should be reported at helper startup, not inside a sandboxed child
- *  whose stderr the page barely sees. Absolute paths in an entry are used
- *  as-is (tests point entries at a fixture). */
-export function resolveBin(entry: AgentEntry): string | null {
-  if (entry.bin.includes(path.sep)) return isExec(entry.bin) ? entry.bin : null;
+/** Resolve `bin` ourselves rather than relying on the spawn to fail: a
+ *  missing agent is an operator condition with an obvious fix, and it should
+ *  be reported at helper startup, not inside a sandboxed child whose stderr
+ *  the page barely sees. Absolute paths in an entry are used as-is (tests
+ *  point entries at a fixture).
+ *
+ *  **PATH wins over `~/.fsio/agents`** (#124), and the order is the whole
+ *  rule, so it is worth its reason. Two copies can only coexist when someone
+ *  installed one globally *after* answering `y` here — this helper never
+ *  offers to install what it can already find. In that situation the global
+ *  one is the deliberate, later act, usually made precisely to get a
+ *  different version; ours is the fallback we created when the machine had
+ *  nothing. A fallback that outranked a human's own install would make the
+ *  fix look broken. The roster reports which copy won either way, because
+ *  running the one nobody expected is worse than either choice. */
+export function resolve(entry: AgentEntry): { bin: string; via: "PATH" | "fsio" } | null {
+  if (entry.bin.includes(path.sep)) return isExec(entry.bin) ? { bin: entry.bin, via: "PATH" } : null;
   for (const dir of (process.env["PATH"] ?? "").split(path.delimiter)) {
     if (!dir) continue;
     const candidate = path.join(dir, entry.bin);
-    if (isExec(candidate)) return candidate;
+    if (isExec(candidate)) return { bin: candidate, via: "PATH" };
   }
+  const managed = managedBin(entry);
+  if (managed && isExec(managed)) return { bin: managed, via: "fsio" };
   return null;
 }
+
+/** Just the path, for the callers that only need to spawn it. */
+export const resolveBin = (entry: AgentEntry): string | null => resolve(entry)?.bin ?? null;
 
 function isExec(p: string): boolean {
   try {

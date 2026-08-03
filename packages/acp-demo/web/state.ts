@@ -6,6 +6,7 @@ import type { Signal } from "@lit-labs/signals";
 import type { FsioSession } from "@fsio/client";
 import type { PastConversation } from "../src/transcripts.js";
 import type { StickyRecord } from "../src/resume.js";
+import { NO_LAUNCH, type Launch } from "../src/launch.js";
 import type { Adoptable } from "./discovery";
 import type { AgentSession } from "./agent";
 
@@ -23,10 +24,23 @@ export const phase = signal<Phase>("boot");
  *  user activation (F15), so this is a button the human presses, never
  *  something the page can do for them. */
 export const reconnectTo = signal<FileSystemDirectoryHandle | null>(null);
-/** 1 run the helper · 2 pick the folder · 3 the agent. Step 3 only appears
- *  when there is a choice to make or an install to do (#102): with exactly
- *  one agent installed the page names it and goes. */
+/** 1 run the helper · 2 pick the folder · 3 the agent. Steps 1 and 3 are
+ *  both skippable and usually skipped: 3 only appears when there is a choice
+ *  to make or an install to do (#102), and 1 disappears whenever the helper
+ *  opened this page itself (#124) — it is a step that asks the human to
+ *  report something the other end already proved. */
 export const wizardStep = signal<1 | 2 | 3>(1);
+
+/** What the helper put in the URL when it opened this page (#124).
+ *
+ *  Hints, not data. `launch.ts` carries the rule at length; the short version
+ *  is that nothing here is ever read to decide anything — the folder comes
+ *  from the picker, the roster comes from the folder, and a page opened by
+ *  hand at the bare URL reaches the same place one step slower. What they buy
+ *  is that the page can *name* the folder on the button instead of saying
+ *  "the same folder the helper is running in", and can tell somebody who
+ *  picked the wrong one which one it should have been. */
+export const launch = signal<Launch>(NO_LAUNCH);
 
 /** Hard gate (non-Chromium browser): replaces the wizard outright. */
 export const gate = signal<{ msg: string; hint: string } | null>(null);

@@ -13,9 +13,17 @@ import "./components/workspace-pane";
 import "./components/wizard";
 import { checkGates, revisit } from "./connection";
 import { detachAllOnPagehide } from "./conversations";
-import { step } from "./reporter";
+import { reporter, step } from "./reporter";
+import { launch } from "./state";
+import { parseLaunch } from "../src/launch.js";
 
 checkGates();
+// Read before anything else looks at it, and read once: the helper's hints
+// describe the moment this page was opened, and a later re-read would be
+// answering a question about a URL the page has since rewritten (#120 owns
+// the hash). Purely advisory — see launch.ts.
+launch.set(parseLaunch(location.search));
+reporter.event("launch", { ...launch.get(), openedByHelper: launch.get().dir !== null });
 step("waiting for a folder");
 // A remembered folder skips the wizard, and a remembered set of sessions
 // skips the whole setup (#113, #120): the page comes back to the
