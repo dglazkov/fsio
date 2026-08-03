@@ -83,6 +83,19 @@ things follow from who the author is:
   and the records before acting on them, and when one has gone stale, retitle
   or close it rather than building around it.
 
+**The direction is the human's to choose; your job is to make that choice a
+good one.** Writing the issue is yours — deciding what the system should
+*become* is not. Finding a problem does not make its remedy yours to pick,
+and an issue that arrives with a fix already argued for has quietly made an
+architectural decision on the owner's behalf, in a file that outlives the
+conversation. Bring the measurement, the options nobody has ruled out yet,
+and what each one costs; say which you would choose only when asked, and
+mark it as an opinion when you do. A p1 with a recommended remedy in it is
+the shape to watch for: it reads as reporting and acts as deciding. This is
+PROCESS.md rule 4 wearing different clothes — strain stops and asks — and it
+applies to any fork wide enough that a reasonable person could take the
+other branch.
+
 1. Issue-driven: `gh issue list` → pick by priority label (`p1` first;
    `p3` = blocked or deferred, don't start it) → implement → commit with
    `Closes #N` → push → **watch the CI run to conclusion** → verify the
