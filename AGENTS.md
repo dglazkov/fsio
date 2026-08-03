@@ -133,6 +133,25 @@ other branch.
    `-F`/`--body-file` — heredocs inside `"$(cat <<'EOF' …)"` get mangled
    by the tool shell (bad substitution; cost a retry more than once).
 
+## House style (issues, records, commits, PR bodies)
+
+A future session reads this cold, with less context than you have now.
+Five rules protect that reader.
+
+- **Answer first.** The opening sentence says what is true or what to do.
+  History follows it, and only the history the reader needs to act.
+- **One word, one meaning.** Never vary a term for rhythm. Two words for one
+  thing: retire one. One word for two things: split it.
+- **Cite by handle, then number.** Every F/D/P entry carries its handle in
+  its own title — "one writer per file, one cleanup owner" (D6). Delete
+  every citation and the prose must still stand.
+- **Mark confidence, with these four words only**: *measured* (an F-number
+  or a cited run backs it), *observed* (seen, not measured), *inferred*
+  (follows from something measured), *guess* (neither). An unmarked claim
+  reads as measured.
+- **Name what you did not check.** Put the gap in the artifact, not in the
+  conversation that produced it.
+
 ## Cooperative verification (browser work)
 
 Two loops, both ending in the agent reading verdicts from the native side
