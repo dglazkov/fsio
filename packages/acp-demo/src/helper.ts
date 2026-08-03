@@ -10,19 +10,16 @@
 // CLI lives in packages/host/src/fsio-host.ts, and the terminal demo (whose
 // shape this follows) in packages/terminal-demo.
 //
-// Usage:  fsio-acp-demo [dir] [--no-sandbox]
+// Usage:  fsio-acp-demo [dir]
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { sandboxArgv } from "@fsio/confine";
 import { HostServer } from "@fsio/host";
 import { acpKind } from "./acp-kind.js";
 import { AGENTS, installLine, roster, type AgentEntry, type RosterEntry } from "./agents.js";
 import { agentDir, confirm, installAgent } from "./install.js";
 import { DEFAULT_PAGE, launchUrl } from "./launch.js";
 import { hasClientDirs, openInChromium, pageIsWatching } from "./open.js";
-import { agentProfile } from "./profile.js";
 
 const fail = (msg: string): never => {
   console.error(`fsio acp-demo: ${msg}`);
@@ -31,10 +28,9 @@ const fail = (msg: string): never => {
 
 // ---- args
 
-const USAGE = "usage: fsio-acp-demo [dir] [--no-sandbox] [--fixture] [--agent <name>] [--no-open] [--url <base>]";
+const USAGE = "usage: fsio-acp-demo [dir] [--fixture] [--agent <name>] [--no-open] [--url <base>]";
 
 let rootArg: string | null = null;
-let wantSandbox = true;
 let wantFixture = false;
 /** The helper opens the page (#124). `--no-open` prints the URL and stops
  *  there — for anyone driving this from a script, over ssh, or who simply
@@ -52,8 +48,7 @@ let agentArg: string | null = null;
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]!;
-  if (a === "--no-sandbox") wantSandbox = false;
-  else if (a === "--fixture") wantFixture = true;
+  if (a === "--fixture") wantFixture = true;
   else if (a === "--no-open") wantOpen = false;
   else if (a === "--url") {
     urlArg = argv[++i] ?? null;
@@ -76,13 +71,6 @@ try {
   new URL(pageBase);
 } catch {
   fail(`--url ${JSON.stringify(pageBase)} is not a URL — ${USAGE}`);
-}
-
-// The sandbox is the demo's safety sentence, so running without it is a
-// thing you have to say out loud — and the page is told (`sandboxed: false`
-// in the spawn result, D13 extra fields). Never silently unconfined.
-if (wantSandbox && process.platform !== "darwin") {
-  fail(`confinement here is sandbox-exec (macOS); got ${process.platform}. Re-run with --no-sandbox to drive an UNCONFINED agent anyway.`);
 }
 
 // ---- the shared folder
@@ -198,7 +186,7 @@ const folderHasSeenAPage = hasClientDirs(fsioDir);
 const TRANSCRIPT_KEEP = 10;
 const server = new HostServer({
   root: rootReal,
-  // The sandbox and the allow-list are the gates; the policy narrates.
+  // The allow-list is the gate; the policy narrates.
   // `origin` is advisory (D15): display is exactly its job.
   onSpawnRequest: (spec, info) => {
     log.info(`● page connected — origin: ${info.origin ?? "(none reported)"} · ${info.kind}${spec["agent"] ? ` (${String(spec["agent"])})` : ""}`);
@@ -231,7 +219,6 @@ server.registerKind(
     fsioDir,
     tmp: scratchReal,
     stateRoot,
-    sandbox: wantSandbox,
     // The page names an agent from this list or names none; either way the
     // wire never contributes a path (agents.ts). `--fixture` narrows the
     // list to one, so a page asking for "pi-acp" here is refused by the same
@@ -256,29 +243,6 @@ publishRoster();
 // The live-host refusal (#40 — e.g. a second helper on the same folder) is
 // an operator message, not a crash: no stack, just the reason.
 await server.start().catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
-
-// ---- preflight: prove the chain (sandbox-exec present + the generated
-// profile compiles) before telling the user anything is ready. A profile
-// syntax error should fail HERE, not inside the first agent session.
-if (wantSandbox) {
-  const dir = path.join(fsioDir, "profiles");
-  fs.mkdirSync(dir, { recursive: true });
-  const probePath = path.join(dir, "preflight.sb");
-  fs.writeFileSync(probePath, agentProfile({ stateDirs: [], agent: "preflight" }));
-  const cfg = { profilePath: probePath, root: rootReal, fsio: fsioDir, tmp: scratchReal };
-  const { file, args } = sandboxArgv(cfg, "/bin/sh", ["-c", "echo __FSIO_ACP_OK__"]);
-  await new Promise<void>((resolve, reject) => {
-    execFile(file, args, { cwd: rootReal, timeout: 5000 }, (err, stdout, stderr) => {
-      if (!err && stdout.includes("__FSIO_ACP_OK__")) resolve();
-      else reject(new Error(`sandbox preflight failed: ${(stderr || stdout || String(err)).trim()}`));
-    });
-  }).catch(async (e: Error) => {
-    await server.close();
-    server.cleanServiceDir();
-    fail(e.message);
-  });
-  fs.rmSync(probePath, { force: true });
-}
 
 // Re-scan on a slow timer so an agent installed *while the page is sitting
 // on the install card* shows up there without restarting anything. The scan
@@ -311,9 +275,8 @@ if (!wantFixture && offerable && !rosterNow().some((a) => a.installed)) {
      ~293 MB; no install scripts are run; nothing is put on your PATH
      ${offerable.asks ? "it asks before it edits, which is the part of this demo worth watching" : "it edits with its own hands — no permission card"}
      undo:  rm -rf ${tilde(dest)}
-     pinned on purpose: this helper's sandbox profile was measured against
-     that exact version (F30), so "latest" is the wrong thing to install —
-     and it does mean the copy ages until somebody bumps it here.
+     pinned so everyone who takes this offer gets the same build — which
+     also means the copy ages until somebody bumps it here.
 
    Or answer n and install it yourself, any way you like:  ${installLine(offerable)}
 
@@ -376,15 +339,6 @@ fsio ACP demo · serving ${rootReal}${
         `\n\n  fsio ships none of them on purpose (#100): vendoring one costs ~293 MB of
   transitive dependencies, and an agent you installed is one you can also
   inspect, update, and revoke.`
-  }
-  ${
-    wantSandbox
-      ? `the agent is confined to this folder: it writes ${folderName}/ (never .fsio),
-  one scratch dir, and its own state. It READS everything you can read and
-  the network is open — ${wantFixture ? "though the puppet uses neither" : "its brain is remote"}. The exact policy is written to
-  .fsio/profiles/<session>.sb while a session runs.`
-      : `!! --no-sandbox: the agent runs UNCONFINED — it can write anything you can.
-  The page is told (the session header says so). Use this only for debugging.`
   }
 
   in the page: pick this folder — ${folderName} — and allow it twice. Those

@@ -17,7 +17,7 @@
 //             the page and because the tab's "×" is a click people make by
 //             habit. That is what a tab means everywhere else, and #120's
 //             third decision is the argument for keeping it: N tabs here is
-//             N model bills and N sandboxed child processes, where the
+//             N model bills and N child processes, where the
 //             terminal demo's N tabs is N ptys. Agents are not shells.
 //   leave   — the deliberate walk-away (D18). The agent keeps running, the
 //             record is KEPT, and the conversation goes back to being one
@@ -174,10 +174,8 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
     armFence(c, s);
     facts = (await s.request<Record<string, unknown>>("acp/info")).result;
   } catch (e) {
-    // A refusal from the host — no agent on PATH, an unknown name, a
-    // sandbox that could not be applied (it fails, it does not quietly
-    // run unconfined). The message is written to be read by a
-    // human, so show it as one.
+    // A refusal from the host — no agent on PATH, an unknown name. The
+    // message is written to be read by a human, so show it as one.
     const msg = e instanceof RpcError ? e.message : e instanceof Error ? e.message : String(e);
     notice.set({ msg: "the helper refused to start an agent", hint: msg });
     io.push({ kind: "error", text: msg });
@@ -187,8 +185,8 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
   }
 
   const cwd = readFacts(c, facts);
-  reporter.event("agent-started", { session: c.id, agent: facts["agent"], sandboxed: facts["sandboxed"] });
-  log(`agent ${String(facts["agent"])} · ${String(facts["confinement"])}`);
+  reporter.event("agent-started", { session: c.id, agent: facts["agent"] });
+  log(`agent ${String(facts["agent"])} in ${String(facts["cwd"])}`);
   // Remembered on a start that worked, not on the click: an agent that
   // refuses to spawn is not the one to re-offer next visit.
   void rememberAgent(String(facts["agent"] ?? name ?? "")).catch(() => {});
@@ -226,14 +224,7 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // The measured shape: `initialize` passes and `session/new` fails, with a
-    // message that names a stream rather than a policy. Show the agent's
-    // own words AND what the page knows about the wall it is behind.
-    const conf = c.facts.get();
-    io.push({
-      kind: "error",
-      text: `the agent could not start a session: ${msg}` + (conf?.sandboxed ? `\n\nit is confined — ${conf.confinement}` : ""),
-    });
+    io.push({ kind: "error", text: `the agent could not start a session: ${msg}` });
     c.turn.set("gone");
     reporter.event("acp-start-failed", { session: c.id, error: msg });
   }
@@ -500,9 +491,6 @@ function readFacts(c: Conv, facts: Record<string, unknown>): string {
   c.facts.set({
     agent,
     title: String(facts["title"] ?? ""),
-    sandboxed: !!facts["sandboxed"],
-    confinement: String(facts["confinement"] ?? ""),
-    profile: (facts["profile"] as string | null) ?? null,
     state: facts["state"] as { mode: string; dirs: string[]; why: string },
     cwd,
   });

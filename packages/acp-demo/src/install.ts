@@ -27,20 +27,31 @@
 //     293 MB, ~3 s either way; 260 MB of it is the bundled Claude Code CLI),
 //     and the adapter answers `initialize` over ACP the same in both. There
 //     is no native build step to lose — no libvips, no node-gyp — so the
-//     flag is free, and the one child this demo runs unconfined does not
-//     also execute vendor postinstall code as the user.
-//   - **The version is the measured one.** `agents.ts` builds a sandbox
-//     profile out of facts about one specific release (F30). Installing
-//     whatever npm calls latest that day would make the profile a set of
-//     claims about software nobody guaranteed the user has, and the drift
-//     would surface as a sandbox bug rather than as version skew.
+//     flag is free, and an install triggered by this helper does not also
+//     execute vendor postinstall code as the user.
+//   - **The version is pinned.** Everyone who takes the offer gets the same
+//     build, so `asks` stays a measured claim about a known release and a
+//     bug report names a version. This used to be a correctness requirement
+//     — the sandbox profile was measured against one release — and that
+//     argument went with the sandbox (#145); what is left is weaker and
+//     still worth having. See `agents.ts`.
 //
 // The page never triggers any of this, and that is deliberate rather than
-// incidental. Taking a spawn from the wire is safe because the allow-list
-// bounds argv *and* the sandbox bounds the child; an install is neither.
-// D12's page-asks-host-decides shape is the tempting move here and it is
-// explicitly declined: this runs from a terminal, on an answer typed into
-// that terminal, or it does not run.
+// incidental — though the reason is thinner than it was, and saying so is
+// the point of this paragraph. Taking a spawn from the wire used to rest on
+// two bounds: the allow-list fixes argv, *and* the sandbox fixed what the
+// child could do once running. The sandbox is gone (#145), so the
+// allow-list is now the only one. It is still a real bound — the page sends
+// a name, the name selects a fixed `{bin, args}` from this file, and
+// nothing a page says becomes argv — but it bounds *which* program starts,
+// not what that program then does.
+//
+// An install has neither bound: it fetches and runs arbitrary code chosen
+// by whoever named the package. So the gap between "a page may ask for a
+// spawn" and "a page may not ask for an install" is wider now, not
+// narrower, and D12's page-asks-host-decides shape stays explicitly
+// declined here: this runs from a terminal, on an answer typed into that
+// terminal, or it does not run.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

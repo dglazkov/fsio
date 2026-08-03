@@ -82,10 +82,6 @@ export function checkGates(): void {
   }
 }
 
-/** The helper is macOS-only while confinement is sandbox-exec; the wizard
- *  says so louder when the page isn't on a Mac. */
-export const onMac = navigator.platform.startsWith("Mac");
-
 // ---------------------------------------------------- persisted folder (#58)
 
 /** On load: a remembered folder skips the wizard. `granted` reconnects with

@@ -11,19 +11,11 @@
 // different things and may live in different places, so the posture is a
 // per-agent fact, not a policy this helper can guess:
 //
-//   - "place"  — the agent honors an env var pointing at its state dir, so
-//     the profile needs no carve at all (placement, not carve-out).
-//   - "carve"  — the agent's state dir is also where its credential lives,
-//     so placing it into an empty slot would log the child out
-//     (MEASUREMENTS.md, second instance). The profile opens exactly those
-//     dirs.
-//
-// Measured for pi-acp, 2026-08-01, under this demo's profile: with no carve,
-// `initialize` succeeds and **`session/new` fails** with a JSON-RPC -32603
-// whose message is "Cannot call write after a stream was destroyed" — a
-// denial that is legible — the agent can relay it — and wrong about its
-// cause. With
-// `~/.pi` carved, the same run completes.
+//   - "place" — the agent honors an env var pointing at its state dir, so
+//     the helper hands it one.
+//   - "own"   — the agent's state dir is also where its credential lives, so
+//     placing it into an empty slot would log the child out
+//     (MEASUREMENTS.md, second instance). Leave it where it is.
 //
 // Nothing here is vendored, and that has not changed
 // ([#100](https://github.com/dglazkov/fsio/issues/100)): shipping an adapter
@@ -60,10 +52,16 @@ export type StatePosture =
       why: string;
     }
   | {
-      mode: "carve";
-      /** $HOME-relative dirs the profile makes writable. Nothing outside
-       *  $HOME is expressible here on purpose. */
-      homeDirs: string[];
+      /** Leave the agent's state where the agent already puts it.
+       *
+       *  Named for what it does rather than for what it used to require: it
+       *  was "carve", because a Seatbelt profile had to open a hole for
+       *  those dirs. The demo no longer confines anything, and a mode named
+       *  after a mechanism that is gone is a false lead for whoever reads it
+       *  next. What survives is the reason the posture exists at all, which
+       *  never was about the wall: placing an agent's state can move its
+       *  *identity* with it and log it out (MEASUREMENTS.md). */
+      mode: "own";
       why: string;
     };
 
@@ -78,18 +76,18 @@ export interface AgentEntry {
   title: string;
   /** Where this agent comes from, pinned.
    *
-   *  The pin is not caution, it is a correctness requirement: this file
-   *  builds `claude-agent-acp`'s sandbox profile out of measurements against
-   *  one specific release — the `~/.claude` carve, the
-   *  `/tmp/claude-{uid}/{cwdSlug}` scratch dir, the random-hex `-cwd` marker
-   *  regex (F30). Installing whatever npm calls latest would make the
-   *  profile a set of claims about software nobody guaranteed the user has,
-   *  and the skew would present as a sandbox bug.
+   *  The reason changed when the sandbox went. It used to be a correctness
+   *  requirement: the profile was built out of measurements against one
+   *  release (F30), so "latest" would have made the wall a set of claims
+   *  about software nobody guaranteed the user had. There is no profile now,
+   *  and that argument is spent — recorded here rather than quietly left
+   *  standing, because a stale reason reads exactly like a live one.
    *
-   *  It cuts both ways and the banner says so: a pinned copy will eventually
-   *  be older than what npm would hand you today, with nothing here to
-   *  notice. The version is printed at install so the number is at least
-   *  never a secret.
+   *  What is left is reproducibility, which is weaker and still worth it:
+   *  everyone who takes the helper's offer gets the same agent, `asks` stays
+   *  a measured claim about a known build rather than about whatever shipped
+   *  this morning, and a bug report names a version. The cost is that a
+   *  pinned copy ages until somebody bumps it, with nothing here to notice.
    *
    *  Absent for entries that are not npm packages — the puppet is built with
    *  this repo. */
@@ -113,34 +111,6 @@ export interface AgentEntry {
   state: StatePosture;
   /** extra env this agent needs beyond the measured floor (env.ts). */
   env?: Record<string, string>;
-  /** Absolute dirs **outside $HOME** the agent must be able to write, beyond
-   *  its own state. `StatePosture` deliberately cannot express these — it is
-   *  $HOME-relative on purpose — and the reason this exists anyway is F30:
-   *  the Claude adapter's Bash tool creates a per-workspace scratch dir at
-   *  `/tmp/claude-<uid>/<cwd-with-slashes-as-dashes>/` and **does not read
-   *  TMPDIR**, so a profile that denies `/private/tmp` breaks every Bash
-   *  call at setup — which also takes out Glob and Grep.
-   *
-   *  Templates, resolved by `scratchDirs()`: `{uid}` and `{cwdSlug}`. Note
-   *  the slug is required: `/tmp/claude-<uid>` holds one entry per workspace
-   *  on the machine, so granting the root would let a confined agent write
-   *  into unrelated sessions' scratch state.
-   *
-   *  Measured, never guessed. An entry here is a hole in the wall and has to
-   *  earn it by naming the run that proved it necessary. */
-  scratch?: string[];
-  /** SBPL regexes for individual scratch *files* whose names the agent picks
-   *  at random, so no subpath template can name them (F30). Static, ours,
-   *  never from the wire — a page contributes nothing here, same rule as
-   *  `bin` and `args`.
-   *
-   *  Measured for claude-agent-acp: every Bash call writes a cwd marker at
-   *  `/tmp/claude-<random hex>-cwd`, directly in /tmp rather than under the
-   *  workspace dir. Denying it does not stop the command — stdout arrives
-   *  intact — but zsh exits 1, so the agent is told every command it ran
-   *  failed. A tool that lies about its own success is worse than one that
-   *  is blocked outright — a denial that names the wrong cause. */
-  scratchPatterns?: string[];
   /** The entry the helper offers to install when this machine has none
    *  (#124). At most one; the reason is on the entry that sets it. */
   recommended?: boolean;
@@ -159,8 +129,8 @@ export const AGENTS: AgentEntry[] = [
     bin: "pi-acp",
     args: [],
     title: "pi coding agent (ACP adapter)",
-    // 0.0.32: the version MEASUREMENTS.md measured the `~/.pi` carve
-    // against, for the same reason the entry below pins F30's. Not latest.
+    // 0.0.32: the version MEASUREMENTS.md measured, for the same reason the
+    // entry below pins F30's. Not latest.
     pkg: { name: "pi-acp", version: "0.0.32" },
     // The demo's default subject: one small package, and model-agnostic —
     // which keeps the page an *ACP* client rather than a client of any one
@@ -171,8 +141,7 @@ export const AGENTS: AgentEntry[] = [
     // #100: 0 `session/request_permission`, 0 `fs/*` across a driven session.
     asks: false,
     state: {
-      mode: "carve",
-      homeDirs: [".pi"],
+      mode: "own",
       why: "pi keeps its credential (auth.json) beside its session history in ~/.pi; placing the state would place the identity too, and the agent would come up logged out (MEASUREMENTS.md).",
     },
   },
@@ -230,28 +199,13 @@ export const AGENTS: AgentEntry[] = [
     // lock it fits: `session/prompt` fails "Authentication required".
     //
     // That is MEASUREMENTS.md's headline reaching its conclusion. Two agents
-    // out of two now keep identity and state inseparable (pi in subject 2,
-    // claude here),
-    // so a placed host-owned slot is the nicer design for a kind of agent
-    // neither of ours is. Carve, and say why.
-    //
-    // Note the carve does NOT cover `~/.claude.json` — that is a file beside
-    // the dir, not in it. Auth works anyway because it only needs to *read*
-    // it, and reads were never bounded. The write wall is exactly what makes
-    // this posture viable; the read wall priced in @fsio/confine's
-    // MEASUREMENTS.md would break it.
+    // out of two keep identity and state inseparable (pi in subject 2, claude
+    // here), so a placed host-owned slot is the nicer design for a kind of
+    // agent neither of ours is. Leave both alone, and say why.
     state: {
-      mode: "carve",
-      homeDirs: [".claude"],
-      why: "the CLI's token is in the login Keychain but its account binding is in ~/.claude.json, so a placed config dir authenticates as nobody (F30); ~/.claude is carved for its state, and the account file is only ever read.",
+      mode: "own",
+      why: "the CLI's token is in the login Keychain but its account binding is in ~/.claude.json, so a placed config dir authenticates as nobody (F30); its state stays in ~/.claude where it puts it.",
     },
-    // F30: its Bash tool mkdirs this and ignores TMPDIR. One workspace's
-    // slug, not the `/tmp/claude-<uid>` root — that root holds an entry per
-    // workspace on the machine.
-    scratch: ["/tmp/claude-{uid}/{cwdSlug}"],
-    // Per-Bash-call cwd marker, random name, straight in /tmp (F30). Scoped
-    // to that exact filename shape: this is a file rule, not a subtree.
-    scratchPatterns: ["^/private/tmp/claude-[0-9A-Fa-f]+-cwd$"],
   },
 ];
 
@@ -349,39 +303,4 @@ function isExec(p: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** The $HOME-relative dirs a "carve" posture needs, realpath'd (Seatbelt
- *  matches kernel-real paths). Dirs that do not exist are dropped: an agent
- *  that has never run has nothing to protect, and a `-D` param pointing at
- *  a missing path is a profile that fails to compile. */
-/** Resolve an entry's `scratch` templates against this run's uid and shared
- *  folder. Unlike `carveDirs`, missing dirs are **created** rather than
- *  dropped: the agent expects to `mkdir` inside them, and a `subpath` rule
- *  naming a path that does not exist yet would let it create the leaf but
- *  not reach it. Realpath'd last, because Seatbelt matches kernel-real paths
- *  and `/tmp` is a symlink to `/private/tmp` on macOS. */
-export function scratchDirs(entry: AgentEntry, cwd: string, uid: number = process.getuid?.() ?? 0): string[] {
-  const out: string[] = [];
-  for (const tpl of entry.scratch ?? []) {
-    const abs = tpl.replaceAll("{uid}", String(uid)).replaceAll("{cwdSlug}", cwd.replaceAll("/", "-"));
-    if (!path.isAbsolute(abs)) continue; // a template that resolved to nonsense opens nothing
-    try {
-      fs.mkdirSync(abs, { recursive: true, mode: 0o700 });
-      out.push(fs.realpathSync(abs));
-    } catch {}
-  }
-  return out;
-}
-
-export function carveDirs(entry: AgentEntry, home: string = os.homedir()): string[] {
-  if (entry.state.mode !== "carve") return [];
-  const out: string[] = [];
-  for (const rel of entry.state.homeDirs) {
-    const abs = path.join(home, rel);
-    try {
-      out.push(fs.realpathSync(abs));
-    } catch {}
-  }
-  return out;
 }
