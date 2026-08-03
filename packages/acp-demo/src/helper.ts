@@ -420,6 +420,11 @@ if (!wantOpen) {
   // A restarted helper whose page never went away. Opening here is how you
   // end up with five tabs after five Ctrl-Cs, and the page has already
   // reconnected by itself — there is nothing for a new tab to do.
+  //
+  // Best-effort, not a guarantee: a tab hidden longer than five minutes has
+  // its timers throttled to about 1/minute (F16) and cannot answer inside
+  // any window worth waiting through, so it gets a second tab. open.ts has
+  // the full note.
   console.log("a page is already open on this folder — not opening another tab.\n");
 } else {
   const res = await openInChromium(pageUrl);
