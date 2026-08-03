@@ -38,21 +38,30 @@ import { anchorsAlign } from "../src/resume.js";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
 import { log, reporter } from "./reporter";
-import { past, pastEntries, pushPast, viewing, viewingHalf, type ConvIO } from "./state";
+import { activate, addConv } from "./conversations";
+import { convs, newConv, past, type Conv, type ConvIO, type Entry } from "./state";
 import { pastRecord, prunePast } from "./store";
 
 /** The channel a document gets (#120's `ConvIO`, #119's rules).
  *
- *  Every method here is either "put it in the other list" or a no-op, and
- *  that IS the read-only guarantee, stated once in the plumbing instead of
- *  re-checked in every handler. There is no turn to set: nobody is waiting.
- *  There is no record to update: the record this conversation had was
- *  demoted when it ended, and writing to it now would be editing history.
- *  There is nothing to count as waiting: the agent that asked exited before
- *  this page loaded. */
-const documentIO = (): ConvIO => ({
-  push: pushPast,
-  touch: () => pastEntries.set([...pastEntries.get()]),
+ *  Every method here is either "put it in this conversation's list" or a
+ *  no-op, and the no-ops ARE the read-only guarantee, stated once in the
+ *  plumbing instead of re-checked in every handler. There is no turn to set:
+ *  nobody is waiting. There is no record to update: the record this
+ *  conversation had was demoted when it ended, and writing to it now would be
+ *  editing history. There is nothing to count as waiting: the agent that
+ *  asked exited before this page loaded.
+ *
+ *  This is what a document being an ordinary conversation costs (#140), and
+ *  it is the whole bill: the chip, the URL and the reload come for free from
+ *  being a `Conv`, and what had to be said out loud is the part that is
+ *  genuinely different, which is that none of it may act. */
+const documentIO = (c: Conv): ConvIO => ({
+  push: (e: Entry) => {
+    c.entries.set([...c.entries.get(), e]);
+    return e;
+  },
+  touch: () => c.entries.set([...c.entries.get()]),
   turn: () => "gone",
   setTurn: () => {},
   setQueued: () => {},
@@ -126,7 +135,8 @@ export async function refreshPast(root: FileSystemDirectoryHandle): Promise<void
   if (list.length) log(`${list.length} past conversation(s) kept in this folder`);
 }
 
-/** Replay one, into the transcript pane, read-only.
+/** Open one as a conversation (#140): a chip in the strip, holding a
+ *  read-only replay of what the folder kept.
  *
  *  The AgentSession here is the real one — same handlers, same rendering —
  *  constructed in history mode over a connection with no session behind it.
@@ -134,14 +144,18 @@ export async function refreshPast(root: FileSystemDirectoryHandle): Promise<void
  *  renderer gains a case, this gains it too, and there is no second
  *  interpretation of the same bytes to drift. */
 export async function openPast(root: FileSystemDirectoryHandle, p: PastConversation): Promise<void> {
-  viewing.set(p);
-  pastEntries.set([]);
+  // Already open: a second chip for one conversation would be two names for
+  // one thing, which is the confusion the strip exists to prevent.
+  if (convs.get().some((c) => c.id === p.id)) return void activate(p.id);
   // The half the folder never had, if this browser is the one that typed it
   // (#123). Read before the first frame is fed: the weave runs frame by
   // frame, so a record that arrived late would land its turns at the end.
   const mine = await pastRecord(p.id);
-  viewingHalf.set(mine ? { prompts: mine.prompts.length, placed: anchorsAlign(mine, p.gen), adopted: mine.adopted } : null);
+  const c = newConv(p.id, p, mine ? { prompts: mine.prompts.length, placed: anchorsAlign(mine, p.gen), adopted: mine.adopted } : null);
+  c.turn.set("gone");
+  c.title.set(p.agent || p.kind || "session");
   reporter.event("history-open", { id: p.id, agent: p.agent, bytes: p.bytes, logs: p.logs.length, prompts: mine?.prompts.length ?? null });
+  const io = documentIO(c);
   let session: AgentSession | null = null;
   const conn = new AcpConnection(null, {
     onUnhandled: (method) => log(`past conversation: nothing renders ${method}`),
@@ -152,7 +166,7 @@ export async function openPast(root: FileSystemDirectoryHandle, p: PastConversat
   });
   // cwd "" — every path in here is history, and the containment check it
   // would feed is never reached: history mode answers no `fs/*` call.
-  session = new AgentSession(conn, root, "", documentIO(), null, { past: mine });
+  session = new AgentSession(conn, root, "", io, null, { past: mine });
 
   let frames = 0;
   let unread = 0;
@@ -181,50 +195,38 @@ export async function openPast(root: FileSystemDirectoryHandle, p: PastConversat
   // measured against a stream that has since rotated, every turn whose
   // anchor overshot this one. Misplaced beats missing.
   session.flushPrompts();
-  if (unread) pushPast({ kind: "error", text: `${unread} segment(s) of this transcript could not be read.` });
-  if (!frames) pushPast({ kind: "note", text: "this transcript holds no agent messages — the session ended before the agent said anything." });
-  // Two seams, two separate facts, both said out loud rather than left to
-  // look deliberate: what the folder no longer holds (#57, D26 rule 1), and
-  // what the page's own anchors can no longer be trusted to place (#123).
-  const head: { kind: "note"; text: string }[] = [];
+  if (unread) io.push({ kind: "error", text: `${unread} segment(s) of this transcript could not be read.` });
+  if (!frames) io.push({ kind: "note", text: "this transcript holds no agent messages — the session ended before the agent said anything." });
+  // The seams: where the document is missing something, said at the top,
+  // where the missing part would have been. Each one is a fact about what is
+  // NOT here — what the folder no longer holds (#57, D26 rule 1), and where
+  // this browser's record of the human half begins (#117).
+  //
+  // There used to be a third, saying the turns might not be in their original
+  // places, and a banner above all of them repeating every one at length. The
+  // banner owns "is your side of this here" now, in one sentence, including
+  // the misplacement clause; a seam is for the thing the banner cannot say,
+  // which is *where*.
+  const head: Entry[] = [];
   if (isTail(p))
     head.push({
       kind: "note",
-      text: "the earlier part of this conversation had already rotated out of the retained stream when it was kept — what follows is the tail.",
+      text: "the earlier part of this conversation is no longer in the folder — what follows is the tail.",
     });
-  if (mine?.prompts.length && !anchorsAlign(mine, p.gen))
-    head.push({
-      kind: "note",
-      text: "your own turns are from this browser's record of the conversation, and the stream they were anchored against has rotated since — they are all here, but not necessarily in the right places.",
-    });
-  // A third seam (#117): this browser joined the conversation partway
-  // through, so its record of the human half starts where the page did. The
-  // turns before that point are not late or misplaced — they were never
-  // here, and no browser is holding them.
   if (mine?.adopted)
     head.push({
       kind: "note",
-      text: "this page joined this conversation while it was already running, so what it kept of your side starts from that moment. Anything typed into it before then rode the uplink and was recorded in a browser that is not this one.",
+      text: "this page joined the conversation here — what was typed before this point is not in any record it has.",
     });
-  if (head.length) pastEntries.set([...head, ...pastEntries.get()]);
+  if (head.length) c.entries.set([...head, ...c.entries.get()]);
+  addConv(c);
   reporter.event("history-rendered", {
     id: p.id,
     frames,
-    entries: pastEntries.get().length,
+    entries: c.entries.get().length,
     unreadSegments: unread,
     prompts: mine?.prompts.length ?? 0,
     placed: mine ? anchorsAlign(mine, p.gen) : null,
   });
-  log(`past conversation ${p.id}: ${frames} frames → ${pastEntries.get().length} entries`);
-}
-
-/** Leave the read-only view. The live conversation was never touched — it
- *  is a separate list, and an agent that kept working while it was being
- *  read back has been appending to it the whole time. */
-export function closePast(): void {
-  if (!viewing.get()) return;
-  reporter.event("history-close", { id: viewing.get()?.id ?? null });
-  viewing.set(null);
-  viewingHalf.set(null);
-  pastEntries.set([]);
+  log(`past conversation ${p.id}: ${frames} frames → ${c.entries.get().length} entries`);
 }

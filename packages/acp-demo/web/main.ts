@@ -7,8 +7,8 @@
 // for the cooperative verification loop (TESTING.md: the page reports, the
 // native side reads verdicts).
 import "./components/top-bar";
-import "./components/tab-bar";
 import "./components/chat";
+import "./components/details";
 import "./components/workspace-pane";
 import "./components/wizard";
 import { checkGates, revisit } from "./connection";
