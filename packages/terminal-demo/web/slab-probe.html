@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>slab probe</title>
+<style>
+  body { display: flex; flex-direction: column; }
+  #pane { flex: 1; min-height: 0; position: relative; }
+  .area { position: absolute; inset: 0.6rem; }
+  .term-host {
+    display: block; width: 100%; height: 100%;
+    background: var(--fsio-slab);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: var(--fsio-lift-high);
+  }
+  .term-host .xterm { padding: 0.65rem 0.8rem; }
+  .bar { position: absolute; top: 2rem; left: 3rem; z-index: 5; }
+</style>
+</head>
+<body>
+  <div id="pane">
+    <div class="area"><div class="term-host" id="host"></div></div>
+    <!-- A strip floating ON the slab: the worst case for a popover, because
+         the slab is dark in BOTH stains and a light-mode menu has to hold its
+         own against it. -->
+    <div class="bar"><fsio-tab-strip id="strip"></fsio-tab-strip></div>
+  </div>
+  <script type="module" src="/slab-probe.ts"></script>
+</body>
+</html>

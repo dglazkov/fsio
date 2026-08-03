@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Pewter Curio — theme preview</title>
+  <style>
+    /* Preview-only layout. Every COLOUR on this page comes from the theme's
+       own tokens or from a real @fsio/ui rule set adopted in theme.ts —
+       nothing here invents a value, or the preview would be lying. */
+    main { max-width: 62rem; margin: 0 auto; padding: 2.5rem 1.5rem 6rem; }
+    section { margin: 0 0 2.6rem; }
+    h1 {
+      font-family: var(--fsio-title); font-weight: 400; font-size: 3.2rem;
+      margin: 0; line-height: 1.05; color: var(--fsio-fg-bright);
+    }
+    h1 .slash { color: var(--fsio-accent); }
+    h2 {
+      font-family: var(--fsio-title); font-weight: 400; font-size: 1.6rem;
+      margin: 0 0 0.15rem; color: var(--fsio-fg-bright);
+    }
+    .sub { color: var(--fsio-dim); margin: 0.3rem 0 1.1rem; font-size: 0.92rem; max-width: 42rem; }
+    .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 2.6rem; }
+
+    /* Theme switch */
+    .switch { display: flex; gap: 0.2rem; padding: 0.2rem; border-radius: 9px; flex: none; }
+    .switch button {
+      box-shadow: none; background: none; border: 1px solid transparent;
+      padding: 0.3rem 0.55rem; border-radius: 7px; color: var(--fsio-dimmer);
+      display: flex; align-items: center; gap: 0.3rem; font-size: 0.82rem;
+    }
+    .switch button[aria-pressed="true"] {
+      background: var(--fsio-raised); border-color: var(--fsio-line);
+      color: var(--fsio-fg-bright);
+    }
+
+    /* Swatches */
+    .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: 0.6rem; }
+    .sw { border-radius: 8px; overflow: hidden; border: 1px solid var(--fsio-line); }
+    .sw .chip { height: 3.1rem; }
+    .sw .label { padding: 0.35rem 0.5rem; font-size: 0.72rem; color: var(--fsio-dim); font-family: var(--fsio-mono); }
+    .sw.line .chip { background: var(--fsio-bg); position: relative; }
+    .sw.line .chip::after { content: ""; position: absolute; inset: 50% 12% auto; border-top: 2px solid; }
+
+    /* Specimen */
+    .specimen { display: grid; gap: 0.9rem; }
+    .specimen .title-face { font-family: var(--fsio-title); font-size: 2.4rem; color: var(--fsio-fg-bright); line-height: 1.15; }
+    .specimen .mono-face { font-family: var(--fsio-mono); font-size: 0.95rem; color: var(--fsio-fg); }
+    .specimen .sans-face { font-family: var(--fsio-sans); font-size: 0.95rem; color: var(--fsio-fg); }
+    .specimen .what { color: var(--fsio-dimmer); font-size: 0.76rem; font-family: var(--fsio-mono); }
+
+    /* Icon shelf */
+    .shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 0.4rem; }
+    .shelf .cell {
+      display: flex; flex-direction: column; align-items: center; gap: 0.35rem;
+      padding: 0.8rem 0.4rem; border-radius: 8px; border: 1px solid var(--fsio-line);
+      color: var(--fsio-dim);
+    }
+    .shelf .cell .icon { font-size: 1.6rem; color: var(--fsio-fg); }
+    .shelf .cell .n { font-size: 0.68rem; font-family: var(--fsio-mono); color: var(--fsio-dimmer); }
+
+    /* Glass demo */
+    .floats { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+    .floats .glass { border-radius: 12px; padding: 1rem 1.1rem; }
+    .floats .glass h3 { margin: 0 0 0.3rem; font-family: var(--fsio-title); font-weight: 400; font-size: 1.15rem; color: var(--fsio-fg-bright); }
+    .floats .glass p { margin: 0; font-size: 0.85rem; color: var(--fsio-dim); }
+
+    /* A bar, as both pages draw one */
+    .bar {
+      display: flex; align-items: center; gap: 0.8rem;
+      padding: 0.5rem 0.9rem; border-radius: 12px;
+    }
+    .bar .where { display: flex; align-items: center; gap: 0.4rem; color: var(--fsio-dim); font-size: 0.83rem; }
+    .bar .where .icon { color: var(--fsio-dimmer); }
+    .bar .where b { color: var(--fsio-fg); font-weight: 500; }
+
+    /* Chat surfaces — class names and rules mirrored from chat.ts, retinted */
+    .chat { border-radius: 12px; padding: 1rem 1.1rem; display: grid; gap: 0.85rem; }
+    .user {
+      justify-self: end; max-width: 32rem; background: var(--fsio-control);
+      border: 1px solid var(--fsio-line); border-radius: 12px 12px 3px 12px;
+      padding: 0.5rem 0.8rem; color: var(--fsio-fg-bright); box-shadow: var(--fsio-lift);
+    }
+    .md { max-width: 44rem; color: var(--fsio-fg); line-height: 1.55; }
+    .md p { margin: 0 0 0.5rem; }
+    .md strong { color: var(--fsio-fg-bright); }
+    .md a { color: var(--fsio-accent); }
+    .md code { font-family: var(--fsio-mono); background: var(--fsio-bg); border-radius: 4px; padding: 0.1em 0.32em; font-size: 0.88em; }
+    .md pre {
+      margin: 0.55rem 0; background: var(--fsio-bg); border: 1px solid var(--fsio-line);
+      border-radius: 8px; padding: 0.7rem 0.85rem; overflow: auto;
+      font-family: var(--fsio-mono); font-size: 0.82rem; color: var(--fsio-dim);
+    }
+    .thought { color: var(--fsio-dimmer); font-size: 0.9rem; font-style: italic; }
+    .tool {
+      border-left: 2px solid var(--fsio-line-strong); padding: 0.1rem 0 0.1rem 0.7rem;
+      font-size: 0.87rem; color: var(--fsio-dim);
+    }
+    .tool .title { color: var(--fsio-fg); display: flex; align-items: center; gap: 0.35rem; }
+    .tool .state { font-size: 0.78rem; color: var(--fsio-good); }
+    .working { display: flex; align-items: center; gap: 0.5rem; color: var(--fsio-dimmer); font-size: 0.9rem; }
+    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--fsio-cyan); }
+    .perm {
+      border: 1px solid var(--fsio-accent); border-radius: 12px; padding: 0.75rem 0.95rem;
+      background: var(--fsio-raised); max-width: 44rem; box-shadow: var(--fsio-lift);
+    }
+    .perm .who { font-size: 0.75rem; color: var(--fsio-cyan); text-transform: uppercase; letter-spacing: 0.06em; }
+    .perm .title { color: var(--fsio-fg-bright); font-weight: 600; margin: 0.2rem 0; }
+    .perm .where { font-size: 0.82rem; color: var(--fsio-dim); font-family: var(--fsio-mono); }
+    .perm .wall { font-size: 0.78rem; color: var(--fsio-dimmer); margin-top: 0.5rem; }
+    .perm .row { margin-top: 0.7rem; }
+    .composer { display: flex; gap: 0.6rem; align-items: flex-end; margin-top: 0.3rem; }
+    .composer textarea {
+      flex: 1; resize: none; background: var(--fsio-raised); color: var(--fsio-fg);
+      font: inherit; font-family: var(--fsio-sans);
+      border: 1px solid var(--fsio-line-strong); border-radius: 9px;
+      padding: 0.55rem 0.7rem; min-height: 2.7rem;
+    }
+    .composer textarea:focus { outline: none; border-color: var(--fsio-accent); }
+
+    /* The slab */
+    .slab {
+      background: var(--fsio-slab); color: var(--fsio-slab-fg);
+      font-family: var(--fsio-mono); font-size: 0.82rem; line-height: 1.6;
+      border-radius: 12px; padding: 0.9rem 1.1rem; overflow: auto; white-space: pre;
+      border: 1px solid var(--fsio-line-strong); box-shadow: var(--fsio-lift-high);
+    }
+    .slab .p { color: #8fbfc7; }
+    .slab .d { color: #93b899; }
+    .slab .w { color: #dcba76; }
+    .slab .c { color: #7e878f; }
+
+    .stack { display: grid; gap: 0.5rem; }
+    .banner {
+      border-radius: 9px; padding: 0.5rem 0.8rem; font-size: 0.87rem;
+      background: var(--fsio-bad-wash); border: 1px solid var(--fsio-bad-line); color: var(--fsio-bad-bright);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="head">
+      <div>
+        <h1>fsio <span class="slash">/</span> Pewter Curio</h1>
+        <p class="sub">
+          A pale ash cabinet. Glass panels resting a millimetre off the wood,
+          everything drawn in pewter, and a terminal that stays a dark slab in
+          both stains. Every colour below is a token; switch the stain and
+          watch the same table produce the other theme.
+        </p>
+      </div>
+      <div class="switch glass" role="group" aria-label="stain">
+        <button data-theme-set="light" aria-pressed="false"><span class="icon sm">light_mode</span>Light</button>
+        <button data-theme-set="dark" aria-pressed="false"><span class="icon sm">dark_mode</span>Dark</button>
+        <button data-theme-set="system" aria-pressed="false"><span class="icon sm">contrast</span>System</button>
+      </div>
+    </div>
+
+    <section>
+      <h2>The bar</h2>
+      <p class="sub">Real <code>&lt;fsio-tab-strip&gt;</code>: chips, dots, a badge, the "⋯" menu and the close confirm. Unchanged from the merge — it just reads the new tokens.</p>
+      <div class="bar glass">
+        <span class="where"><span class="icon sm">folder_open</span><b>myproject</b></span>
+        <fsio-tab-strip id="strip"></fsio-tab-strip>
+      </div>
+    </section>
+
+    <section>
+      <h2>Surfaces</h2>
+      <p class="sub">Two elevations. Both are translucent and blurred; what separates them is the throw of the shadow, never the fill.</p>
+      <div class="floats">
+        <div class="glass"><h3>Resting</h3><p>A panel in the layout. One-pixel contact shadow, a lit top edge, the grain still legible through it.</p></div>
+        <div class="glass high"><h3>Lifted</h3><p>A popover or a dialog. Same glass, longer throw — it left the surface, but not by much.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Palette</h2>
+      <p class="sub">One <code>light-dark()</code> table. The names say the job, never the colour.</p>
+      <div class="swatches" id="swatches"></div>
+    </section>
+
+    <section>
+      <h2>Type</h2>
+      <div class="specimen">
+        <div><div class="title-face">The URL travels; the data stays</div><div class="what">Instrument Serif · titles and wordmarks only</div></div>
+        <div><div class="sans-face">A conversation is a child process and a model bill. Closing one asks first.</div><div class="what">system-ui · body</div></div>
+        <div><div class="mono-face">npx @fsio/acp-demo ~/myproject --agent claude</div><div class="what">JetBrains Mono · code, paths, terminal</div></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Icons</h2>
+      <p class="sub">Material Symbols Outlined, <code>wght 300</code> — the same hairline weight as every border on the page.</p>
+      <div class="shelf" id="shelf"></div>
+    </section>
+
+    <section>
+      <h2>Controls</h2>
+      <p class="sub">The real <code>controls</code> and <code>statusLines</code> rule sets, adopted straight out of <code>tokens.ts</code>.</p>
+      <div class="row">
+        <button class="primary">Choose folder</button>
+        <button>Cancel</button>
+        <button class="danger">End conversation</button>
+        <button class="ghost">not now</button>
+        <button class="small">small</button>
+      </div>
+      <div class="stack" style="margin-top:1.2rem">
+        <div class="status ok">Connected to <code>myproject</code><span class="hint">3 files watched, 1 shell open</span></div>
+        <div class="status wait">Waiting for the helper<span class="hint">run the command above in a terminal</span></div>
+        <div class="status bad">The folder handle was revoked<span class="hint">pick it again to reconnect</span></div>
+      </div>
+      <div class="banner" style="margin-top:1rem">The agent exited before answering. Its transcript is still in the folder.</div>
+    </section>
+
+    <section>
+      <h2>Sessions offered</h2>
+      <p class="sub">Real <code>&lt;fsio-session-row&gt;</code> and <code>&lt;fsio-cmd&gt;</code>.</p>
+      <div class="glass" style="border-radius:12px;padding:0.9rem 1.1rem">
+        <fsio-cmd command="npx @fsio/acp-demo ~/myproject --agent claude"></fsio-cmd>
+        <fsio-session-row id="row1"></fsio-session-row>
+        <fsio-session-row id="row2"></fsio-session-row>
+      </div>
+    </section>
+
+    <section>
+      <h2>The conversation</h2>
+      <p class="sub">The surfaces in <code>chat.ts</code> — the one file the extraction did not reach. Retinted here to show where it lands.</p>
+      <div class="chat glass">
+        <div class="user">rename every <code>fooBar</code> in <code>src/</code> to <code>foo_bar</code>, and leave the tests alone</div>
+        <div class="thought">Looking for the ones that are actually identifiers…</div>
+        <div class="md">
+          <p>Found <strong>14</strong> occurrences across 6 files. Two of them are in strings, so I'll leave those:</p>
+          <pre>src/store.ts:41   const fooBar = await load();
+src/store.ts:88   log("fooBar is stale")   // string, skipped</pre>
+          <p>Renaming the other twelve now.</p>
+        </div>
+        <div class="tool">
+          <div class="title"><span class="icon sm">edit_document</span>edit <code>src/store.ts</code><span class="state">done</span></div>
+        </div>
+        <div class="working"><span class="pulse"></span><span>working…</span></div>
+        <div class="perm">
+          <div class="who">claude wants to</div>
+          <div class="title">Write to a file outside the conversation</div>
+          <div class="where">~/myproject/src/store.ts</div>
+          <div class="wall">The write wall will refuse anything above the folder you picked.</div>
+          <div class="row">
+            <button class="primary">Allow once</button>
+            <button>Allow for this session</button>
+            <button class="danger">Refuse</button>
+          </div>
+        </div>
+        <div class="composer">
+          <textarea rows="1" placeholder="ask the agent to do something in this folder…"></textarea>
+          <button class="primary"><span class="icon sm">send</span></button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>The slab</h2>
+      <p class="sub">A terminal does not invert. It is an object in the cabinet, and xterm's sixteen ANSI colours stay where they are.</p>
+      <div class="slab"><span class="p">~/myproject</span> $ ls -la
+<span class="d">drwxr-xr-x</span>   5 you  staff   160 Aug  3 16:07 <span class="p">src</span>
+<span class="d">-rw-r--r--</span>   1 you  staff  2339 Aug  3 16:07 package.json
+<span class="p">~/myproject</span> $ npm test
+<span class="d">✓</span> 41 passing <span class="c">(2.1s)</span>
+<span class="w">⚠</span> 1 skipped
+<span class="p">~/myproject</span> $ <span class="c">▮</span></div>
+    </section>
+  </main>
+
+  <fsio-details id="diag">
+    <h3>Transport</h3>
+    <div class="grid">
+      <div>chunks in <em>1,284</em></div>
+      <div>chunks out <em>903</em></div>
+      <div>poll <em>25 ms</em></div>
+      <div>lane <em>ok</em></div>
+    </div>
+    <h3>Page log</h3>
+    <pre class="log">16:07:02  launch dir=~/myproject
+16:07:02  waiting for a folder
+16:07:04  folder granted
+16:07:04  helper found, epoch 7</pre>
+  </fsio-details>
+
+  <script type="module" src="/theme.ts"></script>
+</body>
+</html>

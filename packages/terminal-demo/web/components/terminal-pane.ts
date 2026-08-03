@@ -7,7 +7,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { controls, tokens } from "@fsio/ui";
+import { controls, icons, tokens } from "@fsio/ui";
 import { phase, tabs, activeTab, notice } from "../state";
 import { openTab, restartTab, retakeTab, closeTab } from "../tabs";
 
@@ -15,19 +15,30 @@ class FsioTerminalPane extends SignalWatcher(LitElement) {
   static override styles = [
     tokens,
     controls,
+    icons,
+    icons,
     css`
-      :host { display: block; position: relative; background: var(--fsio-bg); overflow: hidden; }
+      :host { display: block; position: relative; overflow: hidden; }
       .area { position: absolute; inset: 0.6rem; }
-      ::slotted(.term-host) { display: block; width: 100%; height: 100%; }
+      /* The slab. xterm paints its own background (set in tabs.ts to the
+         same --fsio-slab value), so what this adds is the edge: a terminal
+         is an object resting on the wood, not a region of the page. */
+      ::slotted(.term-host) {
+        display: block; width: 100%; height: 100%;
+        background: var(--fsio-slab);
+        border-radius: 10px; overflow: hidden;
+        box-shadow: var(--fsio-lift-high);
+      }
       .idle {
         position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-        color: #23272f; font-size: 3rem; font-weight: 700; user-select: none;
+        color: var(--fsio-line-strong); font-family: var(--fsio-title);
+        font-size: 4.5rem; user-select: none;
       }
       .center {
         position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       }
       .card {
-        background: var(--fsio-panel); border: 1px solid var(--fsio-line-strong);
+        background: var(--fsio-float); border: 1px solid var(--fsio-line-strong);
         border-radius: 10px; padding: 1.1rem 1.3rem; max-width: 26rem; text-align: center;
       }
       .card .what { color: var(--fsio-fg); margin-bottom: 0.8rem; }
@@ -35,12 +46,21 @@ class FsioTerminalPane extends SignalWatcher(LitElement) {
       .banner {
         position: absolute; top: 0.6rem; left: 50%; transform: translateX(-50%);
         display: flex; align-items: center; gap: 0.7rem; max-width: min(38rem, 92%);
-        border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.88rem; z-index: 2;
+        border-radius: 9px; padding: 0.5rem 0.8rem; font-size: 0.88rem; z-index: 2;
+        -webkit-backdrop-filter: var(--fsio-glass-blur);
+        backdrop-filter: var(--fsio-glass-blur);
+        box-shadow: var(--fsio-lift);
       }
-      .banner.warn { background: #3b3226; border: 1px solid var(--fsio-warn-quiet); }
-      .banner.err { background: #3b2326; border: 1px solid var(--fsio-bad); }
+      .banner.warn {
+        background: linear-gradient(var(--fsio-warn-wash), var(--fsio-warn-wash)), var(--fsio-float);
+        border: 1px solid var(--fsio-warn-line);
+      }
+      .banner.err {
+        background: linear-gradient(var(--fsio-bad-wash), var(--fsio-bad-wash)), var(--fsio-float);
+        border: 1px solid var(--fsio-bad-line);
+      }
       .banner.err strong { color: var(--fsio-bad-bright); }
-      .banner .hint { color: #d8b9bc; font-size: 0.82rem; }
+      .banner .hint { color: var(--fsio-bad); font-size: 0.82rem; }
       .banner .x { background: none; border: none; color: inherit; padding: 0 0.3rem; }
       .banner .x:hover { background: none; }
     `,
@@ -56,7 +76,7 @@ class FsioTerminalPane extends SignalWatcher(LitElement) {
       ${n
         ? html`<div class="banner err">
             <span><strong>${n.msg}</strong><span class="hint"> ${n.hint}</span></span>
-            <button class="x" @click=${() => notice.set(null)}>×</button>
+            <button class="x" @click=${() => notice.set(null)}><span class="icon sm">close</span></button>
           </div>`
         : nothing}
       ${st === "superseded"

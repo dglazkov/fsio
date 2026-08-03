@@ -8,17 +8,30 @@
     /* App shell: one bar, and the terminal takes everything under it. All
        real styling lives in the components' shadow roots; this sheet only
        lays out the light-DOM skeleton (and the slotted xterm hosts live in
-       light DOM, so xterm.css applies to them untouched). */
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
+       light DOM, so xterm.css applies to them untouched).
+
+       Layout ONLY. The reset, the wood, the type and the palette are adopted
+       from @fsio/ui by installPageTheme() in main.ts — this sheet used to
+       carry its own copy of them, and a hand-copied palette in two files is
+       exactly how the two pages drifted apart the first time. */
     body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #14161a; color: #d8dee9; margin: 0;
       display: flex; flex-direction: column;
     }
     fsio-terminal-pane { flex: 1; min-height: 0; }
-    [hidden] { display: none !important; }
+
+    /* The slab's gutter: text sat against the rounded corners, which reads as
+       clipped rather than as an inset.
+
+       It goes on .xterm and NOT on the host, because .xterm is the element
+       FitAddon measures padding on — proposeDimensions() subtracts this
+       element's padding from the parent's box before working out cols and
+       rows. Padding the host instead would shrink the visible area while the
+       fit still believed it had the whole box, and the last column and row
+       would be drawn under the edge.
+
+       In light DOM, because the xterm hosts are slotted: a shadow root can
+       reach the host with ::slotted() but not its .xterm child. */
+    .term-host .xterm { padding: 0.65rem 0.8rem; }
   </style>
 </head>
 <body>

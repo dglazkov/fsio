@@ -11,6 +11,7 @@
 // it is why the
 // structured half of #18 was the half worth building.
 import { LitElement, html, css, nothing } from "lit";
+import { controls, icons, tokens } from "@fsio/ui";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { active, agentFacts, asking, convs, entries, notice, phase, queued, superseded, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
@@ -28,47 +29,58 @@ const WORDS = [
 ];
 
 class AcpChat extends SignalWatcher(LitElement) {
-  static override styles = css`
+  static override styles = [
+    tokens,
+    controls,
+    icons,
+    css`
     :host { display: flex; flex-direction: column; min-height: 0; }
     .log { flex: 1; overflow-y: auto; padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.7rem; }
     .entry { max-width: 52rem; line-height: 1.5; }
+    /* The one bubble on the page. It needs a border now that it sits on wood
+       rather than on a flat dark field — a fill alone stopped being an edge
+       the moment the background gained texture. */
     .user {
-      align-self: flex-end; background: #2e3440; border-radius: 10px 10px 2px 10px;
-      padding: 0.5rem 0.8rem; white-space: pre-wrap; color: #eceff4;
+      align-self: flex-end; background: var(--fsio-control);
+      border: 1px solid var(--fsio-line); box-shadow: var(--fsio-lift);
+      border-radius: 12px 12px 3px 12px;
+      padding: 0.5rem 0.8rem; white-space: pre-wrap; color: var(--fsio-fg-bright);
     }
     /* A queued prompt is a user bubble that hasn't happened yet: same shape,
        dimmed, with a way out. It sits in the log rather than above the
        composer so its position says what it means — next in line. */
     .user.queued {
-      opacity: 0.62; border: 1px dashed #4c566a; background: #23272f;
+      opacity: 0.62; border: 1px dashed var(--fsio-line-control); background: var(--fsio-aside);
+      box-shadow: none;
       display: flex; gap: 0.5rem; align-items: flex-start;
     }
     .user.queued .drop {
-      background: none; border: none; color: #9aa5b8; padding: 0 0.15rem;
-      font-size: 1rem; line-height: 1.2; cursor: pointer;
+      background: none; border: none; box-shadow: none; backdrop-filter: none;
+      color: var(--fsio-dim); padding: 0 0.15rem;
+      line-height: 1.2; cursor: pointer;
     }
-    .user.queued .drop:hover { color: #ef8a95; background: none; }
-    button.queue { border-color: #4c566a; color: #9aa5b8; }
-    .thought { color: #7b8598; font-size: 0.9rem; }
+    .user.queued .drop:hover { color: var(--fsio-bad-bright); background: none; }
+    button.queue { border-color: var(--fsio-line-control); color: var(--fsio-dim); }
+    .thought { color: var(--fsio-dimmer); font-size: 0.9rem; }
     /* The turn, where the turn is happening. It used to be a word in the top
        bar, which is where a page says things about itself — but "it is
        thinking" is the newest thing in the conversation, not a property of
        the page, and with N conversations the top bar was saying it about
        whichever one you happened to be looking at. So it is the last row of
        the log, and it goes away when the turn ends. */
-    .working { display: flex; align-items: center; gap: 0.5rem; color: #7b8598; font-size: 0.9rem; }
+    .working { display: flex; align-items: center; gap: 0.5rem; color: var(--fsio-dimmer); font-size: 0.9rem; }
     .working .pulse {
-      width: 7px; height: 7px; border-radius: 50%; background: #88c0d0; flex: none;
+      width: 7px; height: 7px; border-radius: 50%; background: var(--fsio-cyan); flex: none;
       animation: pulse 1.4s ease-in-out infinite;
     }
     @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
     @media (prefers-reduced-motion: reduce) { .working .pulse { animation: none; opacity: 0.8; } }
-    .working .secs { color: #5c6675; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+    .working .secs { color: var(--fsio-dimmest); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
     /* Blocked on the human. The same blue the permission card and the chip's
        badge use, because it is the same fact in its third place — and steady
        rather than pulsing, since nothing is happening until you act. */
-    .working.yours { color: #88c0d0; }
-    .working.yours .pulse { background: #5e81ac; animation: none; }
+    .working.yours { color: var(--fsio-cyan); }
+    .working.yours .pulse { background: var(--fsio-accent); animation: none; }
     /* Markdown, rendered from a token tree by ../markdown.ts. Paragraphs
        keep their newlines (pre-wrap) because the parser keeps soft breaks:
        in chat, a newline means a newline. */
@@ -76,97 +88,97 @@ class AcpChat extends SignalWatcher(LitElement) {
     .md > :last-child { margin-bottom: 0; }
     .md p { margin: 0.5rem 0; white-space: pre-wrap; }
     .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
-      margin: 0.9rem 0 0.4rem; line-height: 1.3; font-weight: 600; color: #eceff4;
+      margin: 0.9rem 0 0.4rem; line-height: 1.3; font-weight: 600; color: var(--fsio-fg-bright);
     }
     .md h1 { font-size: 1.25rem; } .md h2 { font-size: 1.12rem; } .md h3 { font-size: 1rem; }
-    .md h4, .md h5, .md h6 { font-size: 0.95rem; color: #d8dee9; }
+    .md h4, .md h5, .md h6 { font-size: 0.95rem; color: var(--fsio-fg); }
     .md ul, .md ol { margin: 0.5rem 0; padding-left: 1.4rem; }
     .md li { margin: 0.15rem 0; }
     .md blockquote {
-      margin: 0.5rem 0; padding-left: 0.8rem; border-left: 2px solid #3b4252;
-      color: #9aa5b8; white-space: pre-wrap;
+      margin: 0.5rem 0; padding-left: 0.8rem; border-left: 2px solid var(--fsio-line-strong);
+      color: var(--fsio-dim); white-space: pre-wrap;
     }
-    .md hr { border: none; border-top: 1px solid #2c313c; margin: 0.9rem 0; }
+    .md hr { border: none; border-top: 1px solid var(--fsio-line); margin: 0.9rem 0; }
     .md code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em;
-      background: #14161a; border-radius: 4px; padding: 0.1em 0.32em;
+      font-family: var(--fsio-mono); font-size: 0.88em;
+      background: var(--fsio-bg); border-radius: 4px; padding: 0.1em 0.32em;
     }
     .md pre.code {
-      margin: 0.55rem 0; background: #14161a; border: 1px solid #22262e; border-radius: 8px;
+      margin: 0.55rem 0; background: var(--fsio-bg); border: 1px solid var(--fsio-line); border-radius: 8px;
       padding: 0.6rem 0.75rem; overflow-x: auto;
     }
     .md pre.code code { background: none; padding: 0; font-size: 0.85rem; line-height: 1.45; }
-    .md a { color: #88c0d0; }
-    .md strong { color: #eceff4; }
+    .md a { color: var(--fsio-accent); }
+    .md strong { color: var(--fsio-fg-bright); }
     /* The thought bubble carries both classes on one element, so these are
        descendant-free selectors (.thought strong, not .thought .md strong)
        — headings and bold inside a thought stay as quiet as the thought. */
     .thought strong, .thought h1, .thought h2, .thought h3 { color: inherit; font-size: inherit; }
-    .note { color: #7b8598; font-size: 0.85rem; }
-    .error { color: #ef8a95; white-space: pre-wrap; font-size: 0.9rem; }
+    .note { color: var(--fsio-dimmer); font-size: 0.85rem; }
+    .error { color: var(--fsio-bad-bright); white-space: pre-wrap; font-size: 0.9rem; }
     .tool {
-      border-left: 2px solid #3b4252; padding: 0.1rem 0 0.1rem 0.7rem;
-      font-size: 0.87rem; color: #9aa5b8;
+      border-left: 2px solid var(--fsio-line-strong); padding: 0.1rem 0 0.1rem 0.7rem;
+      font-size: 0.87rem; color: var(--fsio-dim);
     }
-    .tool .title { color: #d8dee9; }
-    .tool .status { font-size: 0.78rem; color: #7b8598; }
-    .tool .status.completed { color: #a3be8c; }
-    .tool .status.failed { color: #ef8a95; }
-    .tool pre { margin: 0.25rem 0 0; white-space: pre-wrap; font-size: 0.8rem; color: #7b8598; max-height: 12rem; overflow: auto; }
+    .tool .title { color: var(--fsio-fg); }
+    .tool .status { font-size: 0.78rem; color: var(--fsio-dimmer); }
+    .tool .status.completed { color: var(--fsio-good); }
+    .tool .status.failed { color: var(--fsio-bad); }
+    .tool pre { margin: 0.25rem 0 0; white-space: pre-wrap; font-size: 0.8rem; color: var(--fsio-dimmer); max-height: 12rem; overflow: auto; }
     .perm {
-      border: 1px solid #5e81ac; border-radius: 10px; padding: 0.7rem 0.9rem;
-      background: #1b212b; max-width: 44rem;
+      border: 1px solid var(--fsio-accent); border-radius: 12px; padding: 0.7rem 0.9rem;
+      background: var(--fsio-raised); box-shadow: var(--fsio-lift); max-width: 44rem;
     }
-    .perm .who { font-size: 0.78rem; color: #88c0d0; text-transform: uppercase; letter-spacing: 0.04em; }
-    .perm .title { color: #eceff4; font-weight: 600; margin: 0.2rem 0; }
-    .perm .where { font-size: 0.82rem; color: #9aa5b8; font-family: ui-monospace, Menlo, monospace; }
-    .perm pre { margin: 0.4rem 0 0; white-space: pre-wrap; font-size: 0.8rem; color: #9aa5b8; max-height: 12rem; overflow: auto; }
-    .perm .wall { font-size: 0.78rem; color: #7b8598; margin-top: 0.5rem; }
+    .perm .who { font-size: 0.78rem; color: var(--fsio-cyan); text-transform: uppercase; letter-spacing: 0.04em; }
+    .perm .title { color: var(--fsio-fg-bright); font-weight: 600; margin: 0.2rem 0; }
+    .perm .where { font-size: 0.82rem; color: var(--fsio-dim); font-family: var(--fsio-mono); }
+    .perm pre { margin: 0.4rem 0 0; white-space: pre-wrap; font-size: 0.8rem; color: var(--fsio-dim); max-height: 12rem; overflow: auto; }
+    .perm .wall { font-size: 0.78rem; color: var(--fsio-dimmer); margin-top: 0.5rem; }
     .perm .row { display: flex; gap: 0.5rem; margin-top: 0.7rem; flex-wrap: wrap; }
-    .perm .answered { color: #a3be8c; font-size: 0.85rem; margin-top: 0.6rem; }
-    button {
-      background: #2e3440; color: #d8dee9; border: 1px solid #4c566a;
-      border-radius: 6px; padding: 0.35rem 0.9rem; font: inherit; font-size: 0.88rem; cursor: pointer;
-    }
-    button:hover { background: #3b4252; }
-    button.allow { background: #5e81ac; border-color: #5e81ac; color: #eceff4; font-weight: 600; }
-    button.reject { border-color: #6b3b40; color: #e5a3a8; }
-    .composer { display: flex; gap: 0.6rem; padding: 0.7rem 1.2rem 1rem; border-top: 1px solid #262b34; }
+    .perm .answered { color: var(--fsio-good); font-size: 0.85rem; margin-top: 0.6rem; }
+    /* Buttons come from the shared controls rule set above — the four
+       variants and what they mean live in one place now. Only the size is
+       this component's: a chat is dense, and a permission card carries three
+       of them in a row. */
+    button { padding: 0.35rem 0.9rem; font-size: 0.88rem; }
+    .composer { display: flex; gap: 0.6rem; padding: 0.7rem 1.2rem 1rem; border-top: 1px solid var(--fsio-line); }
     /* Fenced (D18): the composer is replaced, not disabled — a text box with
        nothing on the other end of it is the wrong kind of hopeful. Amber
        rather than red: nothing is broken, somebody else is driving. */
-    .composer.fenced { align-items: center; background: #211d16; border-top-color: #6b5a2e; }
-    .composer.fenced .what { flex: 1; font-size: 0.87rem; color: #ebcb8b; }
-    .composer.fenced .hint { display: block; color: #9aa5b8; font-size: 0.82rem; margin-top: 0.25rem; }
+    .composer.fenced { align-items: center; background: var(--fsio-warn-wash); border-top-color: var(--fsio-warn-line); }
+    .composer.fenced .what { flex: 1; font-size: 0.87rem; color: var(--fsio-warn); }
+    .composer.fenced .hint { display: block; color: var(--fsio-dim); font-size: 0.82rem; margin-top: 0.25rem; }
     .composer.fenced button { flex: none; }
     /* A document (#140). The same slot and the same shape as the fenced
        banner, quieter: fenced is a situation you can act on, and this is
        simply what the conversation is. */
-    .composer.over { align-items: center; background: #191c22; }
-    .composer.over .what { flex: 1; font-size: 0.87rem; color: #9aa5b8; }
-    .composer.over .hint { display: block; color: #7b8598; font-size: 0.82rem; margin-top: 0.25rem; }
+    .composer.over { align-items: center; background: var(--fsio-aside); }
+    .composer.over .what { flex: 1; font-size: 0.87rem; color: var(--fsio-dim); }
+    .composer.over .hint { display: block; color: var(--fsio-dimmer); font-size: 0.82rem; margin-top: 0.25rem; }
     .composer.over button { flex: none; }
     textarea {
-      flex: 1; resize: none; background: #191c22; color: #d8dee9; font: inherit;
-      border: 1px solid #2c313c; border-radius: 8px; padding: 0.55rem 0.7rem; min-height: 2.6rem; max-height: 9rem;
+      flex: 1; resize: none; background: var(--fsio-raised); color: var(--fsio-fg);
+      font: inherit; font-family: var(--fsio-sans);
+      border: 1px solid var(--fsio-line-strong); border-radius: 9px; padding: 0.55rem 0.7rem; min-height: 2.6rem; max-height: 9rem;
     }
-    textarea:focus { outline: none; border-color: #4c566a; }
-    .banner { background: #2b1f22; border: 1px solid #6b3b40; color: #e5a3a8; border-radius: 8px; padding: 0.5rem 0.8rem; font-size: 0.87rem; }
-    .banner .hint { color: #c98d92; display: block; font-size: 0.82rem; margin-top: 0.2rem; }
+    textarea:focus { outline: none; border-color: var(--fsio-accent); }
+    .banner { background: var(--fsio-bad-wash); border: 1px solid var(--fsio-bad-line); color: var(--fsio-bad-bright); border-radius: 9px; padding: 0.5rem 0.8rem; font-size: 0.87rem; }
+    .banner .hint { color: var(--fsio-bad); display: block; font-size: 0.82rem; margin-top: 0.2rem; }
     /* The read-only header (#119): quiet, not alarming — nothing is wrong,
        this is simply a document. */
     .reading {
-      background: #191c22; border: 1px solid #2c313c; color: #9aa5b8;
-      border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.87rem;
+      background: var(--fsio-aside); border: 1px solid var(--fsio-line); color: var(--fsio-dim);
+      border-radius: 9px; padding: 0.6rem 0.8rem; font-size: 0.87rem;
     }
-    .reading .hint { color: #7b8598; display: block; font-size: 0.82rem; margin-top: 0.25rem; }
+    .reading .hint { color: var(--fsio-dimmer); display: block; font-size: 0.82rem; margin-top: 0.25rem; }
     .reading .close { margin-top: 0.5rem; font-size: 0.82rem; padding: 0.2rem 0.6rem; }
-    .perm.historic { border-color: #3b4252; background: #191c22; }
-    .perm.historic .who { color: #7b8598; }
-    .perm.historic .opts { color: #7b8598; font-size: 0.82rem; margin-top: 0.55rem; }
-    .opts { color: #7b8598; font-size: 0.82rem; margin-top: 0.55rem; }
-    .opts code { font-family: ui-monospace, Menlo, monospace; color: #9aa5b8; }
-  `;
+    .perm.historic { border-color: var(--fsio-line); background: var(--fsio-aside); box-shadow: none; }
+    .perm.historic .who { color: var(--fsio-dimmer); }
+    .perm.historic .opts { color: var(--fsio-dimmer); font-size: 0.82rem; margin-top: 0.55rem; }
+    .opts { color: var(--fsio-dimmer); font-size: 0.82rem; margin-top: 0.55rem; }
+    .opts code { font-family: var(--fsio-mono); color: var(--fsio-dim); }
+  `,
+  ];
 
   override render(): TemplateResult {
     const n = notice.get();
@@ -237,7 +249,7 @@ class AcpChat extends SignalWatcher(LitElement) {
         ${q.map(
           (text, i) => html`<div class="entry user queued">
             ${text}
-            <button class="drop" title="don't send this" @click=${() => unqueue(i)}>×</button>
+            <button class="drop" title="don't send this" @click=${() => unqueue(i)}><span class="icon sm">close</span></button>
           </div>`
         )}
       </div>
@@ -264,7 +276,7 @@ class AcpChat extends SignalWatcher(LitElement) {
           else, and those ride the uplink, which only the holder writes. Expect answers without their questions.
         </span>
       </div>
-      <button class="allow" ?disabled=${!c} @click=${() => c && void retakeSession(c.id)}>take it back</button>
+      <button class="primary" ?disabled=${!c} @click=${() => c && void retakeSession(c.id)}>take it back</button>
     </div>`;
   }
 
@@ -284,7 +296,7 @@ class AcpChat extends SignalWatcher(LitElement) {
         ${busy
           ? html`<button class="queue" @click=${() => this.#send()}>queue</button>
               <button @click=${() => cancelTurn()} ?disabled=${t === "cancelling"}>stop</button>`
-          : html`<button class="allow" ?disabled=${t !== "idle"} @click=${() => this.#send()}>send</button>`}
+          : html`<button class="primary" ?disabled=${t !== "idle"} @click=${() => this.#send()}>send</button>`}
       </div>
     `;
   }

@@ -31,10 +31,16 @@ class AcpTopBar extends SignalWatcher(LitElement) {
     css`
       :host {
         display: flex; align-items: center; gap: 0.7rem;
-        padding: 0.35rem 0.9rem; background: var(--fsio-bg);
+        padding: 0.35rem 0.9rem; background: var(--fsio-panel);
+        -webkit-backdrop-filter: var(--fsio-glass-blur);
+        backdrop-filter: var(--fsio-glass-blur);
         border-bottom: 1px solid var(--fsio-line); font-size: 0.85rem;
+        position: relative; z-index: 3;
       }
-      .name { font-weight: 600; color: var(--fsio-fg-bright); flex: none; }
+      .name {
+        font-family: var(--fsio-title); font-weight: 400; font-size: 1.15rem;
+        color: var(--fsio-fg-bright); flex: none; line-height: 1.2;
+      }
       /* The strip takes the middle and does its own pushing: its internal
          spacer is what keeps "+" beside the last chip instead of at the far
          right, so this row needs no spacer of its own. */
