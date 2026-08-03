@@ -90,6 +90,31 @@ export function parseLaunch(search: string): Launch {
   return { dir: hint(okDir, p.get("dir")), agent: hint(okAgent, p.get("agent")) };
 }
 
+/** Why there is no helper in the folder that was just picked — and, when the
+ *  hint lets us tell, that the answer is "because it is the wrong folder".
+ *
+ *  This sentence is the whole reason the helper names its folder in the URL.
+ *  Picking the wrong directory produced a page that waited forever and looked
+ *  identical to "the helper was never started": a dead end with no message,
+ *  reachable by anyone who mis-navigates the picker once, and unfixable-
+ *  looking because nothing on screen said what was wrong.
+ *
+ *  It answers at the *failure*, not at pick time. Picking a different folder
+ *  that has its own helper running in it is a perfectly good thing to do, and
+ *  a page that objected on the way in would be nagging about a mismatch that
+ *  turned out not to matter. The hint is also only a hint — two folders can
+ *  share a basename — so it explains a failure and never causes one.
+ *
+ *  Lives here rather than in the page because it is a pure function of two
+ *  strings, and because a claim this load-bearing should be verifiable
+ *  without a browser. */
+export function noHelperHint(picked: string, expected: string | null): string {
+  const generic =
+    "The helper creates a .fsio directory in the folder it serves, and there isn't one here. (Nothing was written to the folder you just picked.)";
+  if (!expected || expected === picked) return `Is the helper still running, in exactly this folder? ${generic}`;
+  return `You picked ${picked}/, but the helper that opened this page is running in ${expected}/. Pick that one instead — or, if you meant this folder, start a helper in it. ${generic}`;
+}
+
 /** The URL the helper prints and opens.
  *
  *  Built through `URL` so a `--url` pointing at a dev server keeps its port

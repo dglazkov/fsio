@@ -7,7 +7,7 @@
 // helper has opened a side channel (P2) rather than saved a gesture.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_PAGE, launchUrl, NO_LAUNCH, parseLaunch } from "./launch.js";
+import { DEFAULT_PAGE, launchUrl, noHelperHint, NO_LAUNCH, parseLaunch } from "./launch.js";
 
 test("a bare URL is a launch with nothing in it — arriving by hand is supported", () => {
   assert.deepEqual(parseLaunch(""), NO_LAUNCH);
@@ -54,6 +54,34 @@ test("the helper does not send a hint the page would drop", () => {
   const url = launchUrl(DEFAULT_PAGE, { dir: "a/b", agent: "not a name" });
   assert.equal(url, DEFAULT_PAGE, "nothing sendable, so nothing sent");
   assert.deepEqual(parseLaunch(new URL(url).search), NO_LAUNCH);
+});
+
+// The dead end the folder hint exists to kill. #124's headline win, so it is
+// verified here rather than trusted: before this, picking the wrong directory
+// produced a page that waited forever and looked exactly like "the helper was
+// never started" — no message, no way out, one mis-navigation away.
+test("a mispick names both folders instead of hanging silently", () => {
+  const h = noHelperHint("Documents", "myproject");
+  assert.match(h, /You picked Documents\//);
+  assert.match(h, /running in myproject\//, "the whole point: say which folder it should have been");
+});
+
+test("with no hint, or the right folder, it is the generic message and never accuses", () => {
+  // A page opened by hand has no hint, and must not imply a mismatch it
+  // cannot see. Same for the folder that matches: the helper simply is not
+  // running any more, which is a different problem with a different fix.
+  for (const h of [noHelperHint("myproject", null), noHelperHint("myproject", "myproject")]) {
+    assert.match(h, /Is the helper still running/);
+    assert.doesNotMatch(h, /You picked/, "nothing to compare means nothing to accuse");
+  }
+});
+
+test("every branch says what was and was not written to the folder", () => {
+  // The sentence people actually need after clicking Allow twice on a folder
+  // that turned out to be wrong: we did not put anything in it.
+  for (const h of [noHelperHint("a", "b"), noHelperHint("a", null), noHelperHint("a", "a")]) {
+    assert.match(h, /Nothing was written to the folder you just picked/);
+  }
 });
 
 test("an unknown param is ignored rather than inherited", () => {
