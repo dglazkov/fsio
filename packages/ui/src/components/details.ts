@@ -14,7 +14,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { Dismiss } from "../dismiss.js";
-import { tokens, panel } from "../tokens.js";
+import { tokens, panel, icons } from "../tokens.js";
 
 class FsioDetails extends LitElement {
   static override properties = {
@@ -34,6 +34,7 @@ class FsioDetails extends LitElement {
   static override styles = [
     tokens,
     panel,
+    icons,
     css`
       :host {
         position: fixed; right: 0.6rem; bottom: 0.6rem; z-index: 20;
@@ -41,11 +42,12 @@ class FsioDetails extends LitElement {
       }
       .i {
         display: flex; align-items: center; justify-content: center;
-        width: 1.35rem; height: 1.35rem; border-radius: 50%;
-        background: var(--fsio-raised); border: 1px solid var(--fsio-line-strong);
-        color: var(--fsio-dimmest);
-        font: inherit; font-size: 0.78rem; font-weight: 600; font-style: italic;
-        font-family: Georgia, "Times New Roman", serif;
+        width: 1.5rem; height: 1.5rem; border-radius: 50%;
+        background: var(--fsio-panel); border: 1px solid var(--fsio-line-strong);
+        -webkit-backdrop-filter: var(--fsio-glass-blur);
+        backdrop-filter: var(--fsio-glass-blur);
+        box-shadow: var(--fsio-lift);
+        color: var(--fsio-dimmer);
         cursor: pointer; padding: 0; line-height: 1;
       }
       .i:hover, .i:focus-visible, .i.on {
@@ -69,7 +71,7 @@ class FsioDetails extends LitElement {
         aria-label="details"
         aria-expanded=${this.open}
         @click=${() => { this.open = !this.open; }}
-      >i</button>
+      ><span class="icon sm">info</span></button>
       ${this.open ? html`<div class="pop"><slot></slot></div>` : nothing}
     `;
   }

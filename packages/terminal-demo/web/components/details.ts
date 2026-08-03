@@ -50,6 +50,8 @@ class FsioDetailsPanel extends SignalWatcher(LitElement) {
         history file, that was the sandbox saying no.)
       </p>
       ${t ? html`<h3>this shell</h3><pre>${t.detail.get()}</pre>` : nothing}
+      <h3>appearance</h3>
+      <fsio-theme-switch></fsio-theme-switch>
       <h3>page log</h3>
       <button class="small" @click=${() => void navigator.clipboard.writeText(logText.get())}>copy log</button>
       <pre class="log">${logText.get()}</pre>

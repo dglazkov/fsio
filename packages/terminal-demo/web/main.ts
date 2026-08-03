@@ -7,6 +7,7 @@
 // Self-reports into <folder>/.fsio/client/<clientId>/{log.txt,report.json}
 // for the cooperative verification loop (TESTING.md: the page reports, the
 // native side reads verdicts).
+import "./boot-theme.js"; // must stay first — see that file
 import "@xterm/xterm/css/xterm.css";
 import "@fsio/ui"; // registers the shared chrome's custom elements
 import "./components/top-bar";

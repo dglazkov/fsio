@@ -42,9 +42,58 @@ function syncUrl(): void {
   history.replaceState(null, "", `#s=${ids.join(",")}${act ? `&a=${act}` : ""}`);
 }
 
+/** The slab's palette, spelled out — the one place in the demos where theme
+ *  values are written longhand, because xterm takes concrete colours and not
+ *  custom properties.
+ *
+ *  Duplicating them is safe here in a way it would not be anywhere else: the
+ *  slab is the part of "Pewter Curio" that does NOT invert, so there is no
+ *  second value for these to drift out of step with. `background`,
+ *  `foreground` and the greys are --fsio-slab / --fsio-slab-fg / --fsio-slab-dim.
+ *
+ *  The sixteen ANSI colours are the palette's own meanings rather than the
+ *  VGA defaults, which arrive as saturated primaries and undo the theme the
+ *  moment anything colours its output: red/green/yellow/cyan are
+ *  --fsio-bad / --fsio-good / --fsio-warn / --fsio-cyan in their dark-stain
+ *  values, blue is a lifted --fsio-accent (the token value is a fill colour
+ *  and too dark to read as text on the slab), and the `bright` half is each
+ *  one lightened rather than a different hue. Magenta is the only one with no
+ *  token behind it — nothing else on either page needed a violet.
+ *
+ *  Exported only so the dev-only slab probe can construct a terminal with
+ *  the same options; not a token, because one consumer is not a signal
+ *  (PROCESS.md rule 6). If the agent page grows a terminal, this moves to
+ *  @fsio/ui. */
+export const SLAB_THEME = {
+  background: "#17191c",
+  foreground: "#d6dbdf",
+  cursor: "#d6dbdf",
+  cursorAccent: "#17191c",
+  selectionBackground: "#3f6f7859",
+
+  black: "#1f2328",
+  red: "#c97d79",
+  green: "#93b899",
+  yellow: "#dcba76",
+  blue: "#8098ab",
+  magenta: "#b294bb",
+  cyan: "#8fbfc7",
+  white: "#d6dbdf",
+
+  brightBlack: "#5b656d",
+  brightRed: "#e79a96",
+  brightGreen: "#aecfb3",
+  brightYellow: "#ecd49b",
+  brightBlue: "#a2b6c6",
+  brightMagenta: "#c9aed1",
+  brightCyan: "#aed6dc",
+  brightWhite: "#eceff1",
+};
+
 /** Open a new tab: fresh shell, or resume an existing session (#58/D18).
  *  A session already held by a tab just gets focused — resuming into two
  *  tabs of one page would fence our own writer. */
+
 export function openTab(resumeId?: string): void {
   const client = getClient();
   if (!client) return;
@@ -54,7 +103,11 @@ export function openTab(resumeId?: string): void {
   }
   const host = document.createElement("div");
   host.className = "term-host";
-  const term = new Terminal({ fontSize: 13, theme: { background: "#14161a" } });
+  const term = new Terminal({
+    fontSize: 13,
+    fontFamily: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+    theme: SLAB_THEME,
+  });
   const fit = new FitAddon();
   term.loadAddon(fit);
   const tabId = nextTabId++;

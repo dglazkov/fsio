@@ -36,7 +36,7 @@ class AcpWorkspace extends SignalWatcher(LitElement) {
         padding: 0.22rem 0.8rem; font-size: 0.8rem; color: var(--fsio-dim);
         font-family: var(--fsio-mono);
       }
-      li.hot { color: var(--fsio-fg-bright); background: #23303a; }
+      li.hot { color: var(--fsio-fg-bright); background: var(--fsio-accent-wash); }
       li .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
       li .meta { color: var(--fsio-dimmest); white-space: nowrap; }
       li.hot .meta { color: var(--fsio-cyan); }

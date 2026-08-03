@@ -53,7 +53,7 @@ class FsioSessionRow extends LitElement {
     css`
       :host {
         display: flex; align-items: center; gap: 0.8rem;
-        padding: 0.4rem 0; border-top: 1px solid #22262e;
+        padding: 0.4rem 0; border-top: 1px solid var(--fsio-line);
       }
       :host([boxed]) {
         border: 1px solid var(--fsio-line-strong); border-radius: 8px;

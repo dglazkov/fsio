@@ -11,6 +11,7 @@ import "./components/cmd.js";
 import "./components/details.js";
 import "./components/session-row.js";
 import "./components/tab-strip.js";
+import "./components/theme-switch.js";
 import "./components/wizard-frame.js";
 
 export { ago, friendlyName, sinceLabel, sizeOf } from "./text.js";
@@ -21,12 +22,17 @@ export {
   controls,
   dialogChrome,
   diagBody,
+  glass,
+  icons,
   listBody,
   panel,
   prose,
+  rootVars,
   statusLines,
   tokens,
   wizardStyles,
 } from "./tokens.js";
+export { ICON_NAMES, currentTheme, getTheme, installPageTheme, setTheme } from "./theme.js";
+export type { ThemePref } from "./theme.js";
 export type { Chip, ChipAction, ChipDot, ConfirmCopy } from "./components/tab-strip.js";
 export type { Crumb } from "./components/wizard-frame.js";

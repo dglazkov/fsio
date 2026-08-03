@@ -43,6 +43,8 @@ ${a.state.why}</pre>`
             </div>
             ${d.stderr.length ? html`<h3>agent stderr (last lines)</h3><pre>${d.stderr.slice(-12).join("\n")}</pre>` : nothing}`
         : nothing}
+      <h3>appearance</h3>
+      <fsio-theme-switch></fsio-theme-switch>
       <h3>page log</h3>
       <pre>${logText.get().split("\n").slice(-25).join("\n")}</pre>
     </fsio-details>`;

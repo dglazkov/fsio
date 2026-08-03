@@ -16,7 +16,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { Dismiss } from "../dismiss.js";
-import { tokens, panel } from "../tokens.js";
+import { tokens, panel, icons } from "../tokens.js";
 
 /** Which dot a chip wears. Each is a state the thing is currently IN, which
  *  is why the ordinary healthy state has none: an idle agent and a shell
@@ -114,6 +114,7 @@ class FsioTabStrip extends LitElement {
   static override styles = [
     tokens,
     panel,
+    icons,
     css`
       /* A row inside a bar, not a strip under one. No background, no border
          and no padding of its own: the bar it sits in owns all three, and a
@@ -162,27 +163,30 @@ class FsioTabStrip extends LitElement {
       .dot.bad { background: var(--fsio-bad); }
       .dot.fenced { background: var(--fsio-warn); }
       .dot.doc { background: none; box-shadow: inset 0 0 0 1.5px var(--fsio-dimmest); }
-      .tab.fenced .who { color: #9a8756; }
+      .tab.fenced .who { color: var(--fsio-warn-quiet); }
       .tab.fenced.on .who { color: var(--fsio-warn); }
       .tab.doc .who { font-style: italic; }
       .badge {
-        background: var(--fsio-accent); color: var(--fsio-fg-bright); border-radius: 999px;
+        background: var(--fsio-accent); color: var(--fsio-on-accent); border-radius: 999px;
         font-size: 0.7rem; padding: 0 0.35rem; font-weight: 600; flex: none;
       }
       .x {
         background: none; border: none; color: var(--fsio-dimmest); cursor: pointer;
-        font-size: 0.95rem; line-height: 1; padding: 0 0.15rem; border-radius: 4px;
+        display: flex; align-items: center; padding: 0.1rem; border-radius: 4px;
         flex: none;
       }
+      .x .icon { font-size: 0.95rem; }
       .x:hover { color: var(--fsio-bad-bright); background: var(--fsio-bad-wash); }
       .menu {
         background: none; border: none; color: var(--fsio-dimmest); cursor: pointer;
-        font-size: 0.9rem; line-height: 1; padding: 0 0.15rem; flex: none;
+        display: flex; align-items: center; padding: 0.1rem; border-radius: 4px;
+        flex: none;
       }
+      .menu .icon { font-size: 1rem; }
       .menu:hover { color: var(--fsio-fg); }
       .plus {
         background: none; border: none; color: var(--fsio-dimmer); cursor: pointer;
-        font: inherit; font-size: 1rem; padding: 0.2rem 0.6rem; align-self: center;
+        display: flex; align-items: center; padding: 0.25rem 0.45rem; align-self: center;
         border-radius: 6px; flex: none;
       }
       .plus:hover, .plus:focus-visible { color: var(--fsio-fg); background: var(--fsio-raised); }
@@ -201,7 +205,7 @@ class FsioTabStrip extends LitElement {
       .pop button:hover { background: var(--fsio-control-hover); }
       .pop .row {
         display: flex; align-items: center; gap: 0.6rem;
-        padding: 0.4rem 0; border-top: 1px solid #22262e;
+        padding: 0.4rem 0; border-top: 1px solid var(--fsio-line);
       }
       .pop .row .who { flex: 1; min-width: 0; }
       .pop .row .name { color: var(--fsio-fg); font-weight: 500; }
@@ -213,11 +217,11 @@ class FsioTabStrip extends LitElement {
          and instead of window.confirm(), which is the same idea with none of
          the page's words in it. */
       dialog.ask {
-        background: var(--fsio-panel); border: 1px solid var(--fsio-bad-line);
+        background: var(--fsio-float); border: 1px solid var(--fsio-bad-line);
         border-radius: 8px; padding: 0.9rem 1.1rem; width: min(28rem, 92vw);
         line-height: 1.45; color: var(--fsio-fg); font: inherit; font-size: 0.85rem;
       }
-      dialog.ask::backdrop { background: rgba(10, 12, 15, 0.55); }
+      dialog.ask::backdrop { background: light-dark(#3a302233, #0000005c); }
       dialog.ask p { margin: 0 0 0.6rem; }
       dialog.ask .dim { color: var(--fsio-dimmer); font-size: 0.8rem; }
       dialog.ask .row { display: flex; gap: 0.5rem; }
@@ -227,7 +231,7 @@ class FsioTabStrip extends LitElement {
         padding: 0.3rem 0.8rem; font: inherit; font-size: 0.83rem; cursor: pointer;
       }
       dialog.ask button.danger { border-color: var(--fsio-bad-line); color: var(--fsio-bad-bright); }
-      dialog.ask button.danger:hover { background: var(--fsio-bad-wash); color: #ffd7db; }
+      dialog.ask button.danger:hover { background: var(--fsio-bad-wash); border-color: var(--fsio-bad); }
     `,
   ];
 
@@ -270,7 +274,7 @@ class FsioTabStrip extends LitElement {
             aria-haspopup="dialog"
             aria-expanded=${this.#listOpen}
             @click=${this.#toggleList}
-          >+</button>`
+          ><span class="icon">add</span></button>`
         : nothing}
       <span class="spacer"></span>
       ${this.#closing ? this.#confirm() : nothing}
@@ -303,9 +307,9 @@ class FsioTabStrip extends LitElement {
             tabindex="-1"
             title="what else to do with this one"
             @click=${(e: Event) => this.#openMenu(e, c.id)}
-          >⋯</button>`
+          ><span class="icon">more_horiz</span></button>`
         : nothing}
-      <button class="x" tabindex="-1" title=${c.closeTitle ?? "close"} @click=${(e: Event) => this.#askClose(e, c.id)}>×</button>
+      <button class="x" tabindex="-1" title=${c.closeTitle ?? "close"} @click=${(e: Event) => this.#askClose(e, c.id)}><span class="icon">close</span></button>
     </div>`;
   }
 
