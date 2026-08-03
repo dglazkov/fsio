@@ -87,15 +87,13 @@ export interface AgentOffer {
  *  error (D25) and lets choose for itself. */
 export const agents = signal<AgentOffer[] | null>(null);
 
-/** What the host said about the agent it started. Confinement and state
- *  posture are session facts the page READS, never assumes (#18). */
+/** What the host said about the agent it started. Read from the host, never
+ *  assumed by the page (#18) — which is why the state posture is a field
+ *  here rather than a sentence in a template. */
 export interface AgentFacts {
   agent: string;
   title: string;
-  sandboxed: boolean;
-  confinement: string;
-  profile: string | null;
-  state: { mode: string; dirs: string[]; why: string };
+  state: { mode: string; why: string };
   cwd: string;
 }
 

@@ -29,13 +29,16 @@
 // pipe a file dump.
 import fs from "node:fs";
 import path from "node:path";
-import { profileSummary, type SandboxConfig } from "@fsio/confine";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
 import type { KindContext, KindHandler, KindSession } from "@fsio/host";
-import { AGENTS, carveDirs, findAgent, resolveBin, scratchDirs, type AgentEntry } from "./agents.js";
+import { AGENTS, findAgent, resolveBin, type AgentEntry } from "./agents.js";
 import { synthesizeEnv } from "./env.js";
 import { classify, isJsonRpc, LineSplitter, toAgentLine } from "./framing.js";
-import { agentProfile } from "./profile.js";
-import { spawnAgent, type AgentProcess } from "./sandbox.js";
+
+/** Pipes, never a pty (#18): a pty echoes input and rewrites newlines, and
+ *  newline-delimited JSON survives neither. */
+type AgentProcess = ChildProcessByStdio<Writable, Readable, Readable>;
 
 /** How many stderr lines to keep for `acp/diagnostics`. An agent's stderr
  *  is the only channel that carries "your profile denied me", so the page
@@ -53,24 +56,16 @@ export interface AcpKindOptions {
   root: string;
   /** realpath of ROOT/.fsio. */
   fsioDir: string;
-  /** realpath of the child's scratch dir (becomes TMPDIR, writable). */
+  /** realpath of the child's scratch dir (becomes its TMPDIR). */
   tmp: string;
   /** where per-agent state goes for a "place" posture. Interim: the
    *  destination is a host-owned slot `~/.fsio/state/<workspace>/<service>/`,
-   *  which needs #71 and a profile carve exactly that wide (#86). */
+   *  which needs #71. */
   stateRoot: string;
-  /** confine with sandbox-exec. `false` must be a deliberate caller choice
-   *  (non-macOS, tests) and is reported to the page as `sandboxed: false` —
-   *  never inferred, never silent — a broken confinement must look
-   *  broken. */
-  sandbox: boolean;
   /** allow-list override (tests point at a fixture agent). */
   agents?: AgentEntry[];
   /** env floor source (tests supply their own). */
   env?: NodeJS.ProcessEnv;
-  /** $HOME a "carve" posture resolves against (tests supply their own so a
-   *  test never widens the wall around the real user's dotfiles). */
-  home?: string;
 }
 
 interface Counters {
@@ -111,33 +106,17 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
     const bin = resolveBin(entry);
     if (!bin) throw new Error(`agent ${entry.name} is not on this machine's PATH (looked for "${entry.bin}")`);
 
-    // ---- state: placed or carved, per the agent's declared posture
-    const stateDirs = opts.home === undefined ? carveDirs(entry) : carveDirs(entry, opts.home);
+    // ---- state: placed, or left where the agent already keeps it.
+    //
+    // The posture is still a per-agent fact even with nothing confining the
+    // child, because it decides whether we hand the agent a placement env
+    // var at all — and MEASUREMENTS.md found that placing state can move an
+    // agent's *identity* with it and log it out. "own" is the posture that
+    // says: leave it alone, it knows where its things are.
     let placedDir: string | undefined;
     if (entry.state.mode === "place") {
       placedDir = path.join(opts.stateRoot, entry.name);
       fs.mkdirSync(placedDir, { recursive: true });
-      stateDirs.push(fs.realpathSync(placedDir));
-    }
-
-    // ---- the profile: written per session, inside the folder the page can
-    // read. The policy confining the agent is inspectable from the same
-    // page that is driving it — `acp/info` returns this path, so the policy
-    // is readable from inside the folder it bounds.
-    const profileDir = path.join(opts.fsioDir, "profiles");
-    const profilePath = path.join(profileDir, `${ctx.sessionId}.sb`);
-    const sandbox: SandboxConfig | null = opts.sandbox
-      ? { profilePath, root: opts.root, fsio: opts.fsioDir, tmp: opts.tmp }
-      : null;
-    // Dirs the agent's own tooling hardcodes outside $HOME (F30). Resolved
-    // against the shared folder, because the path is per-workspace.
-    const scratches = scratchDirs(entry, opts.root);
-    if (sandbox) {
-      fs.mkdirSync(profileDir, { recursive: true });
-      fs.writeFileSync(
-        profilePath,
-        agentProfile({ stateDirs, agent: entry.name, scratchDirs: scratches, ...(entry.scratchPatterns ? { scratchPatterns: entry.scratchPatterns } : {}) })
-      );
     }
 
     const env = synthesizeEnv(entry, { tmp: opts.tmp, ...(placedDir ? { stateDir: placedDir } : {}), ...(opts.env ? { from: opts.env } : {}) });
@@ -149,14 +128,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
       if (stderr.length > STDERR_KEEP) stderr.splice(0, stderr.length - STDERR_KEEP);
     };
 
-    let child: AgentProcess;
-    try {
-      child = spawnAgent({ file: bin, args: entry.args, env, cwd: opts.root, sandbox });
-    } catch (e) {
-      // Fail-closed: a sandbox that cannot be applied is a spawn that does
-      // not happen. 1002, with the reason, in the page.
-      throw new Error(`refusing to run ${entry.name} unconfined: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const child = spawn(bin, entry.args, { cwd: opts.root, env, stdio: ["pipe", "pipe", "pipe"] }) as AgentProcess;
 
     // ---- downlink: agent stdout → one DATA frame per ACP message
     const splitter = new LineSplitter({
@@ -208,12 +180,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
     });
     child.stdin.on("error", (e: Error) => keep(`[stdin] ${e.message}`));
 
-    // Both categories of hole, named in one list: the summary's job is that
-    // a human sees every path outside the granted folder, and "state" versus
-    // "the tooling's scratch" is a distinction the profile file draws (it
-    // has a commented section for each) rather than one this sentence needs.
-    const summary = profileSummary(path.basename(opts.root), [...stateDirs, ...scratches]);
-    ctx.log.info(`agent ${entry.name} (pid ${child.pid}) ${sandbox ? "confined" : "UNCONFINED"} — ${summary}`);
+    ctx.log.info(`agent ${entry.name} (pid ${child.pid}) in ${path.basename(opts.root)}/`);
 
     return {
       // Spawn-result extras (D13): everything the page needs to render the
@@ -225,9 +192,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
         // The host stamps `pid` with its own (D13: kinds run in-process);
         // the agent is a child of it, so its pid needs its own name.
         agentPid: child.pid ?? null,
-        sandboxed: !!sandbox,
-        confinement: sandbox ? summary : "not confined — this helper is running without a sandbox",
-        state: { mode: entry.state.mode, dirs: stateDirs, why: entry.state.why },
+        state: { mode: entry.state.mode, why: entry.state.why },
       },
 
       // ---- uplink: one DATA frame → one line on the agent's stdin
@@ -259,11 +224,7 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
           // folder. The path is a label for a capability it already has.
           cwd: opts.root,
           argv: [entry.bin, ...entry.args],
-          sandboxed: !!sandbox,
-          confinement: summary,
-          // relative to the shared folder: the page has a handle to it
-          profile: sandbox ? path.relative(opts.root, profilePath) : null,
-          state: { mode: entry.state.mode, dirs: stateDirs, why: entry.state.why },
+          state: { mode: entry.state.mode, why: entry.state.why },
           env: Object.keys(env).sort(),
         }),
         /** Everything that did not fit the payload channel. A stalled agent
@@ -285,10 +246,6 @@ export function acpKind(opts: AcpKindOptions): KindHandler {
           }, KILL_GRACE_MS);
           t.unref();
         }
-        // The profile outlives nothing: it was this session's policy.
-        try {
-          if (sandbox) fs.rmSync(profilePath, { force: true });
-        } catch {}
       },
     };
   };

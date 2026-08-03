@@ -9,10 +9,9 @@
 //
 // The agent here is a fixture (test-fake-agent.ts), never a real one: these
 // tests must not need an installed agent, a model key, or a network.
-// Confinement is off (`sandbox: false`, said out loud, never inferred),
+// Nothing here is confined — this demo dropped its sandbox (#145) —
 // which is also
 // what makes the suite runnable on CI's Linux leg; the profile itself is
-// tested in test-sandbox.ts.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -79,10 +78,8 @@ async function withAcp(
       fsioDir: path.join(root, ".fsio"),
       tmp: scratch,
       stateRoot,
-      sandbox: false, // deliberate, and the page is told (see the result test)
       agents: opts.agents ?? [FAKE],
       ...(opts.env ? { env: opts.env } : {}),
-      ...(opts.home ? { home: opts.home } : {}),
     })
   );
   await server.start();
@@ -180,15 +177,22 @@ test("a DATA frame with two messages is refused, and the agent never sees it", a
 
 // ------------------------------------------------ session facts the page reads (D13 result fields)
 
-test("the spawn result states who is running and whether it is confined (#96's shape)", async () => {
+test("the spawn result states who is running, and claims nothing about confinement", async () => {
   await withAcp(async (rig) => {
     const info = await rig.session.ready;
     assert.equal(info.kind, "acp");
     assert.equal(info["agent"], "fake");
     assert.equal(info["protocol"], "acp");
-    assert.equal(info["sandboxed"], false, "confinement is reported, never assumed");
-    assert.match(String(info["confinement"]), /not confined/);
     assert.equal((info["state"] as { mode: string }).mode, "place");
+    // This demo confines nothing (#145). The fields that used to say so are
+    // gone rather than reporting `false`, and that is the assertion: a page
+    // reading `sandboxed: false` renders "NOT sandboxed", which is a claim
+    // about a wall — and there is no wall here to have an opinion about.
+    // Absent is the honest shape; a falsy field would be a fresh promise
+    // that some future spawn might set it true.
+    for (const gone of ["sandboxed", "confinement", "profile"]) {
+      assert.ok(!(gone in info), `${gone} must not ride the spawn result any more`);
+    }
   });
 });
 
@@ -215,22 +219,25 @@ test("acp/info reports the policy path, argv, and the exact env the child got", 
   );
 });
 
-test('a "carve" posture names its dirs; nothing is inferred from $HOME', async () => {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "fsio-acp-home-")));
-  fs.mkdirSync(path.join(home, ".fake"));
-  const carver: AgentEntry = { ...FAKE, state: { mode: "carve", homeDirs: [".fake", ".not-there"], why: "fixture" } };
+test('an "own" posture is handed no placement variable, and says why', async () => {
+  // The posture outlived the sandbox that motivated half of it. What it used
+  // to decide was which dirs a Seatbelt profile opened; what it decides now
+  // is whether the child is told to keep its state somewhere else at all —
+  // and for these two agents the answer is no, because placing the state
+  // moves the identity with it and logs them out (MEASUREMENTS.md). An agent
+  // that quietly received a placement variable would come up as nobody.
+  const owner: AgentEntry = { ...FAKE, state: { mode: "own", why: "fixture keeps its credential beside its state" } };
   await withAcp(
     async (rig) => {
       await rig.session.ready;
       const { result } = await rig.session.request<Record<string, unknown>>("acp/info");
-      const state = result["state"] as { mode: string; dirs: string[] };
-      assert.equal(state.mode, "carve");
-      assert.deepEqual(state.dirs, [path.join(home, ".fake")], "a dir that does not exist is not carved");
-      assert.ok(!(result["env"] as string[]).includes("FAKE_STATE"));
+      const state = result["state"] as { mode: string; why: string };
+      assert.equal(state.mode, "own");
+      assert.equal(state.why, "fixture keeps its credential beside its state", "the reason travels to the page, not just the mode");
+      assert.ok(!(result["env"] as string[]).includes("FAKE_STATE"), "an owned posture must not be handed a placement variable");
     },
-    { agents: [carver], home }
+    { agents: [owner] }
   );
-  fs.rmSync(home, { recursive: true, force: true });
 });
 
 // ------------------------------------------------ the allow-list (#6) and lifecycle (D13)

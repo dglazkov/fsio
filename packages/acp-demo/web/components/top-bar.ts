@@ -83,11 +83,6 @@ class AcpTopBar extends SignalWatcher(LitElement) {
       <span class="name">${a ? a.agent : "fsio agent"}</span>
       ${f ? html`<span class="dim">in ${f.name}/</span>` : nothing}
       ${n > 1 ? html`<span class="dim" title="each one is its own agent process and its own conversation">${n} conversations here</span>` : nothing}
-      ${a
-        ? html`<span class="badge ${a.sandboxed ? "" : "open"}" title=${a.confinement}>
-            ${a.sandboxed ? "sandboxed" : "NOT sandboxed"}
-          </span>`
-        : nothing}
       ${adopted.get()
         ? html`<span class="joined" title="This page joined a conversation that was already in progress and had no record of it (#117). Everything above the note in the transcript is the agent's half only — what was typed into it lived in a browser record this one does not have.">joined in progress</span>`
         : resumed.get()
@@ -206,11 +201,8 @@ class AcpTopBar extends SignalWatcher(LitElement) {
     const d = diagnostics.get();
     return html`<div class="pop">
       ${a
-        ? html`<h3>what confines it</h3>
-            <pre>${a.confinement}</pre>
-            ${a.profile ? html`<pre class="dim">policy: ${a.profile} — that file is in the folder you granted; open it and read the whole thing.</pre>` : nothing}
-            <h3>where its state lives</h3>
-            <pre>${a.state.mode}${a.state.dirs.length ? `: ${a.state.dirs.join(", ")}` : ""}
+        ? html`<h3>where its state lives</h3>
+            <pre>${a.state.mode}
 ${a.state.why}</pre>`
         : nothing}
       ${d

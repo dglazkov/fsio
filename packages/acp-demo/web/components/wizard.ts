@@ -10,7 +10,7 @@ import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { adoptable, agents, gate, launch, phase, wizardStep, folder, helper, pickError, reconnectTo, resumeError, type AgentOffer, type Adoptable } from "../state";
-import { abandonAndStartNew, adoptSession, chooseAgent, declineRunning, forgetFolder, pickFolder, regrant, retryResume, onMac } from "../connection";
+import { abandonAndStartNew, adoptSession, chooseAgent, declineRunning, forgetFolder, pickFolder, regrant, retryResume } from "../connection";
 import { sinceLabel } from "../../src/discovery.js";
 
 // The one-liner (#106): CI force-pushes the bundled helper to the `acp-demo`
@@ -173,17 +173,6 @@ class AcpWizard extends SignalWatcher(LitElement) {
         and step 3 shows you what this machine has and how to get one. It will
         not start anything that isn't on its own list: this page names an
         agent, never a path.
-      </p>
-      <p class="fineprint">
-        ${onMac
-          ? html`macOS only (for now). The agent is sandboxed to that folder —
-              it reads the world and talks to the network (its brain is
-              remote), but writes anywhere outside the folder are denied. The
-              policy is a plain text file in
-              <code>.fsio/profiles/</code>, and this page will show it to you.`
-          : html`<strong>Heads up: the helper is macOS-only for now</strong>
-              (its sandbox is Apple's Seatbelt). The page connects from
-              anywhere; the helper side needs a Mac.`}
       </p>
       <div class="row">
         <button class="primary" @click=${() => wizardStep.set(2)}>I've run it — next</button>

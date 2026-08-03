@@ -341,11 +341,6 @@ class AcpChat extends SignalWatcher(LitElement) {
       <div class="title">${e.title}</div>
       ${e.locations.length ? html`<div class="where">${e.locations.join(", ")}</div>` : nothing}
       ${e.detail ? html`<pre>${e.detail}</pre>` : nothing}
-      ${facts
-        ? html`<div class="wall">
-            whatever you answer, ${facts.agent} is ${facts.sandboxed ? `confined — ${facts.confinement}` : "NOT confined: it can write anything you can"}
-          </div>`
-        : nothing}
       ${answered !== null
         ? html`<div class="answered">answered: ${e.options.find((o) => o.optionId === answered)?.name ?? answered}</div>`
         : superseded.get()
