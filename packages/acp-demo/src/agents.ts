@@ -159,7 +159,9 @@ export const AGENTS: AgentEntry[] = [
     bin: "pi-acp",
     args: [],
     title: "pi coding agent (ACP adapter)",
-    pkg: { name: "pi-acp", version: "0.0.33" },
+    // 0.0.32: the version MEASUREMENTS.md measured the `~/.pi` carve
+    // against, for the same reason the entry below pins F30's. Not latest.
+    pkg: { name: "pi-acp", version: "0.0.32" },
     // The demo's default subject: one small package, and model-agnostic —
     // which keeps the page an *ACP* client rather than a client of any one
     // vendor's agent. Caveat worth knowing before you drive it: pi reads and
@@ -197,10 +199,17 @@ export const AGENTS: AgentEntry[] = [
     bin: "claude-agent-acp",
     args: [],
     title: "Claude Code (ACP adapter)",
-    // 0.64.2, checked 2026-08-02. Install measured the same day: 111
-    // packages, 293 MB (260 MB of it the bundled Claude Code CLI), ~3 s,
-    // and `--ignore-scripts` produces a byte-identical tree (install.ts).
-    pkg: { name: "@agentclientprotocol/claude-agent-acp", version: "0.64.2" },
+    // **0.64.0 because that is the version F30 measured**, not because it is
+    // the newest — npm was already offering 0.64.2 when this was written,
+    // and taking it would have been "install whatever is current" wearing a
+    // pin's clothing. The profile below is a set of claims about one
+    // release; the pin's whole job is to make those claims true of the copy
+    // that actually runs. Bumping it means re-measuring F30 first.
+    //
+    // Install measured 2026-08-02 against this exact version: 111 packages,
+    // 293 MB (260 MB of it the bundled Claude Code CLI), ~3 s, and
+    // `--ignore-scripts` produces a byte-identical tree (install.ts).
+    pkg: { name: "@agentclientprotocol/claude-agent-acp", version: "0.64.0" },
     /** The one a machine with no agent is offered. It asks before it edits,
      *  and the consent card is what this demo is *for* — offering the other
      *  one would install an agent that never fires the surface the human came

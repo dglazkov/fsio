@@ -91,6 +91,14 @@ test("what the helper would install and what it tells you to type are the same s
   // automatic install is a machine that behaves differently depending on
   // which one you took, and the profile in this file is measured against one
   // specific version (F30) — so "latest" is the wrong answer on both paths.
+  //
+  // The rule this cannot check, and which was got wrong once already: the
+  // pinned version must be **the one that was measured**, not the newest.
+  // Both entries were first pinned to whatever `npm view` reported that day
+  // (0.64.2 and 0.0.33) while F30 and MEASUREMENTS.md had measured 0.64.0
+  // and 0.0.32 — which is "install whatever is current" wearing a pin's
+  // clothing, and defeats the entire point. Bumping a version here means
+  // re-measuring first; nothing mechanical will stop you.
   for (const a of AGENTS) {
     assert.ok(a.pkg, `${a.name} must carry npm coordinates`);
     assert.match(a.pkg!.version, /^\d+\.\d+\.\d+$/, `${a.name} must pin an exact version, never a range`);
