@@ -54,7 +54,7 @@ import {
   type AgentOffer,
 } from "./state";
 import { startWatching } from "./workspace";
-import { refreshPast } from "./history";
+import { openPast, refreshPast } from "./history";
 import { listAdoptable } from "./discovery";
 // Circular, in the same direction and for the same reason as terminal-demo's
 // connection.ts / tabs.ts: this file owns the folder and the client, that one
@@ -324,18 +324,19 @@ async function refreshHelper(root: FileSystemDirectoryHandle): Promise<void> {
   const roster = readRoster(acp.detail);
   agents.set(roster);
   // Conversations are open, or the human has deliberately left the page
-  // holding none: either way a roster change is news for nobody, and a
-  // spawn on the back of it would be a conversation nobody asked for. The
-  // watch-and-go path this guard makes room for is the first arrival only —
-  // a page sitting on "install an agent" with nothing behind it.
+  // holding none: either way a roster change is news for nobody, and the
+  // picker arriving on the back of one would be a modal nobody asked for.
+  // The watch-and-go path this guard makes room for is the first arrival
+  // only — a page sitting on "install an agent" with nothing behind it.
   if (convs.get().length || handsOff) return;
   await arrive(root, roster);
 }
 
 /** The human has been in a conversation and stepped out of one, so arrival
  *  is over: from here the page only opens what it is asked to open (#120).
- *  Without this, closing the last tab leaves a page that would spawn an
- *  agent by itself the next time the helper's roster moved. */
+ *  Discovered from one end — closing the last tab used to leave a page that
+ *  would spawn an agent by itself the next time the helper's roster moved —
+ *  and #140 made it the rule at both ends: arrival opens nothing either. */
 let handsOff = false;
 
 /** Everything that happens between "the helper is alive" and "there is a
@@ -379,35 +380,24 @@ export async function arrive(root: FileSystemDirectoryHandle, roster: AgentOffer
     // and not is one directory listing.
     if (await offerRunning(root)) return;
 
-    // A helper that publishes no roster is a pre-#102 one. Unknown detail is
-    // "not supported", never an error (D25), so let it choose for itself —
-    // exactly what every run did before this existed.
-    if (roster === null) {
-      await openNew(root, null);
-      return;
-    }
-
-    const ready = roster.filter((a) => a.installed);
-    reporter.event("roster", { installed: ready.map((a) => a.name), known: roster.length });
-    // The agent the human chose last time, if this machine still has it. The
-    // roster is live, so "still has it" is a question with a real answer:
-    // uninstall the agent between visits and the chooser comes back.
-    const remembered = await savedAgent().catch(() => null);
-    if (remembered && ready.some((a) => a.name === remembered)) {
-      reporter.event("agent-remembered", { agent: remembered });
-      await openNew(root, remembered);
-      return;
-    }
-    if (remembered && ready.length) log(`${remembered} is no longer installed here — asking again`);
-    // One agent: name it and go — the page has nothing to ask about. Zero or
-    // several: the human decides, which is the whole point (the helper used
-    // to pick the first that resolved, silently).
-    if (ready.length === 1) {
-      await openNew(root, ready[0]!.name);
-      return;
-    }
-    phase.set("wizard");
-    wizardStep.set(3);
+    // And stop. There used to be a third rung here that started one (#140).
+    //
+    // "Folder granted, helper alive, no conversation open" is one state, and
+    // it looked like two: closing the last chip left the quiet empty state,
+    // and reloading into the same place spawned an agent. That is archaeology
+    // — with one conversation the page WAS the conversation, so arriving
+    // meant starting one, and when #120 made "none open" a state the page
+    // could sit in, nobody came back to the tail of this function.
+    //
+    // The argument against the rung is the same one that put a confirm on
+    // "×": a conversation is a child process and a model bill (#120's
+    // decision 3). The page asked before you stopped paying and not before
+    // you started. `handsOff` below is this rule already, discovered from the
+    // other end and applied only within a visit — from here an agent starts
+    // when somebody asks for one, and the empty state is what asking looks
+    // like.
+    if (roster) reporter.event("roster", { installed: roster.filter((a) => a.installed).map((a) => a.name), known: roster.length });
+    phase.set("chat");
   } finally {
     arriving = false;
   }
@@ -452,12 +442,27 @@ async function restore(root: FileSystemDirectoryHandle): Promise<boolean> {
     if (outcome === "failed") unreachable = `${id} could not be rejoined. It looks like it is still running, so nothing was started in its place — it is in the “+” menu when you want to try again.`;
   }
 
+  // An id that is not running may still be a conversation this page was
+  // holding — as a document (#140). Reopening it is the whole reason a
+  // document is a chip: it rides the URL and the stored set like any other,
+  // so a reload comes back to what was on screen, and a link to a transcript
+  // opens the transcript. Asked only for ids that failed to join, and only
+  // after they have: a live conversation is never a document.
+  if (lost.length) {
+    await refreshPast(root).catch(() => {});
+    for (const id of [...lost]) {
+      const p = past.get().find((x) => x.id === id);
+      if (!p) continue;
+      await openPast(root, p).catch(() => {});
+      if (openIds().includes(id)) lost.splice(lost.indexOf(id), 1);
+    }
+  }
+
   const back = openIds();
   if (wanted.active && back.includes(wanted.active)) activate(wanted.active);
   reporter.event("restored", { opened: back, lost, unreachable: !!unreachable });
 
   if (lost.length) {
-    await refreshPast(root).catch(() => {});
     // The commonest way to lose one is a helper restart, which used to take
     // the conversation with it. It no longer does (#119, D26 rule 4), so say
     // where it went — this is the exact moment someone asks.
@@ -598,7 +603,11 @@ export async function declineRunning(): Promise<void> {
   log(`leaving ${rows.length} running conversation(s) alone and starting a new one`);
   adoptable.set([]);
   picking = false;
-  await arrive(root, agents.get());
+  // Explicitly, because the button says so. Arrival no longer starts anything
+  // (#140), and this is one of the two places where the human has already
+  // said "start one" — routing it through `arrive` would now drop them on an
+  // empty page after they pressed a button asking for a conversation.
+  await startAnother();
 }
 
 /** The roster as published by the helper (#102). Everything here arrives as
@@ -729,7 +738,9 @@ export async function abandonAndStartNew(): Promise<void> {
   log("the human chose to leave the old conversations and start a new one");
   resumeError.set(null);
   restored = true;
-  await arrive(root, agents.get());
+  // The other button that says "start a new one" — same reason as
+  // `declineRunning`.
+  await startAnother();
 }
 
 export { detachAllOnPagehide };

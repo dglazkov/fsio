@@ -239,7 +239,7 @@ export class AgentSession {
         kind: "note",
         text:
           `${this.#refusedOnJoin} file operation${this.#refusedOnJoin === 1 ? "" : "s"} the agent asked for before this page joined ` +
-          `${this.#refusedOnJoin === 1 ? "was" : "were"} answered with "ask again" rather than repeated — they were served once already, by whoever was here then.`,
+          `${this.#refusedOnJoin === 1 ? "was" : "were"} refused; it will ask again.`,
       });
       this.#refusedOnJoin = 0;
     }
@@ -459,22 +459,18 @@ export class AgentSession {
     // replaying at all: the agent is still parked on this request id, so
     // the card comes back clickable and answering it writes the response it
     // has been waiting for since before the refresh.
+    // The card comes back live, and for a joined conversation (#117) that is
+    // the honest answer rather than a hedge: the agent may be parked on this
+    // request right now, and it may equally have had its answer an hour ago
+    // from a page in another browser. Clicking settles the first case and is
+    // ignored in the second — a response to a resolved id is a duplicate,
+    // which the protocol already says to drop.
+    //
+    // The page used to say all of that in a note above the card. It said it
+    // to a reader looking at a question with buttons under it, which is the
+    // whole message; the rest was the page admiring the machinery that got
+    // the card back.
     log(`permission ${origin.replayed ? "still open from before the refresh" : "requested"}: ${tc.title ?? "(untitled)"} [${options.map((o) => o.optionId).join(", ")}]`);
-    if (origin.replayed) {
-      // The card stays live either way, and for a joined conversation (#117)
-      // that is the honest answer rather than a hedge: the agent may be
-      // parked on this request right now, and it may equally have had its
-      // answer an hour ago from a page in another browser. Clicking settles
-      // the first case and is ignored in the second — a response to a
-      // resolved id is a duplicate, which the protocol already says to drop.
-      // What the page must not do is render either guess as the fact.
-      this.#push({
-        kind: "note",
-        text: this.#adopted
-          ? "this question was asked before this page joined the conversation. Nothing here recorded what was answered, so the buttons stay live: if the agent is still waiting, clicking answers it — and if it has already moved on, clicking changes nothing."
-          : "this question was still waiting when the page reloaded — the agent is holding for an answer.",
-      });
-    }
     // Counted while it is unanswered (#120). With one conversation the page
     // itself was the notification; with N, an agent blocked on a consent
     // question in a tab nobody is looking at is this demo's own subject
@@ -522,14 +518,12 @@ export class AgentSession {
     // A transcript (#119). This call was served — or refused — by a page
     // that is gone, against a folder that has moved on, on behalf of an
     // agent that has exited. Every branch below is about answering someone;
-    // there is nobody to answer. Render the fact and stop.
-    if (this.#history) {
-      this.#push({
-        kind: "note",
-        text: `the agent asked the page to ${method === "fs/write_text_file" ? "write" : "read"} ${path}${path ? "" : "(no path)"} — served then, not now.`,
-      });
-      return NO_RESPONSE;
-    }
+    // there is nobody to answer. Stop, and say nothing: the tool entry for
+    // this call is already in the transcript, saying what was asked and how
+    // it went. A note beside it saying the page is not doing it again is
+    // addressed to somebody worried about the replay, which is nobody
+    // reading a conversation.
+    if (this.#history) return NO_RESPONSE;
     // Superseded (D18, #120). The downlink is a BROADCAST — every page
     // reading this folder sees the agent's `fs/*` requests, not just the one
     // holding the uplink — so a fenced window would happily perform the
@@ -558,7 +552,7 @@ export class AgentSession {
     else
       this.#push({
         kind: "note",
-        text: `the agent asked to ${method === "fs/write_text_file" ? "write" : "read"} ${path} while this page was away — it was told to ask again rather than have it done blind.`,
+        text: `the agent asked to ${method === "fs/write_text_file" ? "write" : "read"} ${path} while this page was away; it was told to ask again.`,
       });
     throw { code: -32603, message: "the page that received this request reloaded; nothing was done. Send it again." };
   }

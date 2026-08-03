@@ -72,7 +72,10 @@ export function activate(id: string): void {
   syncOpen();
 }
 
-function add(c: Conv): void {
+/** Put one in the strip and bring it to the front. Exported because a
+ *  document is added the same way a live conversation is (#140) — that
+ *  sameness is the point of the change, so it goes through one function. */
+export function addConv(c: Conv): void {
   convs.set([...convs.get(), c]);
   activate(c.id);
 }
@@ -162,7 +165,7 @@ export async function openNew(root: FileSystemDirectoryHandle, name: string | nu
   c.title.set(name || "agent");
   const io = convIO(c);
   const conn = newConnection(s, c);
-  add(c);
+  addConv(c);
   watchSession(c, s);
 
   let facts: Record<string, unknown>;
@@ -379,7 +382,7 @@ async function attach(root: FileSystemDirectoryHandle, rec: StickyRecord, joinin
   const s = client.attachSession(rec.sessionId, { pollMs: 15, replay: true, client: "acp-demo" });
   c.session = s;
   const conn = newConnection(s, c);
-  add(c);
+  addConv(c);
   watchSession(c, s);
   // Constructed before `ready` is awaited, because replay runs inside the
   // attach grant — the frames rebuilding this conversation arrive before
@@ -450,19 +453,12 @@ async function attach(root: FileSystemDirectoryHandle, rec: StickyRecord, joinin
       {
         kind: "note",
         text:
-          "this conversation was already running when this page joined it, so what follows is the agent's half, replayed from what the folder kept. " +
-          "The turns typed into it before that moment rode the uplink, which the folder never sees, and the browser record that carried them is not this one — " +
-          "so they are not here. Nor is any verdict on a permission question from before then: this page cannot tell one that was already answered from one the agent is still waiting on.",
+          "joined in progress — what follows is the agent's half, replayed from what the folder kept. " +
+          "What was typed into it before now is not here, and neither are the answers to any questions it asked before now.",
       },
       ...c.entries.get(),
     ]);
   }
-  io.push({
-    kind: "note",
-    text: joining
-      ? `you are on the wire with ${rec.agentName || rec.agent} now — from here on this is an ordinary conversation.`
-      : `back in the same conversation — ${rec.agentName || rec.agent} kept running while this page was away.`,
-  });
   reporter.event(joining ? "adopted" : "resumed", { sessionId: rec.sessionId, epoch, adopted: rec.adopted, prompts: rec.prompts.length, frames: conn.frameIndex });
   step(joining ? "joined a conversation in progress" : "reattached");
   return "joined";
@@ -582,12 +578,14 @@ function fence(c: Conv, s: FsioSession, epoch: number): void {
   if (c.turn.get() === "thinking" || c.turn.get() === "cancelling") c.turn.set("idle");
   reporter.event("superseded", { session: c.id, byEpoch: epoch, ours: s.epoch, droppedQueue: q.length });
   log(`conversation ${c.id} taken over by writer epoch ${epoch} — reads continue, sends are refused`);
+  // A seam, not an explanation. The banner that replaced the composer is the
+  // one saying what a takeover is and offering the way out of it; this is
+  // only the mark in the transcript for where it happened — plus the one
+  // fact the banner cannot know, which is what was still queued here.
   convIO(c).push({
     kind: "note",
     text:
-      "another window took this conversation over just now. Attaching IS taking over (D18), so there is exactly one page driving an agent at a time and it is no longer this one. " +
-      "What still arrives below is real — the agent's half rides the folder, which every page can read. What is missing is the other half: prompts ride the uplink, which only the holder writes, " +
-      "so from here on you will see answers without the questions that produced them." +
+      "another window took this conversation over here." +
       (q.length ? ` ${q.length} queued prompt${q.length === 1 ? "" : "s"} will not be sent.` : ""),
   });
 }
@@ -708,6 +706,16 @@ export function cancelTurn(): void {
 export async function closeConv(id: string, confirmed = false): Promise<void> {
   const c = find(id);
   if (!c) return;
+  // A document (#140). Nothing to stop, nothing to close, nothing to forget:
+  // the transcript stays in the folder and the chip can be opened again from
+  // "+". So "×" here is genuinely just putting it away, and asking first
+  // would be a confirm on a gesture with no cost — which is what teaches
+  // people to click through the one that has.
+  if (c.doc) {
+    reporter.event("history-close", { id: c.id });
+    remove(c);
+    return;
+  }
   const s = c.session;
   const alive = !!s && c.turn.get() !== "gone";
   if (alive && !confirmed) return;
@@ -794,4 +802,8 @@ reporter.convSummary = () =>
     asking: c.asking.get(),
     superseded: c.superseded.get(),
     epoch: c.session?.epoch ?? null,
+    // A conversation that is over, open as a chip (#140). The cooperative
+    // loop has to be able to tell one from a live conversation whose agent
+    // exited: both read "gone", and only one of them was ever a session.
+    document: !!c.doc,
   }));

@@ -102,22 +102,20 @@ export interface AgentFacts {
  *  defensively in `../src/transcripts.ts` — a transcript is a file any
  *  co-tenant of the folder can write (D20). */
 export const past = signal<PastConversation[]>([]);
-/** The one being read, or null for the live conversation. While it is set
- *  the chat pane is a document: no composer, nothing clickable, nothing on
- *  the wire. */
-export const viewing = signal<PastConversation | null>(null);
-/** Whether the conversation being read has its human half, and how much of
- *  it (#123) — null when this browser did not drive it, which is the state
- *  every transcript was in before the record was demoted rather than
- *  deleted. `placed` is false when the anchors no longer line up with the
- *  segments the folder kept: the turns are all there, in the wrong places.
- *  The banner reads this, because "what you are looking at is half a
- *  conversation" and "…is the whole of one" are different documents.
+/** How much of the human's half a document has (#123) — null when this
+ *  browser did not drive the conversation, which is the state every
+ *  transcript was in before the record was demoted rather than deleted.
+ *  `placed` is false when the anchors no longer line up with the segments the
+ *  folder kept: the turns are all there, in the wrong places.
  *
  *  `adopted` is a third state between them (#117): the browser has a half,
  *  but only from the point the page joined the conversation — before that
  *  there are no turns anywhere. */
-export const viewingHalf = signal<{ prompts: number; placed: boolean; adopted: boolean } | null>(null);
+export interface DocumentHalf {
+  prompts: number;
+  placed: boolean;
+  adopted: boolean;
+}
 
 export type Turn = "starting" | "idle" | "thinking" | "cancelling" | "gone";
 
@@ -171,19 +169,6 @@ export interface NoteEntry {
   text: string;
 }
 export type Entry = UserEntry | TextEntry | ToolEntry | PermissionEntry | NoteEntry;
-
-/** The conversation being *read* (#119) — a document, kept apart from the
- *  live one on purpose. The agent may still be mid-turn while someone opens
- *  a past conversation; one list would let its words land in the middle of
- *  a transcript about a different session, and would lose them on the way
- *  back. Two lists mean "close" returns to a live conversation that carried
- *  on without being watched. */
-export const pastEntries = signal<Entry[]>([]);
-
-export function pushPast(e: Entry): Entry {
-  pastEntries.set([...pastEntries.get(), e]);
-  return e;
-}
 
 /** Where a given AgentSession's output goes. Passed to the session rather
  *  than chosen at each call site: which conversation a message belongs to
@@ -292,11 +277,31 @@ export interface Conv {
    *  when there is nothing worth coming back to yet. */
   record: StickyRecord | null;
   diagTimer?: ReturnType<typeof setInterval>;
+  /** The ended conversation this one is a *document* of (#119), or null when
+   *  it is live (#140).
+   *
+   *  Reading a transcript used to be a mode the whole page went into: a
+   *  page-wide `viewing` signal, a second entry list beside this one, and a
+   *  tab strip that hid itself because there was nothing it could offer to
+   *  switch to. That made a document something other than a conversation —
+   *  unswitchable, unshareable, and gone on reload — when the only thing
+   *  actually true of it is that it is over. So it is a conversation with no
+   *  session behind it, and everything that follows from being one is free:
+   *  it sits in the strip beside live ones, it rides the URL (P1), and it
+   *  comes back on reload from the same set the live ones do.
+   *
+   *  What is NOT free, and is the reason the fields below stay: nothing in a
+   *  document may act. `documentIO` in history.ts is where that is stated
+   *  once, in the plumbing, rather than re-checked in every handler. */
+  readonly doc: PastConversation | null;
+  readonly docHalf: DocumentHalf | null;
 }
 
-export function newConv(id: string): Conv {
+export function newConv(id: string, doc: PastConversation | null = null, docHalf: DocumentHalf | null = null): Conv {
   return {
     id,
+    doc,
+    docHalf,
     session: null,
     agent: null,
     entries: signal<Entry[]>([]),
@@ -333,6 +338,17 @@ export const diagnostics = computed<Diagnostics | null>(() => active.get()?.diag
 export const resumed = computed<boolean>(() => active.get()?.resumed.get() ?? false);
 export const adopted = computed<boolean>(() => active.get()?.adopted.get() ?? false);
 export const superseded = computed<number>(() => active.get()?.superseded.get() ?? 0);
+/** The document on screen, or null when the conversation on screen is live.
+ *  A computed rather than a signal of its own (#140): "which conversation am
+ *  I looking at" is one question, and it had two answers while a document was
+ *  a mode instead of a chip. */
+export const viewing = computed<PastConversation | null>(() => active.get()?.doc ?? null);
+export const viewingHalf = computed<DocumentHalf | null>(() => active.get()?.docHalf ?? null);
+/** Unanswered consent questions in the conversation on screen. The chip reads
+ *  the per-conversation counter to shout across tabs; this is the same number
+ *  for the pane that is already looking at it, which needs it to say who the
+ *  turn is actually waiting on. */
+export const asking = computed<number>(() => active.get()?.asking.get() ?? 0);
 
 /** Everything an `AgentSession` does that is not ACP: where its output goes,
  *  what the turn is, and what gets written down.

@@ -13,11 +13,19 @@
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { active, agentFacts, convs, entries, notice, pastEntries, phase, queued, superseded, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
+import { active, agentFacts, asking, convs, entries, notice, phase, queued, superseded, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
 import { cancelTurn, sendPrompt, unqueue } from "../conversations";
-import { retakeSession, startAnother } from "../connection";
-import { closePast } from "../history";
+import { endSession, retakeSession, startAnother } from "../connection";
 import { renderMarkdown } from "../markdown";
+
+/** What the page says while it waits. None of them is a claim about what the
+ *  agent is doing — the page cannot know that, and an honest-looking one
+ *  ("reading your files") would be a guess dressed as a fact. They are all
+ *  synonyms for "still going". */
+const WORDS = [
+  "thinking", "pondering", "mulling", "puzzling", "noodling", "ruminating",
+  "considering", "deliberating", "percolating", "chewing on it", "turning it over",
+];
 
 class AcpChat extends SignalWatcher(LitElement) {
   static override styles = css`
@@ -42,6 +50,25 @@ class AcpChat extends SignalWatcher(LitElement) {
     .user.queued .drop:hover { color: #ef8a95; background: none; }
     button.queue { border-color: #4c566a; color: #9aa5b8; }
     .thought { color: #7b8598; font-size: 0.9rem; }
+    /* The turn, where the turn is happening. It used to be a word in the top
+       bar, which is where a page says things about itself — but "it is
+       thinking" is the newest thing in the conversation, not a property of
+       the page, and with N conversations the top bar was saying it about
+       whichever one you happened to be looking at. So it is the last row of
+       the log, and it goes away when the turn ends. */
+    .working { display: flex; align-items: center; gap: 0.5rem; color: #7b8598; font-size: 0.9rem; }
+    .working .pulse {
+      width: 7px; height: 7px; border-radius: 50%; background: #88c0d0; flex: none;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .working .pulse { animation: none; opacity: 0.8; } }
+    .working .secs { color: #5c6675; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+    /* Blocked on the human. The same blue the permission card and the chip's
+       badge use, because it is the same fact in its third place — and steady
+       rather than pulsing, since nothing is happening until you act. */
+    .working.yours { color: #88c0d0; }
+    .working.yours .pulse { background: #5e81ac; animation: none; }
     /* Markdown, rendered from a token tree by ../markdown.ts. Paragraphs
        keep their newlines (pre-wrap) because the parser keeps soft breaks:
        in chat, a newline means a newline. */
@@ -112,6 +139,13 @@ class AcpChat extends SignalWatcher(LitElement) {
     .composer.fenced .what { flex: 1; font-size: 0.87rem; color: #ebcb8b; }
     .composer.fenced .hint { display: block; color: #9aa5b8; font-size: 0.82rem; margin-top: 0.25rem; }
     .composer.fenced button { flex: none; }
+    /* A document (#140). The same slot and the same shape as the fenced
+       banner, quieter: fenced is a situation you can act on, and this is
+       simply what the conversation is. */
+    .composer.over { align-items: center; background: #191c22; }
+    .composer.over .what { flex: 1; font-size: 0.87rem; color: #9aa5b8; }
+    .composer.over .hint { display: block; color: #7b8598; font-size: 0.82rem; margin-top: 0.25rem; }
+    .composer.over button { flex: none; }
     textarea {
       flex: 1; resize: none; background: #191c22; color: #d8dee9; font: inherit;
       border: 1px solid #2c313c; border-radius: 8px; padding: 0.55rem 0.7rem; min-height: 2.6rem; max-height: 9rem;
@@ -143,30 +177,36 @@ class AcpChat extends SignalWatcher(LitElement) {
     // A document, not a session (#119). No composer at all rather than a
     // disabled one: there is nothing on the other end of it, and a text box
     // that looks like it might send is the wrong kind of hopeful.
+    //
+    // What replaces it says so, from the composer's own slot — the same place
+    // the fenced banner speaks from, for the same reason (#140). That slot is
+    // where the page says what you can do here; at the top of the log this
+    // was a caption on the transcript instead, which made a document a
+    // different shape of page rather than the same page with the input
+    // turned off.
     if (v) {
       const half = viewingHalf.get();
-      const kept = v.logs.length === 1 ? "the log" : `${v.logs.length} log segments`;
       return html`
-        <div class="log" id="log">
-          <div class="reading">
+        <div class="log" id="log">${entries.get().map((e) => this.#entry(e))}</div>
+        <div class="composer over">
+          <div class="what">
             reading a conversation that ended${v.ended ? ` on ${new Date(v.ended).toLocaleString()}` : ""}${v.agent ? ` · ${v.agent}` : ""}
-            <span class="hint">
-              ${half
-                ? html`The agent's half is replayed from ${kept} the helper kept in this folder. Your
-                  ${half.prompts === 1 ? "one turn" : `${half.prompts} turns`} — and the answers you gave below — rode the uplink, which the
-                  folder never sees; they are woven back in from this browser's own record${half.placed ? "" : ", though not in their original places"}.
-                  ${half.adopted
-                    ? html`That record starts where this page joined the conversation, not where the conversation started — anything typed before then was
-                      recorded in a browser that is not this one.`
-                    : nothing}
-                  Open this folder in another browser and only the agent's half is there.`
-                : html`This is the agent's half, replayed from ${kept} the helper kept in this folder. Your own prompts rode the uplink,
-                  which is not what the folder keeps — and this browser has no record of this conversation, so they are not here, and
-                  neither are the answers you gave to any question below.`}
-            </span>
-            <button class="close" @click=${() => closePast()}>close and go back</button>
+            <!-- A line only when there is something to explain. A transcript
+                 with your turns in it, in the right places, looks like a
+                 conversation because it is one — the reader has no symptom,
+                 and where the missing half went is the page's business, not
+                 theirs. The two cases that DO show: prompts absent from
+                 between the agent's messages, and prompts sitting in the
+                 wrong places. If you later open this folder somewhere else,
+                 that browser lands in the first case and says so itself, at
+                 the moment it is true. -->
+            ${!half
+              ? html`<span class="hint">Your own turns are not here — the folder keeps only the agent's half.</span>`
+              : half.placed
+                ? nothing
+                : html`<span class="hint">Your turns are all here, but not necessarily in the places you typed them.</span>`}
           </div>
-          ${pastEntries.get().map((e) => this.#entry(e))}
+          <button @click=${() => void endSession(v.id, true)}>close</button>
         </div>
       `;
     }
@@ -183,7 +223,7 @@ class AcpChat extends SignalWatcher(LitElement) {
           <span class="hint">
             ${convs.get().length
               ? "Pick one from the strip above."
-              : "Nothing is on screen. Start another agent in this folder, or use “+” above to rejoin one that is still running here."}
+              : "Start a conversation in this folder, or open “+” above — it lists every conversation this folder knows about, the ones still running and the ones that have ended."}
           </span>
           <button class="close" @click=${() => void startAnother()}>Start a conversation</button>
         </div>
@@ -193,6 +233,7 @@ class AcpChat extends SignalWatcher(LitElement) {
       <div class="log" id="log">
         ${n ? html`<div class="banner">${n.msg}<span class="hint">${n.hint}</span></div>` : nothing}
         ${entries.get().map((e) => this.#entry(e))}
+        ${this.#working(t)}
         ${q.map(
           (text, i) => html`<div class="entry user queued">
             ${text}
@@ -233,7 +274,7 @@ class AcpChat extends SignalWatcher(LitElement) {
         <textarea
           id="input"
           placeholder=${t === "gone"
-            ? "the agent is gone — “new conversation” up top starts another one"
+            ? "the agent is gone — “+” in the strip above starts another one"
             : busy
               ? "type ahead — this goes when the turn ends"
               : "ask the agent to do something in this folder…"}
@@ -248,11 +289,80 @@ class AcpChat extends SignalWatcher(LitElement) {
     `;
   }
 
+  /** The rotating word, the seconds, and which conversation they belong to.
+   *  Keyed by conversation because switching chips mid-turn must not hand
+   *  the new one the old one's stopwatch. */
+  #tick: ReturnType<typeof setInterval> | undefined;
+  #ticks = 0;
+  #since = 0;
+  #word = 0;
+  #workingOn = "";
+
+  /** The last row of the log while the agent works, and gone the moment it
+   *  stops (the shape a CLI has trained everyone on). The word rotates every
+   *  four seconds — it says nothing the elapsed count does not, and that is
+   *  the point: it is the part of the row that proves the page is still
+   *  running rather than frozen. */
+  #working(t: ReturnType<typeof turn.get>): TemplateResult | typeof nothing {
+    if (t === "starting") return this.#row("starting the agent", null);
+    if (t === "cancelling") return this.#row("stopping", null);
+    if (t !== "thinking") return nothing;
+    // The ticker starts in updated(), which is one frame behind this — so the
+    // first frame of a turn has no stopwatch yet, and says 0 rather than the
+    // seconds since 1970.
+    const secs = this.#since ? Math.floor((Date.now() - this.#since) / 1000) : 0;
+    // The turn is in flight either way, but it is not the same wait, and a
+    // rotating "pondering…" over a card the agent is blocked on is the page
+    // lying about who is holding things up. That distinction is this demo's
+    // subject (#18), so the row says which of the two it is.
+    const n = asking.get();
+    if (!n) return this.#row(WORDS[this.#word % WORDS.length]!, secs, false);
+    if (superseded.get()) return this.#row("waiting for an answer in the window driving this conversation", secs, true);
+    return this.#row(n === 1 ? "waiting for your answer" : `waiting for your ${n} answers`, secs, true);
+  }
+
+  /** `yours` swaps the pulse for a steady dot: the agent working is something
+   *  happening, and the agent waiting on you is not. */
+  #row(word: string, secs: number | null, yours = false): TemplateResult {
+    return html`<div class="entry working ${yours ? "yours" : ""}">
+      <span class="pulse"></span>
+      <span>${word}${yours ? "" : "…"}</span>
+      ${secs === null ? nothing : html`<span class="secs">${secs}s</span>`}
+    </div>`;
+  }
+
+  /** One interval while a turn is in flight, none otherwise. Restarted when
+   *  the conversation on screen changes, which is also what resets the count
+   *  and picks a new word to start from. */
+  #syncTicker(): void {
+    const key = !viewing.get() && turn.get() === "thinking" ? (active.get()?.id ?? "") : "";
+    if (key === this.#workingOn) return;
+    this.#workingOn = key;
+    clearInterval(this.#tick);
+    this.#tick = undefined;
+    if (!key) return;
+    this.#since = Date.now();
+    this.#ticks = 0;
+    this.#word = Math.floor(Math.random() * WORDS.length);
+    this.#tick = setInterval(() => {
+      if (++this.#ticks % 4 === 0) this.#word++;
+      this.requestUpdate();
+    }, 1000);
+  }
+
+  override disconnectedCallback(): void {
+    clearInterval(this.#tick);
+    this.#tick = undefined;
+    this.#workingOn = "";
+    super.disconnectedCallback();
+  }
+
   /** Which document the reader has already been placed in, so re-renders
    *  don't yank them back to the top of it. */
   #placedIn: string | null = null;
 
   protected override updated(): void {
+    this.#syncTicker();
     const log = this.renderRoot.querySelector("#log");
     if (!log) return;
     const v = viewing.get();
@@ -330,11 +440,10 @@ class AcpChat extends SignalWatcher(LitElement) {
         ${e.detail ? html`<pre>${e.detail}</pre>` : nothing}
         ${answered === null
           ? html`<div class="opts">
-              offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— what was answered isn't in the folder's copy (it rode the
-              uplink), and this browser has no record of it either.
+              offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— what was answered is not recorded anywhere this
+              page can see.
             </div>`
-          : html`<div class="answered">answered: ${e.options.find((o) => o.optionId === answered)?.name ?? answered}</div>
-              <div class="opts">from this browser's record — the folder's copy has only the question.</div>`}
+          : html`<div class="answered">answered: ${e.options.find((o) => o.optionId === answered)?.name ?? answered}</div>`}
       </div>`;
     return html`<div class="entry perm">
       <div class="who">the agent is asking${e.toolKind && e.toolKind !== "other" ? ` · ${e.toolKind}` : ""}</div>
@@ -349,9 +458,14 @@ class AcpChat extends SignalWatcher(LitElement) {
             // uplink — this one's response would not go out. Buttons here
             // would be the worst kind of wrong: they look like the consent
             // gesture this whole demo is about, and they would do nothing.
+            //
+            // What is NOT said here is why (#140 question 8): the banner that
+            // replaced the composer is saying it, a few hundred pixels down
+            // and once, and it is the half with the button. This card's job
+            // is the half only it knows — which question is the one blocked.
             html`<div class="opts">
-              offered: ${e.options.map((o) => html`<code>${o.name}</code> `)}— the agent is waiting, but another window is
-              driving this conversation, so the answer has to come from there. “take it back” below moves it here.
+              waiting on ${e.options.map((o) => html`<code>${o.name}</code> `)}— answering belongs to the window driving this
+              conversation, below.
             </div>`
           : html`<div class="row">
               ${e.options.map(
