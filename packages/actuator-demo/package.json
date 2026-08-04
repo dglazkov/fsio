@@ -1,0 +1,37 @@
+{
+  "name": "@fsio/actuator-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio actuator demo: local CLI commands applied to page-owned state",
+  "type": "module",
+  "bin": {
+    "actuator-demo-helper": "./dist/helper.js",
+    "actuator": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit",
+    "dev": "vite"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty && tsc --pretty -p web/tsconfig.json && vite build --logLevel warn",
+      "files": ["src/**", "web/**", "vite.config.ts", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**", "dist-web/**"],
+      "clean": "if-file-deleted",
+      "dependencies": ["../ui:build"]
+    },
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-model.js dist/test-queue.js",
+      "files": [],
+      "output": [],
+      "dependencies": ["build"]
+    }
+  },
+  "dependencies": {
+    "@fontsource/instrument-serif": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fsio/ui": "*",
+    "lit": "^3.3.0"
+  }
+}
