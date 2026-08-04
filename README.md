@@ -70,6 +70,25 @@ Cloud Run on `v*` tags, each as its own service:
 - [/terminal](https://terminal-demo.pewter.town)
 - [/acp](https://agent-demo.pewter.town)
 
+A third runs from the repo only, for now — no bundled branch, no deployment
+([#153](https://github.com/dglazkov/fsio/issues/153)):
+
+```sh
+npm run actuator-helper -- ~/your-folder   # the switchboard
+npm run -w @fsio/actuator-demo dev         # the page, on :8768
+npm run actuator -- --dir ~/your-folder tabs add --title Build --message "CI is running"
+```
+
+`/actuator` runs the other two backwards. There, the page reaches down and
+drives your machine; here a CLI on your machine drives the page — you type
+`actuator tabs add …` in a terminal and a tab appears in the browser. The
+page owns its state (IndexedDB; nothing about it is in the folder), and the
+CLI is an fsio *client* in its own right: per invocation it opens a session,
+sends one command, reads the receipt and closes. Two session kinds
+([D13](spec/DECISIONS.md#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry)),
+one folder, no socket anywhere. No page open means no command — the CLI says
+so and exits 3.
+
 The `/acp` helper ships **no agent** ([#100](https://github.com/dglazkov/fsio/issues/100)):
 vendoring an ACP adapter costs ~293 MB of transitive dependencies, and an
 agent you installed is one you can also inspect, update and revoke. When it
@@ -99,6 +118,7 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `packages/bench` — node bench clients + protocol/lifecycle/client-conformance tests
 - `packages/terminal-demo` — /terminal demo helper: sandboxed working-folder shell (consumes `@fsio/host`)
 - `packages/acp-demo` — /acp demo: page + helper, a browser that is an ACP client driving a local agent
+- `packages/actuator-demo` — /actuator demo: page + helper + `actuator` CLI, control flowing from the machine into a page that owns its state
 - `packages/fsiod` — the hub daemon and the `fsio` CLI: one granted folder,
   many workspaces (also consumes `@fsio/host`)
 

@@ -1,0 +1,60 @@
+{
+  "name": "@fsio/actuator-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "fsio /actuator demo: page + helper + CLI — control flowing from the machine to a page that owns its own state",
+  "type": "module",
+  "bin": {
+    "actuator-demo-helper": "./dist/helper.js",
+    "actuator": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit",
+    "dev": "vite"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty && tsc --pretty -p web/tsconfig.json && vite build --logLevel warn",
+      "files": [
+        "src/**",
+        "web/**",
+        "vite.config.ts",
+        "tsconfig.json",
+        "../../tsconfig.base.json"
+      ],
+      "output": [
+        "dist/**",
+        "dist-web/**"
+      ],
+      "clean": "if-file-deleted",
+      "dependencies": [
+        "../client:build",
+        "../common:build",
+        "../host:build",
+        "../ui:build"
+      ]
+    },
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-model.js dist/test-args.js dist/test-router.js dist/test-loop.js",
+      "files": [
+        "../host/src/**",
+        "../client/src/**"
+      ],
+      "output": [],
+      "dependencies": [
+        "build"
+      ]
+    }
+  },
+  "dependencies": {
+    "@fontsource/instrument-serif": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fsio/client": "*",
+    "@fsio/common": "*",
+    "@fsio/host": "*",
+    "@fsio/ui": "*",
+    "@lit-labs/signals": "^0.1.3",
+    "lit": "^3.3.0"
+  }
+}
