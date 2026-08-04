@@ -125,10 +125,12 @@ const SHEET = `
 export const ICON_NAMES = [
   "add",
   "check_circle",
+  "chevron_right",
   "close",
   "contrast",
   "content_copy",
   "dark_mode",
+  "draft",
   "edit_document",
   "error",
   "folder_open",

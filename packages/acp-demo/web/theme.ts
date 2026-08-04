@@ -12,8 +12,10 @@
 // nothing else.
 import "@fontsource/instrument-serif";
 import "@fontsource/jetbrains-mono";
+import { html } from "lit";
 import {
   ICON_NAMES,
+  ago,
   controls,
   glass,
   icons,
@@ -127,6 +129,7 @@ function paintStrip(): void {
     { id: "c", name: "docs sweep", dot: "fenced", dotTitle: "another window drives this one" },
     { id: "d", name: "spike", dot: "bad" },
     { id: "e", name: "yesterday's thread", dot: "doc", quiet: true },
+    { id: "f", name: "state.ts", secondary: "packages/acp-demo/web", icon: "draft", title: "a file this page has open" },
   ];
   strip.activeId = "a";
   strip.confirmFor = (c) => ({
@@ -141,6 +144,31 @@ function paintStrip(): void {
   strip.addEventListener("select", (e) => {
     strip.activeId = (e as CustomEvent<{ id: string }>).detail.id;
     strip.requestUpdate();
+  });
+}
+
+/** The real tree, over a folder shaped like this repo's. One file is lit —
+ *  `hotSince` a second ago against a `now` this page sets — because the glow
+ *  and the reveal that comes with it are the whole reason the tree is allowed
+ *  to replace a most-recent-first feed. */
+function paintTree(): void {
+  const tree = document.getElementById("tree") as HTMLElementTagNameMap["fsio-file-tree"];
+  const now = Date.now();
+  const min = 60_000;
+  tree.now = now;
+  tree.rows = [
+    { path: "README.md", size: 4_100, modified: now - 40 * min, seenChanged: 0 },
+    { path: "packages/acp-demo/web/state.ts", size: 14_800, modified: now - 3 * min, seenChanged: 0 },
+    { path: "packages/acp-demo/web/files.ts", size: 6_200, modified: now - 1_000, seenChanged: now - 1_000 },
+    { path: "packages/ui/src/components/file-tree.ts", size: 7_400, modified: now - 9 * min, seenChanged: 0 },
+    { path: "spec/PROTOCOL.md", size: 31_000, modified: now - 2 * 60 * min, seenChanged: 0 },
+    { path: "spec/FINDINGS.md", size: 27_500, modified: now - 5 * 60 * min, seenChanged: 0 },
+  ];
+  tree.open = ["packages/acp-demo/web/state.ts"];
+  tree.metaFor = (r) => ago(now - r.modified);
+  tree.actionsFor = (r) => html`<button title=${`keep a copy of ${r.path}`}>⤓</button>`;
+  tree.addEventListener("open", (e) => {
+    tree.open = [(e as CustomEvent<{ path: string }>).detail.path];
   });
 }
 
@@ -165,4 +193,5 @@ wireSwitch();
 paintSwatches();
 paintIcons();
 paintStrip();
+paintTree();
 paintRows();

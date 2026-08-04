@@ -188,6 +188,57 @@ export interface FileRow {
 export const files = signal<FileRow[]>([]);
 export const workspaceNote = signal<string>("");
 
+/** A file open in the strip beside the conversations.
+ *
+ *  The id IS the path, prefixed, and that is the whole identity scheme: a tab
+ *  is a window onto a file, so opening the same file twice is the same window
+ *  rather than a second one. It sits in the same strip as a conversation on
+ *  purpose — both are "something this page has open in this folder" — and the
+ *  chip wears an icon so the two kinds are told apart before they are read.
+ *
+ *  These do NOT ride the URL or the store the way conversations do (#120).
+ *  A conversation is a thing in the folder that outlives this page and that a
+ *  second browser has to be able to mean; a window onto a file is this page
+ *  looking at something, and it costs one click to open again. If handing
+ *  someone "the folder, this conversation, and the file we are discussing"
+ *  turns out to be the gesture people want, the open set is where that goes —
+ *  it is not written down as a decision either way.
+ *
+ *  Nothing here holds bytes. A tab is a path; `files.ts` turns it into
+ *  something renderable and re-reads it whenever the folder says it changed,
+ *  which is what makes an opened file a live window rather than a copy. The
+ *  page never had a copy — that is the difference this demo's neighbour
+ *  (actuator) exists to draw, and this side of it is the plain one: read
+ *  through the grant, gone when the grant is. */
+export interface FileTab {
+  id: string;
+  path: string;
+}
+export const fileTabs = signal<FileTab[]>([]);
+/** Which file tab is on screen, or null when a conversation is. Deliberately
+ *  NOT folded into `activeId`: the conversation you were in stays the
+ *  conversation you are in — closing the file puts you back in it, mid-turn,
+ *  with everything the agent said while you were reading. */
+export const activeFile = signal<string | null>(null);
+
+export type Viewer = "text" | "image" | "none";
+
+/** One file's bytes, decoded for whichever viewer takes it. */
+export interface Loaded {
+  path: string;
+  viewer: Viewer;
+  type: string;
+  size: number;
+  text: string | null;
+  url: string | null;
+  truncated: boolean;
+  /** the file is not in the folder any more — moved, deleted, or the grant
+   *  went. A window onto someone else's disk has to be able to say so. */
+  missing: boolean;
+  loadedAt: number;
+}
+export const fileContent = signal<Map<string, Loaded>>(new Map());
+
 /** Is the workspace pane showing? Only consulted at widths too narrow to give
  *  it a column of its own, where it becomes a drawer over the conversation. It
  *  used to be `display: none` below the breakpoint — the pane simply gone,

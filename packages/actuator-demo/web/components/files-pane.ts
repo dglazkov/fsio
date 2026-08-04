@@ -17,12 +17,21 @@
 // pane, which is exactly the citation rule 6 waits for. What is still this
 // page's is that a row is a *control*: it opens, and it carries the two verbs
 // that make this demo's point.
+//
+// The top half is a tree (`<fsio-file-tree>`, also shared): the folder has a
+// shape, and a picker that flattens it makes you read three directories of
+// prefix on every row to find the one file you came for. The bottom half is
+// not, and cannot be — a flung copy has a name and a provenance, not a place.
+// The page is holding it. That asymmetry is the split doing its teaching
+// again: what is in the folder is *somewhere*, what the page holds is just
+// here.
 import { LitElement, html, css } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { ago, sizeOf, tokens, Ticker } from "@fsio/ui";
+import type { TreeRow } from "@fsio/ui";
 import type { HeldFile } from "../../src/model";
-import { app, folder, folderFiles, folderNote, type FileRow } from "../state";
+import { app, folder, folderFiles, folderNote } from "../state";
 import { flingLocal, runOperation } from "../run";
 
 class ActuatorFiles extends SignalWatcher(LitElement) {
@@ -47,8 +56,8 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
       header .count { color: var(--fsio-dimmest); font-size: 0.72rem; white-space: nowrap; }
       .blurb { padding: 0 0.8rem 0.45rem; font-size: 0.68rem; line-height: 1.45; color: var(--fsio-dimmest); }
       .rows { padding: 0 0 0.4rem; overflow-y: auto; flex: 1; }
-      /* The row's own controls: the pane says what they do, the row says when
-         they show (on hover, and for the keyboard). */
+      /* The held half's controls only: the tree styles the ones it lays out,
+         since they sit in its shadow root and this sheet cannot reach them. */
       fsio-file-row button {
         border: 1px solid transparent; background: none; border-radius: 6px;
         color: var(--fsio-dimmest); font: inherit; font-size: 0.72rem; line-height: 1;
@@ -79,8 +88,17 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
                 ? html`nothing to show in <code>${f.name}/</code>`
                 : html`no folder granted. The page cannot see your disk — and everything below still works.`}
             </div>`
-          : html`<div class="rows" role="list">
-              ${rows.map((r) => this.#localRow(r, openPaths.has(r.path), now))}
+          : html`<div class="rows">
+              <fsio-file-tree
+                .rows=${rows}
+                .now=${now}
+                .open=${[...openPaths]}
+                .metaFor=${(r: TreeRow) => ago(now - r.modified)}
+                .actionsFor=${(r: TreeRow) => this.#fling(r)}
+                label="files in the granted folder"
+                @open=${(e: CustomEvent<{ path: string }>) =>
+                  void this.#run({ method: "files.open", params: { path: e.detail.path } })}
+              ></fsio-file-tree>
             </div>`}
       </section>
 
@@ -99,27 +117,19 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
     `;
   }
 
-  #localRow(row: FileRow, open: boolean, now: number): TemplateResult {
-    return html`<fsio-file-row
-      interactive
-      ?current=${open}
-      .path=${row.path}
-      .meta=${ago(now - row.modified)}
-      .hotSince=${row.seenChanged}
-      .now=${now}
-      title=${`${row.path} — ${sizeOf(row.size)}. Open it in a tab.`}
-      @click=${() => void this.#run({ method: "files.open", params: { path: row.path } })}
+  /** The verb that makes this pane this demo's: take a copy. It is slotted
+   *  into the tree's row rather than drawn by it, because the tree lays rows
+   *  out and this page is the one with something to say about them. */
+  #fling(row: TreeRow): TemplateResult {
+    return html`<button
+      title=${`hand the page a copy of ${row.path} (${sizeOf(row.size)}) — it keeps it`}
+      @click=${(e: Event) => {
+        e.stopPropagation();
+        void this.#hold(row.path);
+      }}
     >
-      <button
-        title="hand the page a copy of this file — it keeps it"
-        @click=${(e: Event) => {
-          e.stopPropagation();
-          void this.#hold(row.path);
-        }}
-      >
-        ⤓
-      </button>
-    </fsio-file-row>`;
+      ⤓
+    </button>`;
   }
 
   #heldRow(file: HeldFile, now: number): TemplateResult {

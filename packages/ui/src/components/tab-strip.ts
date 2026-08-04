@@ -44,6 +44,12 @@ export interface Chip {
   /** a quieter fact, shown on the active chip only (the agent's name, say).
    *  First thing to go when the bar is tight. */
   secondary?: string;
+  /** A Material Symbol before the name, for a strip whose chips are not all
+   *  the same kind of thing — the agent page holds conversations AND files,
+   *  and "notes.md" beside "gentle-fox" needs to say which it is before you
+   *  read either word. A strip of one kind sets none: an icon on every chip
+   *  is decoration, not information. Must be in ICON_NAMES (theme.ts). */
+  icon?: string;
   dot?: ChipDot;
   /** unanswered questions. Sits BESIDE the dot rather than replacing it:
    *  "it is waiting" and "it has said things you have not read" are two
@@ -194,6 +200,8 @@ class FsioTabStrip extends LitElement {
         text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; min-width: 0;
       }
       .tab.on .secondary { color: var(--fsio-dimmer); }
+      .icon.kind { color: var(--fsio-dimmest); flex: none; }
+      .tab.on .icon.kind { color: var(--fsio-dimmer); }
       .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
       .dot.busy { background: var(--fsio-cyan); }
       .dot.unread { background: var(--fsio-accent); }
@@ -456,6 +464,7 @@ class FsioTabStrip extends LitElement {
           <span class="who">
             <span class="name">
               <span class="dot ${c.dot ?? ""}" title=${c.dotTitle ?? ""}></span>
+              ${c.icon ? html`<span class="icon sm kind">${c.icon}</span>` : nothing}
               ${c.name}
             </span>
             ${c.secondary ? html`<div class="note">${c.secondary}</div>` : nothing}
@@ -484,6 +493,7 @@ class FsioTabStrip extends LitElement {
       ${c.badge
         ? html`<span class="badge" title="waiting for an answer here">${c.badge}</span>`
         : nothing}
+      ${c.icon ? html`<span class="icon sm kind">${c.icon}</span>` : nothing}
       <span class="who">${c.name}</span>
       ${on && c.secondary ? html`<span class="secondary">${c.secondary}</span>` : nothing}
       ${on && actions.length

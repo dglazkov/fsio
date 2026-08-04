@@ -10,6 +10,7 @@
 import "./components/cmd.js";
 import "./components/details.js";
 import "./components/file-row.js";
+import "./components/file-tree.js";
 import "./components/gate.js";
 import "./components/session-row.js";
 import "./components/tab-strip.js";
@@ -21,6 +22,7 @@ export { ago, friendlyName, sinceLabel, sizeOf } from "./text.js";
 export { Dismiss } from "./dismiss.js";
 export { Ticker } from "./ticker.js";
 export { GLOW_MS } from "./components/file-row.js";
+export type { TreeRow } from "./components/file-tree.js";
 export { Reporter, createReporter } from "./reporter.js";
 export type { PageReporter, ReporterOptions } from "./reporter.js";
 export {

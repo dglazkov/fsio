@@ -48,9 +48,12 @@ class FsioFileRow extends LitElement {
   static override styles = [
     tokens,
     css`
+      /* The left padding is a variable because a row in a tree sits at a
+         depth (fsio-file-tree sets it); a row in a flat list does not, and
+         gets the same 0.8rem it always had. */
       :host {
         display: flex; align-items: center; gap: 0.4rem;
-        padding: 0.2rem 0.5rem 0.2rem 0.8rem;
+        padding: 0.2rem 0.5rem 0.2rem var(--fsio-row-indent, 0.8rem);
         font-size: 0.8rem; font-family: var(--fsio-mono);
         color: var(--fsio-dim);
       }
@@ -87,10 +90,14 @@ class FsioFileRow extends LitElement {
   /** A row in a pane is a list item, and — where the page acts on a click —
    *  something the keyboard can reach. The actuator's pane was mouse-only:
    *  every file in the granted folder was one click from a tab and no number
-   *  of Tab presses away from anything. */
+   *  of Tab presses away from anything.
+   *
+   *  A caller that already said what this row is keeps its answer: inside
+   *  `fsio-file-tree` a row is a `treeitem`, and a list item nested in a tree
+   *  is a row that lies to a screen reader about the shape it is in. */
   override connectedCallback(): void {
     super.connectedCallback();
-    this.setAttribute("role", "listitem");
+    if (!this.hasAttribute("role")) this.setAttribute("role", "listitem");
     if (this.interactive) {
       this.tabIndex = 0;
       this.addEventListener("keydown", this.#key);

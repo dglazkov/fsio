@@ -11,6 +11,7 @@ import "@fsio/ui"; // registers the shared chrome's custom elements
 import "./components/top-bar";
 import "./components/chat";
 import "./components/details";
+import "./components/viewer";
 import "./components/workspace-pane";
 import "./components/wizard";
 import { checkGates, revisit } from "./connection";
