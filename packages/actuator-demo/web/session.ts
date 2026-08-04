@@ -8,8 +8,11 @@
 import { FsioClient, type FsioSession } from "@fsio/client";
 import { AppError } from "../src/model";
 import { asOperation, decodeDownstream, encode, receipt, refusal } from "../src/messages";
-import { applyToApp, forgetHandle, loadApp, saveHandle, savedHandle } from "./db";
-import { app, displaced, folder, gate, helper, lastCommand, phase, pickError, reconnectTo } from "./state";
+import { forgetHandle, loadApp, saveHandle, savedHandle, sweepBlobs } from "./db";
+import { reloadLocalViews } from "./content";
+import { startWatching, stopWatching } from "./folder";
+import { runOperation } from "./run";
+import { displaced, folder, gate, helper, lastCommand, phase, pickError, reconnectTo } from "./state";
 import { log, reporter, step } from "./reporter";
 
 let client: FsioClient | null = null;
@@ -39,7 +42,10 @@ export function checkGates(): void {
  *  no clicks at all (F20); "prompt" needs one, because requestPermission
  *  requires a user activation (F15). */
 export async function revisit(): Promise<void> {
-  await loadApp(); // the app is the page's, and shows before any folder does
+  // The app is the page's, and shows before any folder does — including
+  // every file it holds. That is the demonstration: a page with tabs full
+  // of flung files, on a machine where no helper is running.
+  void sweepBlobs(await loadApp());
   if (gate.get()) return;
   const saved = await savedHandle();
   if (!saved) return void phase.set("setup");
@@ -91,6 +97,7 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
   step(`connecting to ${root.name}/`);
   pickError.set("");
   clearInterval(hostTimer);
+  stopWatching(); // whatever folder this page was looking at, it is not that one
   // Probe for .fsio WITHOUT creating it: connect() would create one in
   // whatever folder was picked, littering the wrong folder and hiding the
   // "no helper here" case behind an empty success.
@@ -120,6 +127,14 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
 
   folder.set({ name: root.name, via });
   rootHandle = root;
+  // One grant, two uses: the same handle the transport rides on is the one
+  // the page reads files through. Watching starts here rather than when the
+  // helper answers, because looking at the folder is the page's own right —
+  // it needs nobody's session.
+  startWatching(root);
+  // Tabs that rendered before this moment read a folder the page did not
+  // have yet, and cached the answer. They get to ask again.
+  reloadLocalViews();
   helperStartedAt = null;
   void saveHandle(root);
   helperWasAlive = false;
@@ -226,14 +241,14 @@ async function onCommand(bytes: Uint8Array, s: FsioSession): Promise<void> {
     return;
   }
   try {
-    const result = await applyToApp(op);
-    lastCommand.set({ method: op.method, ok: true, detail: summarize(op.method, result), origin: "cli" });
+    // Same function a click in the page calls (run.ts) — the app has no
+    // remote path, and this is where that stops being a slogan.
+    const result = await runOperation(op, "cli");
     reporter.event("command", { id: msg.id, method: op.method, ok: true });
-    log(`${op.method} → ${summarize(op.method, result)}`);
+    log(`${op.method} → ${lastCommand.get()?.detail ?? "ok"}`);
     s.sendData(encode(receipt(msg.id, result)));
   } catch (e) {
     const err = e instanceof AppError ? e : new AppError("internal", e instanceof Error ? e.message : String(e));
-    lastCommand.set({ method: op.method, ok: false, detail: err.message, origin: "cli" });
     reporter.event("command", { id: msg.id, method: op.method, ok: false, error: err.code });
     log(`${op.method} → refused (${err.code}): ${err.message}`);
     s.sendData(
@@ -241,9 +256,6 @@ async function onCommand(bytes: Uint8Array, s: FsioSession): Promise<void> {
     );
   }
 }
-
-const summarize = (method: string, result: Record<string, unknown>): string =>
-  method === "tabs.list" ? `${app.get().tabs.length} tab(s)` : String(result["id"] ?? "ok");
 
 /** Leaving: close the session so the host reaps its directory (D6). */
 export function closeOnPagehide(): void {

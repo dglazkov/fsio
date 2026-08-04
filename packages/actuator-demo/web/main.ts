@@ -16,7 +16,17 @@ import { app } from "./state";
 // What the native side reads to learn what this page holds (TESTING.md).
 reporter.summary = () => {
   const state = app.get();
-  return state.tabs.map((t) => ({ ...t, active: t.id === state.activeId }));
+  // Flattened rather than nested: a verdict is read by grepping this, and
+  // `showing` is the field that says which of the three kinds of tab this
+  // is — the whole question `open` and `fling` differ on.
+  return state.tabs.map((t) => ({
+    id: t.id,
+    title: t.title,
+    showing: t.body.kind,
+    ...(t.body.kind === "local" ? { path: t.body.path } : {}),
+    ...(t.body.kind === "held" ? { fileId: t.body.fileId } : {}),
+    active: t.id === state.activeId,
+  }));
 };
 
 checkGates();

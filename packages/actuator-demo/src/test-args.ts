@@ -62,8 +62,60 @@ test("update needs an id and at least one field", () => {
 });
 
 test("unknown commands, actions and options are refused by name", () => {
-  for (const line of ["shells list", "tabs frobnicate", "tabs list --loudly"]) {
+  for (const line of ["shells list", "tabs frobnicate", "tabs list --loudly", "files frobnicate", "files list --loudly"]) {
     const parsed = parse(line);
     assert.equal(parsed.kind, "error", line);
   }
+});
+
+test("open sends the path relative to the granted folder, whichever way it was typed", () => {
+  const wanted = { method: "files.open", params: { path: "notes/plan.md" } };
+  for (const [line, cwd] of [
+    ["--dir /work open notes/plan.md", "/work"],
+    ["--dir /work open /work/notes/plan.md", "/work"],
+    // The folder is the subject, not the shell's cwd: the same command
+    // means the same thing typed from anywhere.
+    ["--dir /work open notes/plan.md", "/elsewhere"],
+    ["open notes/plan.md", "/work"],
+  ] as const) {
+    const parsed = parseArgs(line.split(" "), cwd);
+    assert.equal(parsed.kind, "run", `${line} from ${cwd}`);
+    assert.deepEqual(parsed.kind === "run" && parsed.op, wanted, `${line} from ${cwd}`);
+  }
+});
+
+test("a path outside the granted folder is refused here, with fling offered", () => {
+  const parsed = parseArgs(["--dir", "/work", "open", "/etc/passwd"], "/work");
+  assert.equal(parsed.kind, "error");
+  assert.match(parsed.kind === "error" ? parsed.message : "", /not inside \/work/);
+  assert.match(parsed.kind === "error" ? parsed.message : "", /actuator fling/);
+  assert.equal(parse("open").kind, "error", "and it needs a path at all");
+});
+
+test("fling parses to an intent, absolute, because cli.ts still has to read the file", () => {
+  const parsed = parseArgs(["fling", "pic.png"], "/home/me");
+  assert.deepEqual(parsed, { kind: "fling", path: "/home/me/pic.png", open: true, dir: "/home/me", json: false });
+
+  const quiet = parseArgs(["--dir", "/work", "fling", "/tmp/x.bin", "--no-open"], "/home/me");
+  assert.deepEqual(quiet, { kind: "fling", path: "/tmp/x.bin", open: false, dir: "/work", json: false });
+
+  assert.equal(parse("fling").kind, "error");
+  assert.equal(parse("fling a.txt --loudly").kind, "error");
+});
+
+test("files show and drop take one id; list takes none", () => {
+  assert.deepEqual(parse("files show file-1").kind === "run" && parse("files show file-1"), {
+    kind: "run",
+    dir: "/cwd",
+    json: false,
+    op: { method: "files.show", params: { id: "file-1" } },
+  });
+  assert.deepEqual(parse("files drop file-1").kind === "run" && parse("files drop file-1"), {
+    kind: "run",
+    dir: "/cwd",
+    json: false,
+    op: { method: "files.drop", params: { id: "file-1" } },
+  });
+  assert.equal(parse("files drop").kind, "error");
+  assert.equal(parse("files list").kind, "run");
 });

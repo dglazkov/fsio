@@ -77,6 +77,8 @@ A third runs from the repo only, for now — no bundled branch, no deployment
 npm run actuator-helper -- ~/your-folder   # the switchboard
 npm run -w @fsio/actuator-demo dev         # the page, on :8768
 npm run actuator -- --dir ~/your-folder tabs add --title Build --message "CI is running"
+npm run actuator -- --dir ~/your-folder open notes.md          # a window onto the file
+npm run actuator -- --dir ~/your-folder fling ~/Pictures/x.png # a copy the page keeps
 ```
 
 `/actuator` runs the other two backwards. There, the page reaches down and
@@ -88,6 +90,17 @@ sends one command, reads the receipt and closes. Two session kinds
 ([D13](spec/DECISIONS.md#d13--session-kinds-are-a-host-side-registry-echo-is-just-an-entry)),
 one folder, no socket anywhere. No page open means no command — the CLI says
 so and exits 3.
+
+Files make the difference visible. `actuator open <path>` sends only a path:
+the page reads that file through the same grant the transport rides on, so
+the tab is a *window* — edit the file in your editor and the tab follows,
+delete it and the tab says so, because the page never had a copy. `actuator
+fling <path>` sends the bytes, from anywhere this terminal can read, and the
+page puts them in its own storage: that tab keeps working with the helper
+stopped, the folder revoked, and the machine's filesystem out of reach. The
+right-hand pane is the two of them side by side — what is on your disk above,
+what the page has custody of below — and the punchline is the state where the
+top half is empty and the bottom half is not.
 
 The `/acp` helper ships **no agent** ([#100](https://github.com/dglazkov/fsio/issues/100)):
 vendoring an ACP adapter costs ~293 MB of transitive dependencies, and an
