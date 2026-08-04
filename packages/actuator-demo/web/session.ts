@@ -16,6 +16,11 @@ let client: FsioClient | null = null;
 let session: FsioSession | null = null;
 let hostTimer: ReturnType<typeof setInterval> | undefined;
 let helperWasAlive = false;
+/** The granted folder, kept so a helper restart can re-open `.fsio` — the
+ *  handles under it die with the wipe, this one does not. */
+let rootHandle: FileSystemDirectoryHandle | null = null;
+/** `host.json`'s startedAt, the only durable "is this the same helper". */
+let helperStartedAt: number | null = null;
 
 // ---------------------------------------------------------------- gates
 
@@ -114,6 +119,8 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
   }
 
   folder.set({ name: root.name, via });
+  rootHandle = root;
+  helperStartedAt = null;
   void saveHandle(root);
   helperWasAlive = false;
   await refreshHelper();
@@ -125,6 +132,19 @@ async function refreshHelper(): Promise<void> {
   const host = await client.hostInfo();
   if (host.alive) {
     helper.set("alive");
+    const startedAt = typeof host.info?.["startedAt"] === "number" ? (host.info["startedAt"] as number) : null;
+    // A helper restart is invisible from inside a session: the helper starts
+    // `fresh`, so the session directory this page is holding is *deleted*
+    // rather than closed, and a reader of a deleted directory sees exactly
+    // what a torn write looks like — transient, wait and re-read (F11/D8).
+    // The page would poll that hole forever. `host.json`'s startedAt is the
+    // one thing that says "different helper", so it is what we watch.
+    if (startedAt !== null && helperStartedAt !== null && startedAt !== helperStartedAt) {
+      log("the helper restarted — reattaching");
+      reporter.event("helper-restarted", { startedAt });
+      await reattach();
+    }
+    if (startedAt !== null) helperStartedAt = startedAt;
     if (!helperWasAlive) {
       helperWasAlive = true;
       reporter.event("helper-alive", { info: host.info ?? null });
@@ -133,6 +153,25 @@ async function refreshHelper(): Promise<void> {
   } else {
     helperWasAlive = false;
     helper.set("silent");
+  }
+}
+
+/** Everything this page held in the folder is gone, so let go of it and take
+ *  it again: the session, and the report directory the native side reads
+ *  verdicts out of (which the `fresh` wipe took with it). */
+async function reattach(): Promise<void> {
+  const stale = session;
+  session = null;
+  helperWasAlive = false;
+  // A displaced page was displaced by a page whose session is now also gone.
+  // Nobody holds this folder — this page may compete for it again.
+  displaced.set(false);
+  void stale?.close().catch(() => {});
+  if (rootHandle) {
+    await rootHandle
+      .getDirectoryHandle(".fsio")
+      .then((dir) => reporter.attach(dir))
+      .catch(() => {}); // reporting must never break the thing it reports on
   }
 }
 
