@@ -9,10 +9,16 @@
 // the terminal gets all of the above and neither page gets the other's words.
 //
 // The split that makes that work: **this component owns mechanics, the demo
-// owns prose and consequences.** Focus, roving tabindex, scrolling the active
-// chip into view, the top layer, Escape, click-away, which dot is which shape
-// — here. What a chip is called, what closing one costs, and what happens
-// when you do — there.
+// owns prose and consequences.** Focus, roving tabindex, measuring what fits,
+// the top layer, Escape, click-away, which dot is which shape — here. What a
+// chip is called, what closing one costs, and what happens when you do —
+// there.
+//
+// The scroller that once handled overflow is gone (#158): chips that do not
+// fit now come out of the row and into a "N more" list beside it, and the
+// active chip is always one of the ones on screen. See `#measure` for why
+// `.tab` is `flex: none`, and the README for why "N more" is a different
+// control from "+".
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { Dismiss } from "../dismiss.js";
@@ -73,6 +79,18 @@ export interface ChipAction {
   danger?: boolean;
 }
 
+/** The strip's `gap`, in px, as a number the measurement can add up. Said
+ *  twice — here and in the CSS — because there is no way to read a shorthand
+ *  gap back off a flex container that has not laid out yet. */
+const GAP = 4;
+/** `.tab`'s `min-width`, in px: what a chip nobody has measured yet is assumed
+ *  to be. */
+const MIN_CHIP = 120;
+/** Room to keep for the "N more" control before it exists. An over-estimate on
+ *  purpose — reserving too much shows one chip fewer, reserving too little
+ *  clips the control that exists to say what is missing. */
+const MORE_W = 76;
+
 class FsioTabStrip extends LitElement {
   static override properties = {
     chips: { attribute: false },
@@ -101,6 +119,19 @@ class FsioTabStrip extends LitElement {
   /** Which chip's menu is open, or "". */
   #menu = "";
   #listOpen = false;
+  /** Is the "N more" list open? */
+  #moreOpen = false;
+  /** How many chips currently fit. Recomputed after every render and on every
+   *  resize; `chips.length` means everything fits and no "N more" is drawn. */
+  #fits = Number.MAX_SAFE_INTEGER;
+  /** Each chip's measured width, by id. A chip that is not on screen cannot be
+   *  measured, so what it was last measured at is what the next fit
+   *  calculation uses — which is also why `.tab` is `flex: none`, so that
+   *  number does not depend on who its neighbours were. */
+  #widths = new Map<string, number>();
+  #ro: ResizeObserver | undefined;
+  /** A re-render is already booked for the next frame. */
+  #pending = false;
   /** Set when a keyboard move has changed the active chip and the newly
    *  active one has to take the focus with it — otherwise the arrow keys move
    *  the selection out from under the focus ring. */
@@ -108,7 +139,7 @@ class FsioTabStrip extends LitElement {
 
   constructor() {
     super();
-    new Dismiss(this, () => this.#menu !== "" || this.#listOpen, () => this.dismiss());
+    new Dismiss(this, () => this.#menu !== "" || this.#listOpen || this.#moreOpen, () => this.dismiss());
   }
 
   static override styles = [
@@ -126,26 +157,33 @@ class FsioTabStrip extends LitElement {
       /* The host's own display beats the UA sheet's [hidden], and a page
          stylesheet cannot reach into a shadow root. */
       :host([hidden]) { display: none !important; }
-      /* Enough chips and they run off the edge, so the chips — and only the
-         chips — scroll. "+" sits outside the scroller because a control that
-         scrolls away is a control the page does not have. */
+      /* Enough chips and the ones that do not fit come out of the row and go
+         into the "N more" list beside it (#158). This used to be a horizontal
+         scroller, which was honest — nothing was hidden without a way to reach
+         it — and still meant that chips the page held were chips you could not
+         see, four of six at a 1030 px viewport.
+         Nothing scrolls here now; the row clips as a backstop only, for the
+         one case the measurement cannot help with (a single chip wider than
+         the whole strip). */
       .strip {
         display: flex; align-items: stretch; gap: 0.25rem;
-        flex: 0 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden;
+        flex: 0 1 auto; min-width: 0; overflow: hidden;
         padding: 1px 0;
-        scrollbar-width: thin; scrollbar-color: var(--fsio-line-strong) transparent;
       }
-      .strip::-webkit-scrollbar { height: 3px; }
-      .strip::-webkit-scrollbar-thumb { background: var(--fsio-line-strong); border-radius: 3px; }
       /* A pill, not a folder tab. A folder tab wants a pane edge directly
          beneath it to attach to; sharing a row with the folder name, there
          is not one. */
+      /* flex:none is load-bearing for the overflow measurement, not taste.
+         A chip that shrinks to fit changes width when a sibling leaves the
+         row, so measuring the row, hiding a chip, and measuring again would
+         never agree with itself. Intrinsic widths make each chip's measurement
+         independent of how many others are shown, which is what lets the
+         measure pass settle in one step. */
       .tab {
         display: flex; align-items: center; gap: 0.4rem;
         padding: 0.25rem 0.4rem 0.25rem 0.6rem; cursor: pointer;
         border: 1px solid transparent; border-radius: 7px; color: var(--fsio-dimmer);
-        flex: 0 1 auto; min-width: 7.5rem; max-width: 16rem;
-        scroll-margin: 0 1rem;
+        flex: none; min-width: 7.5rem; max-width: 16rem;
       }
       .tab:hover { color: var(--fsio-fg); }
       .tab.on { background: var(--fsio-raised); border-color: var(--fsio-line); color: var(--fsio-fg-bright); }
@@ -190,8 +228,26 @@ class FsioTabStrip extends LitElement {
         border-radius: 6px; flex: none;
       }
       .plus:hover, .plus:focus-visible { color: var(--fsio-fg); background: var(--fsio-raised); }
+      /* The chips that did not fit, as a count you can open. Distinct from
+         "+", and deliberately: "+" means *everything in this folder, including
+         what this page is not holding*, and two of the three pages have one
+         while the third does not want one. "N more" means *what this page IS
+         holding, just not on screen* — a different question, so a different
+         control, and the page that has no "+" still gets this. */
+      .more {
+        background: none; border: 1px solid var(--fsio-line-strong); border-radius: 7px;
+        color: var(--fsio-dimmer); cursor: pointer; font: inherit; font-size: 0.78rem;
+        padding: 0.2rem 0.5rem; align-self: center; flex: none; white-space: nowrap;
+      }
+      .more:hover, .more:focus-visible { color: var(--fsio-fg); background: var(--fsio-raised); }
+      /* A hidden chip is still allowed to be shouting. */
+      .more .badge { margin-left: 0.3rem; }
       .spacer { flex: 1; }
       .pop { position: absolute; left: 0; top: calc(100% + 0.55rem); z-index: 30; }
+      /* "N more" sits at the right end of the row, so its list hangs from the
+         right. A popover that opens at the far end of the bar from the control
+         you pressed reads as a different control answering. */
+      .pop.right { left: auto; right: 0; }
       /* The "⋯" menu is rendered here rather than slotted, so its innards are
          styled here. The "+" list's are not — that content belongs to the
          demo, and a shadow root cannot reach across the slot. */
@@ -241,7 +297,24 @@ class FsioTabStrip extends LitElement {
   dismiss(): void {
     this.#menu = "";
     this.#listOpen = false;
+    this.#moreOpen = false;
     this.requestUpdate();
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    // The row's width changes for reasons that are nothing to do with this
+    // component's own state — the window, the folder name getting longer, a
+    // sibling appearing in the bar — so the fit has to be recomputed on the
+    // box rather than only on render.
+    this.#ro = new ResizeObserver(() => this.#measure());
+    this.#ro.observe(this);
+  }
+
+  override disconnectedCallback(): void {
+    this.#ro?.disconnect();
+    this.#ro = undefined;
+    super.disconnectedCallback();
   }
 
   /** Nothing rendered still leaves a host box in layout, so the strip hides
@@ -250,23 +323,111 @@ class FsioTabStrip extends LitElement {
     this.toggleAttribute("hidden", !this.renderRoot.querySelector(".tab, .plus"));
     const dialog = this.renderRoot.querySelector("dialog.ask") as HTMLDialogElement | null;
     if (dialog && !dialog.open) dialog.showModal();
+    this.#measure();
+    if (!this.#takeFocus) return;
     const on = this.renderRoot.querySelector('[role="tab"][aria-selected="true"]') as HTMLElement | null;
     if (!on) return;
-    if (this.#takeFocus) {
-      this.#takeFocus = false;
-      on.focus();
+    this.#takeFocus = false;
+    on.focus();
+  }
+
+  /** How many chips fit, measured rather than assumed.
+   *
+   *  This settles in one extra render at most, and the reason is the `flex:
+   *  none` on `.tab`: every chip's width is intrinsic, so taking one out of the
+   *  row does not change what the others measure. Record what is on screen,
+   *  add up widths against the room available, and if the answer differs from
+   *  what is drawn, draw it again. The second pass measures the same numbers
+   *  and agrees with itself, which is where it stops. */
+  #measure(): void {
+    const strip = this.renderRoot.querySelector(".strip") as HTMLElement | null;
+    if (!strip || !this.chips.length) return;
+    for (const el of strip.children) {
+      const id = (el as HTMLElement).dataset["id"];
+      if (id) this.#widths.set(id, (el as HTMLElement).offsetWidth);
     }
-    // A chip switched to from the "+" list, or from the URL, may be off the
-    // scrolled edge — switching to something you cannot see is the overflow
-    // bug wearing a different hat.
-    on.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // The room is the host minus everything else standing in the row. Measured
+    // rather than guessed, because "+" is optional and "N more" grows a digit.
+    const hasMore = !!this.renderRoot.querySelector(".more");
+    const others = [...this.renderRoot.querySelectorAll(".plus, .more")]
+      .reduce((n, el) => n + (el as HTMLElement).offsetWidth + GAP, 0);
+    const room = this.getBoundingClientRect().width - others;
+
+    let used = 0;
+    let fits = 0;
+    for (const c of this.chips) {
+      // A chip nobody has measured yet is assumed to be the narrowest one
+      // allowed. It gets a real number on the next pass; guessing low means
+      // the first frame shows one chip too many rather than one too few, and
+      // the row clips rather than lying about the count.
+      const w = this.#widths.get(c.id) ?? MIN_CHIP;
+      if (used + w > room && fits > 0) break;
+      used += w + GAP;
+      fits++;
+    }
+    // Leaving room for the control that only exists because something did not
+    // fit: adding it can push one more chip out, and that is the honest
+    // ordering — the count has to be reachable. Only when it is not on screen
+    // yet; once it is, `others` above is already measuring the real thing, and
+    // charging for it twice would cost a chip on every pass and never settle
+    // back.
+    if (!hasMore && fits < this.chips.length && fits > 1 && used + MORE_W > room) fits--;
+    if (fits === this.#fits) return;
+    this.#fits = fits;
+    // Off the next frame rather than straight back into the update that is
+    // still finishing. This is Lit's "scheduled an update after an update
+    // completed" warning, and the documented exception applies — you cannot
+    // know what fits until it has been laid out — but a warning on every page
+    // load is a warning a future reader has to rule out, and the frame costs
+    // nothing. Guarded so a burst of resize callbacks schedules one.
+    if (this.#pending) return;
+    this.#pending = true;
+    requestAnimationFrame(() => {
+      this.#pending = false;
+      this.requestUpdate();
+    });
+  }
+
+  /** The chips on screen, and the ones that are not.
+   *
+   *  The active chip is always on screen. Switching to something and not being
+   *  shown it is the overflow bug wearing a different hat — it is the sentence
+   *  the old scroll-into-view was written to prevent, and it survives the
+   *  scroller it was written for. */
+  #split(): { shown: Chip[]; hidden: Chip[] } {
+    if (this.#fits >= this.chips.length) return { shown: this.chips, hidden: [] };
+    const shown = this.chips.slice(0, this.#fits);
+    const hidden = this.chips.slice(this.#fits);
+    const i = hidden.findIndex((c) => c.id === this.activeId);
+    if (i >= 0 && shown.length) {
+      // Swap the active one in for the last chip that fit, so it is on screen
+      // without the row changing length.
+      hidden[i] = shown[shown.length - 1]!;
+      shown[shown.length - 1] = this.chips.find((c) => c.id === this.activeId)!;
+    }
+    return { shown, hidden };
   }
 
   override render(): TemplateResult {
+    const { shown, hidden } = this.#split();
+    const waiting = hidden.reduce((n, c) => n + (c.badge ?? 0), 0);
     return html`
       <div class="strip" role="tablist" aria-label=${this.label} @keydown=${this.#nav}>
-        ${this.chips.map((c) => this.#chip(c))}
+        ${shown.map((c) => this.#chip(c))}
       </div>
+      ${hidden.length
+        ? html`<button
+            class="more"
+            title=${`${hidden.length} more that do not fit — ${this.label}`}
+            aria-haspopup="dialog"
+            aria-expanded=${this.#moreOpen}
+            @click=${this.#toggleMore}
+          >
+            ${hidden.length} more${waiting
+              ? html`<span class="badge" title="waiting for an answer in there">${waiting}</span>`
+              : nothing}
+          </button>`
+        : nothing}
       ${this.showList
         ? html`<button
             class="plus"
@@ -279,8 +440,31 @@ class FsioTabStrip extends LitElement {
       <span class="spacer"></span>
       ${this.#closing ? this.#confirm() : nothing}
       ${this.#listOpen ? html`<div class="pop"><slot name="list"></slot></div>` : nothing}
+      ${this.#moreOpen ? this.#moreList(hidden) : nothing}
       ${this.#menu ? this.#chipMenu() : nothing}
     `;
+  }
+
+  /** The chips that did not fit. Rendered here rather than slotted, because
+   *  these are the page's own chips and the strip already knows how to say
+   *  what one is — the dot, the name, the count waiting on it. */
+  #moreList(hidden: Chip[]): TemplateResult {
+    return html`<div class="pop right">
+      <h3>not on screen · ${hidden.length}</h3>
+      ${hidden.map(
+        (c) => html`<div class="row">
+          <span class="who">
+            <span class="name">
+              <span class="dot ${c.dot ?? ""}" title=${c.dotTitle ?? ""}></span>
+              ${c.name}
+            </span>
+            ${c.secondary ? html`<div class="note">${c.secondary}</div>` : nothing}
+          </span>
+          ${c.badge ? html`<span class="badge" title="waiting for an answer here">${c.badge}</span>` : nothing}
+          <button @click=${() => { this.dismiss(); this.#emit("select", c.id); }}>Show</button>
+        </div>`
+      )}
+    </div>`;
   }
 
   #chip(c: Chip): TemplateResult {
@@ -289,6 +473,7 @@ class FsioTabStrip extends LitElement {
     const actions = this.menuFor?.(c) ?? [];
     return html`<div
       class="tab ${on ? "on" : ""} ${dot === "fenced" ? "fenced" : ""} ${c.quiet ? "doc" : ""}"
+      data-id=${c.id}
       role="tab"
       aria-selected=${on}
       tabindex=${on ? 0 : -1}
@@ -347,6 +532,7 @@ class FsioTabStrip extends LitElement {
     e.stopPropagation();
     this.#menu = "";
     this.#listOpen = false;
+    this.#moreOpen = false;
     const chip = this.chips.find((c) => c.id === id);
     const copy = chip && this.confirmFor ? this.confirmFor(chip) : null;
     // Nothing to lose and nothing to ask. The confirm is for the case where
@@ -365,6 +551,7 @@ class FsioTabStrip extends LitElement {
     e.stopPropagation();
     this.#menu = this.#menu === id ? "" : id;
     this.#listOpen = false;
+    this.#moreOpen = false;
     this.requestUpdate();
   }
 
@@ -420,9 +607,17 @@ class FsioTabStrip extends LitElement {
     else this.#emit("action", id, { action: a.id });
   }
 
+  #toggleMore = (): void => {
+    this.#moreOpen = !this.#moreOpen;
+    this.#menu = "";
+    this.#listOpen = false;
+    this.requestUpdate();
+  };
+
   #toggleList = (): void => {
     this.#listOpen = !this.#listOpen;
     this.#menu = "";
+    this.#moreOpen = false;
     this.requestUpdate();
     // Asked when the list opens rather than polled: the answer is a directory
     // listing plus a read per session, and nobody needs it until somebody

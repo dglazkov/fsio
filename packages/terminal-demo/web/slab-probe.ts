@@ -2,7 +2,7 @@
 // Constructs a Terminal with the SAME options tabs.ts uses and writes output
 // that exercises all sixteen ANSI colours, so the gutter and the palette can
 // be looked at. Not built (vite inputs index.html only); delete when done.
-import "./boot-theme.js";
+import "@fsio/ui/boot";
 import "@xterm/xterm/css/xterm.css";
 import "@fsio/ui";
 import { Terminal } from "@xterm/xterm";

@@ -34,13 +34,13 @@ class ActuatorSetup extends SignalWatcher(LitElement) {
     const canDismiss = g === null && app.get().held.length > 0;
     return html`<fsio-wizard-frame
       edition="actuator"
-      .tagline=${g ? "" : TAGLINE}
+      .tagline=${TAGLINE}
       ?dismissible=${canDismiss}
       @dismiss=${() => setupHidden.set(true)}
       ?open=${g !== null || (p !== "live" && p !== "boot" && !setupHidden.get())}
     >
       ${g
-        ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
+        ? html`<fsio-gate .msg=${g.msg} .hint=${g.hint}></fsio-gate>`
         : p === "reconnect"
           ? this.#reconnect()
           : this.#pick()}

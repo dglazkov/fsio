@@ -20,8 +20,8 @@ import type { Chip } from "@fsio/ui";
 import type { Tab } from "../../src/model";
 import { contentFor } from "../content";
 import { runOperation } from "../run";
-import { app, displaced, folder, helper, lastCommand, phase, setupHidden } from "../state";
-import { logText } from "../reporter";
+import { app, displaced, filesOpen, folder, folderFiles, helper, lastCommand, phase, setupHidden } from "../state";
+import "./details";
 import "./files-pane";
 import "./setup";
 
@@ -35,26 +35,34 @@ class ActuatorApp extends SignalWatcher(LitElement) {
         background: var(--fsio-bg); color: var(--fsio-fg);
         font-family: var(--fsio-mono);
       }
-      header {
-        display: flex; align-items: center; gap: 0.7rem;
-        padding: 0.35rem 0.9rem; background: var(--fsio-panel);
-        border-bottom: 1px solid var(--fsio-line);
+      .body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 17rem; position: relative; }
+      /* The button that opens the pane when the pane has nowhere to sit.
+         Hidden at widths where the pane is simply there. */
+      .drawerBtn {
+        display: none; flex: none; align-items: center; gap: 0.3rem;
+        background: none; border: 1px solid var(--fsio-line-strong); border-radius: 6px;
+        color: var(--fsio-dimmer); font: inherit; font-size: 0.74rem;
+        padding: 0.15rem 0.5rem; cursor: pointer;
       }
-      .where { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
-      .where .name {
-        font-family: var(--fsio-title); font-size: 1.15rem;
-        color: var(--fsio-fg-bright); white-space: nowrap;
+      .drawerBtn:hover { color: var(--fsio-fg-bright); border-color: var(--fsio-control-hover); }
+      .drawerBtn:focus-visible { outline: 2px solid var(--fsio-accent); outline-offset: 2px; }
+      /* Narrow: the pane stops being a column and becomes a drawer over the
+         one that is left. It used to be display:none — the files pane
+         simply gone, with nothing saying it existed. That is the worst
+         possible narrow-width answer for THIS demo, because the bottom half
+         of that pane is the page's own custody of its files, which is the
+         entire second act. */
+      @media (max-width: 52rem) {
+        .body { grid-template-columns: minmax(0, 1fr); }
+        .drawerBtn { display: inline-flex; }
+        actuator-files {
+          position: absolute; inset: 0 0 0 auto; width: min(19rem, 86vw); z-index: 4;
+          box-shadow: var(--fsio-lift); background: var(--fsio-aside);
+          transform: translateX(100%); transition: transform 180ms ease-out;
+        }
+        actuator-files[data-open] { transform: none; }
+        @media (prefers-reduced-motion: reduce) { actuator-files { transition: none; } }
       }
-      .where .slash { color: var(--fsio-dimmest); }
-      /* The strip takes the middle and does its own pushing: its internal
-         spacer is what keeps the chips beside each other instead of spread
-         across the header, so this row needs no spacer of its own. One here
-         would be a second flex:1 sibling, splitting the free space with the
-         strip — which is what left the chips scrolling inside half a header
-         with an empty div next to them. */
-      fsio-tab-strip { flex: 1; min-width: 0; }
-      .body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 17rem; }
-      @media (max-width: 52rem) { .body { grid-template-columns: minmax(0, 1fr); } actuator-files { display: none; } }
       main { min-height: 0; overflow: auto; display: grid; place-items: start center; padding: 3rem 1.5rem; }
       article {
         width: min(46rem, 100%); border: 1px solid var(--fsio-line); border-radius: 14px;
@@ -74,7 +82,11 @@ class ActuatorApp extends SignalWatcher(LitElement) {
       img.view { max-width: 100%; border-radius: 8px; display: block; background: var(--fsio-aside); }
       .note { margin-top: 0.9rem; font-size: 0.74rem; color: var(--fsio-dimmest); }
       .gone { color: var(--fsio-bad-bright); font-size: 0.85rem; line-height: 1.6; }
-      .empty { color: var(--fsio-dimmer); text-align: center; padding-top: 3rem; }
+      .empty {
+        color: var(--fsio-dimmer); padding-top: 3rem;
+        width: min(34rem, 100%); display: flex; flex-direction: column; gap: 0.5rem;
+      }
+      .empty p { margin: 0 0 0.3rem; }
       footer {
         display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
         padding: 0.45rem 0.9rem; border-top: 1px solid var(--fsio-line);
@@ -102,12 +114,10 @@ class ActuatorApp extends SignalWatcher(LitElement) {
       closeTitle: "remove this tab",
     }));
     const f = folder.get();
+    const open = filesOpen.get();
+    const shown = state.held.length + folderFiles.get().length;
     return html`
-      <header>
-        <div class="where">
-          <span class="name">${f ? f.name : "fsio"}</span>
-          <span class="slash">/ actuator</span>
-        </div>
+      <fsio-top-bar name=${f ? f.name : "fsio"} suffix="/ actuator">
         <fsio-tab-strip
           .chips=${chips}
           .activeId=${state.activeId}
@@ -116,11 +126,17 @@ class ActuatorApp extends SignalWatcher(LitElement) {
           @select=${(e: CustomEvent<{ id: string }>) => void this.#run("tabs.activate", e.detail.id)}
           @close=${(e: CustomEvent<{ id: string }>) => void this.#run("tabs.remove", e.detail.id)}
         ></fsio-tab-strip>
-        <fsio-theme-switch></fsio-theme-switch>
-        <fsio-details label="what this page is doing">
-          <div style="white-space: pre-wrap; font-size: 0.75rem">${logText.get()}</div>
-        </fsio-details>
-      </header>
+        <button
+          slot="status"
+          class="drawerBtn"
+          aria-expanded=${open}
+          aria-controls="files"
+          title="the files this page can see, and the ones it is holding"
+          @click=${() => filesOpen.set(!open)}
+        >
+          files${shown ? html` · ${shown}` : nothing}
+        </button>
+      </fsio-top-bar>
 
       <div class="body">
         <main>
@@ -129,18 +145,31 @@ class ActuatorApp extends SignalWatcher(LitElement) {
                 <h1>${active.title}</h1>
                 ${this.#origin(active)} ${this.#view(active)}
               </article>`
-            : html`<div class="empty">
-                No tabs. Add one from the folder:<br /><br />
-                <code>actuator tabs add --title Build --message "CI is running"</code><br />
-                <code>actuator open notes.md</code>
-              </div>`}
+            : this.#empty()}
         </main>
-        <actuator-files></actuator-files>
+        <actuator-files id="files" ?data-open=${open}></actuator-files>
       </div>
 
-      <footer>${this.#status()}</footer>
+      <!-- Spoken when it changes, because the change is the demonstration: a
+           command typed in a terminal in another window rewrites this line,
+           and someone who cannot see it has no other evidence it landed. -->
+      <footer role="status" aria-live="polite">${this.#status()}</footer>
+      <actuator-details></actuator-details>
       <actuator-setup></actuator-setup>
     `;
+  }
+
+  /** Nothing here yet, and the two commands that change that.
+   *
+   *  They used to be bare `<code>` — the one screen in the demo whose whole
+   *  job is to get a command into your terminal, printing it as something to
+   *  retype, while the copy button that setup uses sat one import away. */
+  #empty(): TemplateResult {
+    return html`<div class="empty">
+      <p>No tabs yet. Open one from the folder:</p>
+      <fsio-cmd command=${`actuator tabs add --title Build --message "CI is running"`}></fsio-cmd>
+      <fsio-cmd command="actuator open notes.md"></fsio-cmd>
+    </div>`;
   }
 
   /** Where what you are looking at actually lives. One line, always

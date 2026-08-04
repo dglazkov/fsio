@@ -9,13 +9,18 @@
 // imports on purpose, the same way a page imports its own components.
 import "./components/cmd.js";
 import "./components/details.js";
+import "./components/file-row.js";
+import "./components/gate.js";
 import "./components/session-row.js";
 import "./components/tab-strip.js";
 import "./components/theme-switch.js";
+import "./components/top-bar.js";
 import "./components/wizard-frame.js";
 
 export { ago, friendlyName, sinceLabel, sizeOf } from "./text.js";
 export { Dismiss } from "./dismiss.js";
+export { Ticker } from "./ticker.js";
+export { GLOW_MS } from "./components/file-row.js";
 export { Reporter, createReporter } from "./reporter.js";
 export type { PageReporter, ReporterOptions } from "./reporter.js";
 export {

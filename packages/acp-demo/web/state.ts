@@ -188,6 +188,15 @@ export interface FileRow {
 export const files = signal<FileRow[]>([]);
 export const workspaceNote = signal<string>("");
 
+/** Is the workspace pane showing? Only consulted at widths too narrow to give
+ *  it a column of its own, where it becomes a drawer over the conversation. It
+ *  used to be `display: none` below the breakpoint — the pane simply gone,
+ *  with nothing on screen saying it had ever been there. That pane is half of
+ *  what this demo is arguing (one grant, two uses), so vanishing it silently
+ *  costs the narrow reader the argument rather than a convenience. Closed by
+ *  default: the conversation is what a narrow window has room for. */
+export const workspaceOpen = signal(false);
+
 // ---------------------------------------------------------------- diagnostics
 
 export interface Diagnostics {

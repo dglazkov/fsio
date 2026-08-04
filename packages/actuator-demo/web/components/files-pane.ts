@@ -12,21 +12,24 @@
 // the page still has its files), and it only lands if the empty half is
 // still on screen saying so.
 //
-// The shape is acp-demo's workspace pane, which is where the row layout and
-// the change-fade come from; what is new here is that a row is a control.
+// The row is `@fsio/ui`'s now (`<fsio-file-row>`) — this file's header used to
+// say the layout and the change-fade were copied out of acp-demo's workspace
+// pane, which is exactly the citation rule 6 waits for. What is still this
+// page's is that a row is a *control*: it opens, and it carries the two verbs
+// that make this demo's point.
 import { LitElement, html, css } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { ago, sizeOf, tokens } from "@fsio/ui";
+import { ago, sizeOf, tokens, Ticker } from "@fsio/ui";
 import type { HeldFile } from "../../src/model";
 import { app, folder, folderFiles, folderNote, type FileRow } from "../state";
 import { flingLocal, runOperation } from "../run";
 
-/** How long a changed file stays highlighted. */
-const GLOW_MS = 12_000;
-
 class ActuatorFiles extends SignalWatcher(LitElement) {
-  #tick: ReturnType<typeof setInterval> | undefined;
+  // Both halves say how long ago on wall-clock time, and the fade expires on
+  // it too, so re-render on a slow tick rather than only when something
+  // changes.
+  #ticker = new Ticker(this);
 
   static override styles = [
     tokens,
@@ -43,44 +46,20 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
       }
       header .count { color: var(--fsio-dimmest); font-size: 0.72rem; white-space: nowrap; }
       .blurb { padding: 0 0.8rem 0.45rem; font-size: 0.68rem; line-height: 1.45; color: var(--fsio-dimmest); }
-      ul { list-style: none; margin: 0; padding: 0 0 0.4rem; overflow-y: auto; flex: 1; }
-      li {
-        display: flex; align-items: center; gap: 0.4rem;
-        padding: 0.2rem 0.5rem 0.2rem 0.8rem; font-size: 0.8rem; color: var(--fsio-dim);
-        font-family: var(--fsio-mono); cursor: pointer;
-      }
-      li:hover { background: var(--fsio-panel); color: var(--fsio-fg-bright); }
-      li.hot { color: var(--fsio-fg-bright); background: var(--fsio-accent-wash); }
-      li.open { color: var(--fsio-fg-bright); }
-      li .path {
-        flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        direction: rtl; text-align: left;
-      }
-      li .meta { color: var(--fsio-dimmest); white-space: nowrap; font-size: 0.72rem; }
-      li.hot .meta { color: var(--fsio-cyan); }
-      button {
-        flex: none; border: 1px solid transparent; background: none; border-radius: 6px;
+      .rows { padding: 0 0 0.4rem; overflow-y: auto; flex: 1; }
+      /* The row's own controls: the pane says what they do, the row says when
+         they show (on hover, and for the keyboard). */
+      fsio-file-row button {
+        border: 1px solid transparent; background: none; border-radius: 6px;
         color: var(--fsio-dimmest); font: inherit; font-size: 0.72rem; line-height: 1;
-        padding: 0.15rem 0.3rem; cursor: pointer; opacity: 0;
+        padding: 0.15rem 0.3rem; cursor: pointer;
       }
-      li:hover button, button:focus-visible { opacity: 1; }
-      button:hover { color: var(--fsio-fg-bright); border-color: var(--fsio-line-strong); }
+      fsio-file-row button:hover { color: var(--fsio-fg-bright); border-color: var(--fsio-line-strong); }
+      fsio-file-row button:focus-visible { outline: 2px solid var(--fsio-accent); outline-offset: 1px; }
       .empty { padding: 0.4rem 0.8rem; font-size: 0.72rem; line-height: 1.5; color: var(--fsio-dimmest); }
       .empty code { color: var(--fsio-dim); }
     `,
   ];
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    // Both halves say how long ago on wall-clock time, so re-render on a
-    // slow tick rather than only when something changes.
-    this.#tick = setInterval(() => this.requestUpdate(), 2000);
-  }
-
-  override disconnectedCallback(): void {
-    clearInterval(this.#tick);
-    super.disconnectedCallback();
-  }
 
   override render(): TemplateResult {
     const state = app.get();
@@ -100,9 +79,9 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
                 ? html`nothing to show in <code>${f.name}/</code>`
                 : html`no folder granted. The page cannot see your disk — and everything below still works.`}
             </div>`
-          : html`<ul>
+          : html`<div class="rows" role="list">
               ${rows.map((r) => this.#localRow(r, openPaths.has(r.path), now))}
-            </ul>`}
+            </div>`}
       </section>
 
       <section>
@@ -113,24 +92,24 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
         <div class="blurb">copies the page owns. These stay when the folder and the helper go.</div>
         ${held.length === 0
           ? html`<div class="empty">nothing flung yet. Try <code>actuator fling ~/some-file</code>, or ⤓ on a file above.</div>`
-          : html`<ul>
+          : html`<div class="rows" role="list">
               ${held.map((h) => this.#heldRow(h, now))}
-            </ul>`}
+            </div>`}
       </section>
     `;
   }
 
   #localRow(row: FileRow, open: boolean, now: number): TemplateResult {
-    const classes = [row.seenChanged && now - row.seenChanged < GLOW_MS ? "hot" : "", open ? "open" : ""]
-      .filter(Boolean)
-      .join(" ");
-    return html`<li
-      class=${classes}
-      title=${`${row.path} — ${sizeOf(row.size)}. Click to open it in a tab.`}
+    return html`<fsio-file-row
+      interactive
+      ?current=${open}
+      .path=${row.path}
+      .meta=${ago(now - row.modified)}
+      .hotSince=${row.seenChanged}
+      .now=${now}
+      title=${`${row.path} — ${sizeOf(row.size)}. Open it in a tab.`}
       @click=${() => void this.#run({ method: "files.open", params: { path: row.path } })}
     >
-      <span class="path">${row.path}</span>
-      <span class="meta">${ago(now - row.modified)}</span>
       <button
         title="hand the page a copy of this file — it keeps it"
         @click=${(e: Event) => {
@@ -140,16 +119,18 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
       >
         ⤓
       </button>
-    </li>`;
+    </fsio-file-row>`;
   }
 
   #heldRow(file: HeldFile, now: number): TemplateResult {
-    return html`<li
-      title=${`${file.name} — ${sizeOf(file.size)}, flung from ${file.from}. Click to open it in a tab.`}
+    return html`<fsio-file-row
+      interactive
+      .path=${file.name}
+      .meta=${`${sizeOf(file.size)} · ${ago(now - file.at)}`}
+      .now=${now}
+      title=${`${file.name} — ${sizeOf(file.size)}, flung from ${file.from}. Open it in a tab.`}
       @click=${() => void this.#run({ method: "files.show", params: { id: file.id } })}
     >
-      <span class="path">${file.name}</span>
-      <span class="meta">${sizeOf(file.size)} · ${ago(now - file.at)}</span>
       <button
         title="let go of this copy"
         @click=${(e: Event) => {
@@ -159,7 +140,7 @@ class ActuatorFiles extends SignalWatcher(LitElement) {
       >
         ✕
       </button>
-    </li>`;
+    </fsio-file-row>`;
   }
 
   /** A click here is the same operation the CLI sends — same reducer, same

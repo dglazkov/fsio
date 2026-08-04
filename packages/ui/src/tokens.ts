@@ -385,10 +385,13 @@ export const dialogChrome = css`
   }
   .crumbs .on { color: var(--fsio-cyan); }
   .crumbs .done { color: var(--fsio-good); }
-  /* The hard stop (a browser without File System Access). Louder than an
-     error inside the flow, because there is no rest of the flow. */
-  .gate strong { color: var(--fsio-bad-bright); }
-  .gate .hint { color: var(--fsio-bad); font-size: 0.9rem; margin-top: 0.4rem; }
+  /* The hard stop — a browser without File System Access — used to be three
+     lines of markup each demo wrote for itself and two rules here to colour
+     them. It is fsio-gate now, with its own shadow root, so those rules went
+     with the markup they were styling.
+
+     (No backticks in a comment inside a css template literal: they close the
+     template. Cost two builds this session.) */
 `;
 
 /** Everything a demo's own wizard body needs, in one import. The frame owns
