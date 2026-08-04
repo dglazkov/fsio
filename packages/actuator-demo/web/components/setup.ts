@@ -9,7 +9,7 @@ import { LitElement, html, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { wizardStyles } from "@fsio/ui";
-import { gate, helper, phase, pickError, reconnectTo } from "../state";
+import { app, gate, helper, phase, pickError, reconnectTo, setupHidden } from "../state";
 import { pickFolder, regrant } from "../session";
 
 // Not an npx one-liner like the other two demos: this one has no bundled
@@ -27,10 +27,17 @@ class ActuatorSetup extends SignalWatcher(LitElement) {
   override render(): TemplateResult {
     const g = gate.get();
     const p = phase.get();
+    // A page that is holding files does not need a folder to be worth
+    // looking at, so setup stops being a gate the moment there is
+    // something behind it. Not for the hard gate: a browser without the
+    // API has nothing to show either way.
+    const canDismiss = g === null && app.get().held.length > 0;
     return html`<fsio-wizard-frame
       edition="actuator"
       .tagline=${g ? "" : TAGLINE}
-      ?open=${g !== null || (p !== "live" && p !== "boot")}
+      ?dismissible=${canDismiss}
+      @dismiss=${() => setupHidden.set(true)}
+      ?open=${g !== null || (p !== "live" && p !== "boot" && !setupHidden.get())}
     >
       ${g
         ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
@@ -61,6 +68,14 @@ class ActuatorSetup extends SignalWatcher(LitElement) {
           : nothing}
       </div>
       ${err ? html`<div class="status bad">${err}</div>` : nothing}
+      ${app.get().held.length > 0
+        ? html`<div class="row">
+            <button class="ghost small" @click=${() => setupHidden.set(true)}>
+              Look at the ${app.get().held.length} file${app.get().held.length === 1 ? "" : "s"} this page is holding
+            </button>
+            <span class="fineprint">flung here earlier — they don't need the folder, or the helper</span>
+          </div>`
+        : nothing}
       <p class="fineprint">
         Everything the page holds stays in the browser. The folder carries
         commands one way and receipts the other, and nothing else.

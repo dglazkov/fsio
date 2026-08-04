@@ -14,22 +14,53 @@ import path from "node:path";
 import { FsioClient, type FsioSession } from "@fsio/client";
 import { HostServer } from "@fsio/host";
 import { actuate, CliError } from "./actuate.js";
+import { fromBase64 } from "./bytes.js";
+import { flingOp, FlingError } from "./fling.js";
 import { actuatorKinds } from "./kinds.js";
 import { asOperation, decodeDownstream, encode, receipt, refusal } from "./messages.js";
-import { apply, AppError, initialState, type AppState, type Operation } from "./model.js";
+import { apply, AppError, initialState, safeRelPath, type AppState, type Operation } from "./model.js";
 import { NodeDirectory } from "./node-fs.js";
 import { Router } from "./router.js";
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
-/** The page, as the test plays it: hold state, apply what arrives, answer. */
+/** The page, as the test plays it: hold state, apply what arrives, answer.
+ *
+ *  It plays the two things the real page does that the reducer cannot: it
+ *  reads a file out of the granted folder before opening a tab on it
+ *  (web/run.ts), and it stores a flung file's bytes under the id the
+ *  reducer minted (web/db.ts). Without those, "the page reads it" and "the
+ *  bytes arrived" would both be assertions about nothing. */
 class FakePage {
   state: AppState = initialState();
   session!: FsioSession;
   applied: string[] = [];
   displaced = false;
+  /** what the page has custody of, playing IndexedDB's blob store. */
+  blobs = new Map<string, Uint8Array>();
 
   constructor(private readonly root: string) {}
+
+  /** The page's own read, through its folder grant — not the CLI's. */
+  #readLocal(rel: string): Buffer {
+    const safe = safeRelPath(rel);
+    if (!safe) throw new AppError("bad_path", `${rel} is not inside the granted folder`);
+    try {
+      return fs.readFileSync(path.join(this.root, ...safe.split("/")));
+    } catch {
+      throw new AppError("file_not_found", `no file at ${JSON.stringify(rel)} in the granted folder`);
+    }
+  }
+
+  /** The half of applying an operation that is not the reducer's. */
+  #sideEffects(op: Operation, result: Record<string, unknown>): void {
+    if (op.method === "files.fling") {
+      this.blobs.set(String(result["fileId"]), fromBase64(op.params.data));
+      const superseded = result["superseded"];
+      if (typeof superseded === "string") this.blobs.delete(superseded);
+    }
+    if (op.method === "files.drop") this.blobs.delete(op.params.id);
+  }
 
   async open(): Promise<void> {
     const client = new FsioClient(new NodeDirectory(this.root));
@@ -46,7 +77,12 @@ class FakePage {
       const op = asOperation(msg);
       if (!op) return void s.sendData(encode(refusal(msg.id, { code: "bad_command", message: "unsupported" })));
       try {
+        // A tab onto a file the page cannot see would be a window onto
+        // nothing, so the read happens before the reducer, and its failure
+        // is the page's refusal.
+        if (op.method === "files.open") this.#readLocal(op.params.path);
         const next = apply(this.state, op);
+        this.#sideEffects(op, next.result);
         this.state = next.state;
         this.applied.push(op.method);
         s.sendData(encode(receipt(msg.id, next.result)));
@@ -137,7 +173,7 @@ test("a command travels CLI → folder → page, and its result comes back", asy
 
     const updated = await rig.run({ method: "tabs.update", params: { id, message: "CI passed" } });
     assert.ok(updated.ok);
-    assert.equal(page.state.tabs.at(-1)!.message, "CI passed");
+    assert.deepEqual(page.state.tabs.at(-1)!.body, { kind: "message", message: "CI passed" });
 
     const activated = await rig.run({ method: "tabs.activate", params: { id: "welcome" } });
     assert.ok(activated.ok);
@@ -182,6 +218,93 @@ test("the page closing puts the folder back to nobody-home", async () => {
       return true;
     });
   });
+});
+
+test("open sends a path; the page is what reads the file", async () => {
+  await withRig(async (rig) => {
+    const page = new FakePage(rig.root);
+    await page.open();
+    fs.mkdirSync(path.join(rig.root, "notes"));
+    fs.writeFileSync(path.join(rig.root, "notes", "plan.md"), "# ship it\n");
+
+    const opened = await rig.run({ method: "files.open", params: { path: "notes/plan.md" } });
+    assert.ok(opened.ok);
+    const tab = page.state.tabs.at(-1)!;
+    assert.deepEqual(tab.body, { kind: "local", path: "notes/plan.md" }, "the tab holds a path, not the file");
+    assert.equal(page.blobs.size, 0, "and the page took no copy");
+
+    // The command that travelled carried no bytes either — which is the
+    // difference from a fling, stated as a size.
+    const missing = await rig.run({ method: "files.open", params: { path: "notes/nope.md" } });
+    assert.equal(missing.ok, false);
+    if (missing.ok) return;
+    assert.equal(missing.error.kind, "app");
+    assert.equal(missing.error.code, "file_not_found");
+    await page.close();
+  });
+});
+
+test("fling carries the bytes across, and the page ends up holding them", async () => {
+  await withRig(async (rig) => {
+    const page = new FakePage(rig.root);
+    await page.open();
+
+    // Deliberately outside the granted folder: the page could never have
+    // read this one, which is the whole reason fling exists.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-fling-"));
+    const source = path.join(outside, "graph.png");
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    fs.writeFileSync(source, bytes);
+
+    try {
+      const flung = await rig.run(await flingOp(source));
+      assert.ok(flung.ok);
+      if (!flung.ok) return;
+      const fileId = String(flung.result["fileId"]);
+      assert.equal(flung.result["type"], "image/png", "typed from the name, by the side holding the file");
+      assert.deepEqual([...page.blobs.get(fileId)!], [...bytes], "the bytes arrived intact");
+      assert.deepEqual(page.state.tabs.at(-1)!.body, { kind: "held", fileId });
+      assert.equal(page.state.held.at(-1)!.from, source, "and it remembers where it came from");
+
+      // Fling it again after an edit: one copy per source, and the tab
+      // showing it follows the new one.
+      fs.writeFileSync(source, Buffer.concat([bytes, Buffer.from([9])]));
+      const again = await rig.run(await flingOp(source));
+      assert.ok(again.ok);
+      if (!again.ok) return;
+      assert.equal(again.result["superseded"], fileId);
+      assert.equal(page.state.held.length, 1);
+      assert.equal(page.blobs.size, 1, "the superseded copy was let go");
+      assert.equal(page.blobs.get(String(again.result["fileId"]))!.length, bytes.length + 1);
+
+      // And the page can let go of it entirely, closing the tab with it.
+      const dropped = await rig.run({ method: "files.drop", params: { id: String(again.result["fileId"]) } });
+      assert.ok(dropped.ok);
+      assert.equal(page.blobs.size, 0);
+      assert.deepEqual(page.state.held, []);
+      assert.equal(page.state.tabs.some((t) => t.body.kind === "held"), false);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+    await page.close();
+  });
+});
+
+test("a file the terminal cannot read never becomes a command", async () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "fsio-fling-"));
+  try {
+    await assert.rejects(flingOp(path.join(outside, "nope.bin")), (e: unknown) => {
+      assert.ok(e instanceof FlingError);
+      assert.equal(e.reason, "missing");
+      return true;
+    });
+    await assert.rejects(flingOp(outside), (e: unknown) => {
+      assert.equal((e as FlingError).reason, "directory");
+      return true;
+    });
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 test("a second page takes over, and the first is told", async () => {

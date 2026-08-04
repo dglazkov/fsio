@@ -11,7 +11,7 @@
 // for more: a command is not an RPC *request to the page*, it is a payload
 // the page happens to answer. That distinction is what keeps the demo
 // inside the protocol (PROCESS.md rule 4 — nothing here is strain).
-import type { Operation } from "./model.js";
+import { MAX_FLING_BYTES, type Operation } from "./model.js";
 
 /** Bumped when a field's meaning changes. A helper and a page from
  *  different builds meet in a folder more often than you would think. */
@@ -121,6 +121,8 @@ export const refusal = (id: string, error: { code: string; message: string; hint
 export function asOperation(value: { method?: unknown; params?: unknown }): Operation | null {
   const params = (value.params ?? {}) as Record<string, unknown>;
   const str = (k: string): string | undefined => (typeof params[k] === "string" ? (params[k] as string) : undefined);
+  const num = (k: string): number | undefined =>
+    typeof params[k] === "number" && Number.isFinite(params[k]) ? (params[k] as number) : undefined;
   switch (value.method) {
     case "tabs.add": {
       const title = str("title");
@@ -150,6 +152,41 @@ export function asOperation(value: { method?: unknown; params?: unknown }): Oper
     }
     case "tabs.list":
       return { method: "tabs.list", params: {} };
+    case "files.list":
+      return { method: "files.list", params: {} };
+    case "files.open": {
+      // The path is *not* normalized here: `safeRelPath` is the reducer's
+      // job, and a validator that quietly rewrites what it was handed makes
+      // the refusal it should have raised unreachable.
+      const path = str("path");
+      return path === undefined ? null : { method: "files.open", params: { path } };
+    }
+    case "files.show":
+    case "files.drop": {
+      const id = str("id");
+      return id === undefined ? null : { method: value.method, params: { id } };
+    }
+    case "files.fling": {
+      const name = str("name");
+      const from = str("from");
+      const type = str("type");
+      const data = str("data");
+      const size = num("size");
+      if (name === undefined || from === undefined || type === undefined || data === undefined || size === undefined) {
+        return null;
+      }
+      // Two cheap checks the reducer cannot make, both about the payload
+      // rather than the application: a size that disagrees with the bytes
+      // means the frame is not what it says it is, and the cap is enforced
+      // before a megabyte of base64 is decoded rather than after.
+      if (size < 0 || size > MAX_FLING_BYTES) return null;
+      if (Math.ceil(size / 3) * 4 !== data.length) return null;
+      const open = params["open"];
+      return {
+        method: "files.fling",
+        params: { name, from, type, size, data, ...(typeof open === "boolean" ? { open } : {}) },
+      };
+    }
     default:
       return null;
   }
