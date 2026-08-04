@@ -1,21 +1,29 @@
-// The workspace pane: the folder, most-recently-changed first, with a fade
-// on anything that moved while you were watching.
+// The workspace pane: the folder, as a folder, with a fade on anything that
+// moved while you were watching.
 //
 // Nothing here goes through fsio. It is the same directory handle the
 // transport rides on, read directly by the page — which is the argument the
-// demo is making: one grant, two uses, and no server anywhere. When the
-// agent edits a file, the row jumps to the top and lights up next to the
-// sentence where it said it would.
+// demo is making: one grant, two uses, and no server anywhere. When the agent
+// edits a file, the row lights up next to the sentence where it said it
+// would, and the directories above it open themselves so you can see it.
 //
-// The row and its fade are `@fsio/ui`'s now (`<fsio-file-row>`, `Ticker`):
-// the actuator demo's files pane had copied both out of this file, which is
-// the duplication rule 6 waits for. What stays here is that this pane is a
-// *feed* — you watch it, you do not click it.
+// The tree, the row and the fade are `@fsio/ui`'s (`<fsio-file-tree>`): the
+// actuator demo's files pane had copied the row and the fade out of this
+// file, which is the duplication rule 6 waits for, and both panes wanted the
+// hierarchy at the same moment. What stays here is what this pane is FOR —
+// the folder the conversation is about.
+//
+// This pane used to be a feed you watched and could not click, and the
+// distinction was worth keeping while there was nothing to click TO. There is
+// now: a row opens the file in a tab (files.ts), so the sentence "I edited
+// src/state.ts" and the file it edited are one gesture apart.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { ago, tokens, Ticker } from "@fsio/ui";
-import { agentFacts, files, workspaceNote, workspaceOpen } from "../state";
+import type { TreeRow } from "@fsio/ui";
+import { agentFacts, fileTabs, files, workspaceNote, workspaceOpen } from "../state";
+import { openFile } from "../files";
 
 class AcpWorkspace extends SignalWatcher(LitElement) {
   // The rows say how long ago on wall-clock time, and the fade expires on it
@@ -56,7 +64,7 @@ class AcpWorkspace extends SignalWatcher(LitElement) {
   ];
 
   override render(): TemplateResult {
-    const rows = files.get();
+    const rows: TreeRow[] = files.get();
     const facts = agentFacts.get();
     const now = Date.now();
     // An attribute rather than a bound property: this element sits in the
@@ -65,18 +73,17 @@ class AcpWorkspace extends SignalWatcher(LitElement) {
     this.toggleAttribute("data-open", workspaceOpen.get());
     return html`
       <header><span>workspace</span><span>${workspaceNote.get()}</span></header>
-      <div class="rows" role="list">
-        ${rows.map(
-          (r) => html`<fsio-file-row
-            .path=${r.path}
-            .meta=${ago(now - r.modified)}
-            .hotSince=${r.seenChanged}
-            .now=${now}
-            title=${r.path}
-          ></fsio-file-row>`
-        )}
+      <div class="rows">
+        <fsio-file-tree
+          .rows=${rows}
+          .now=${now}
+          .open=${fileTabs.get().map((t) => t.path)}
+          .metaFor=${(r: TreeRow) => ago(now - r.modified)}
+          label="files in this folder"
+          @open=${(e: CustomEvent<{ path: string }>) => openFile(e.detail.path)}
+        ></fsio-file-tree>
       </div>
-      ${facts ? html`<footer>this list is read directly by the page, through your folder grant.</footer>` : nothing}
+      ${facts ? html`<footer>read directly by the page, through your folder grant. Click one to open it.</footer>` : nothing}
     `;
   }
 }

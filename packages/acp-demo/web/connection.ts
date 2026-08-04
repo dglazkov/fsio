@@ -54,6 +54,7 @@ import {
   type AgentOffer,
 } from "./state";
 import { startWatching } from "./workspace";
+import { closeAllFiles } from "./files";
 import { openPast, refreshPast } from "./history";
 import { listAdoptable } from "./discovery";
 // Circular, in the same direction and for the same reason as terminal-demo's
@@ -255,6 +256,10 @@ async function connectTo(root: FileSystemDirectoryHandle, via: "picked" | "resto
   // folder rather than to any one conversation in it: what it kept from
   // before (#119), and what is in it right now.
   void refreshPast(root).catch(() => {});
+  // Windows onto the folder we are leaving, if this is a re-pick. A tab whose
+  // path resolved in the last folder would either go dark or — worse — quietly
+  // show a same-named file from this one.
+  closeAllFiles();
   startWatching(root);
   helperWasAlive = false;
   helperEverAlive = false;

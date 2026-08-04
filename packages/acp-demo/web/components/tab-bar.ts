@@ -1,5 +1,15 @@
-// The conversations in this folder: N chips, and the list that finds the ones
-// this page isn't holding.
+// What this page has open in this folder: N conversations, the files you went
+// and looked at, and the list that finds the conversations this page isn't
+// holding.
+//
+// The strip carries two kinds of chip now. That is a widening of what a chip
+// means — it was a conversation, and this file's comments below still argue
+// that at length — and the reason it survives the widening is that the two
+// kinds share the sentence the strip actually makes: *this folder, and what is
+// open in it*. A file chip is the quiet kind. It has no dot, no badge and no
+// confirm, because a window onto a file has no state to be in and closing it
+// costs nothing; it wears an icon so nobody has to read "notes.md" to know it
+// is not an agent.
 //
 // The strip itself is `@fsio/ui`'s now — the chips, the keyboard, the
 // popovers, the confirm — because the terminal demo had grown a poorer copy
@@ -30,8 +40,9 @@ import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { friendlyName, listBody, sinceLabel, sizeOf, tokens } from "@fsio/ui";
 import type { Chip, ChipAction, ConfirmCopy } from "@fsio/ui";
-import { activeId, convs, joinable, past, phase, type Adoptable, type Conv, type PastConversation } from "../state";
+import { activeFile, activeId, convs, fileTabs, joinable, past, phase, type Adoptable, type Conv, type FileTab, type PastConversation } from "../state";
 import { activate } from "../conversations";
+import { basename, closeFile, isFileTab, showFile } from "../files";
 import { adoptSession, currentRoot, endSession, leaveSession, refreshJoinable, startAnother } from "../connection";
 import { openPast, refreshPast } from "../history";
 import { isTail } from "../../src/transcripts.js";
@@ -51,6 +62,7 @@ class AcpTabBar extends SignalWatcher(LitElement) {
 
   override render(): TemplateResult | typeof nothing {
     const list = convs.get();
+    const open = fileTabs.get();
     // Before there is a folder there is nothing to have chips of. Reading a
     // past conversation used to be the other reason to hide — it took over
     // the whole pane, so a strip under it would have offered to switch to
@@ -58,19 +70,48 @@ class AcpTabBar extends SignalWatcher(LitElement) {
     // it is exactly what the strip is for.
     if (phase.get() !== "chat" && !list.length) return nothing;
     return html`<fsio-tab-strip
-      .chips=${list.map((c) => this.#chip(c))}
-      .activeId=${activeId.get()}
+      .chips=${[...list.map((c) => this.#chip(c)), ...open.map((f) => this.#file(f))]}
+      .activeId=${activeFile.get() ?? activeId.get()}
       .confirmFor=${this.#confirmFor}
       .menuFor=${this.#menuFor}
       label="conversations in this folder"
       listTitle="the conversations in this folder"
-      @select=${(e: CustomEvent<{ id: string }>) => activate(e.detail.id)}
-      @close=${(e: CustomEvent<{ id: string }>) => void endSession(e.detail.id, true)}
+      @select=${(e: CustomEvent<{ id: string }>) => this.#select(e.detail.id)}
+      @close=${(e: CustomEvent<{ id: string }>) =>
+        isFileTab(e.detail.id) ? closeFile(e.detail.id) : void endSession(e.detail.id, true)}
       @action=${this.#action}
       @list-open=${this.#refreshList}
     >
       <div slot="list">${this.#list()}</div>
     </fsio-tab-strip>`;
+  }
+
+  /** A file this page has open, in the same strip as the conversations.
+   *
+   *  The strip is "what this page has open in this folder", and both kinds of
+   *  thing are that. What keeps them apart is the icon and the absence of
+   *  everything else a conversation chip carries: a file has no turn, nothing
+   *  unread, nobody waiting on an answer, and no dot — because a dot is a
+   *  state something is IN, and a file being open is not a state, it is a
+   *  window. */
+  #file(f: FileTab): Chip {
+    return {
+      id: f.id,
+      name: basename(f.path),
+      secondary: f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "",
+      icon: "draft",
+      title: `${f.path} — read live from the folder you granted`,
+      closeTitle: "close this window — the file is untouched",
+    };
+  }
+
+  /** Files and conversations answer the same click differently, and this
+   *  two-line split is the whole of what a mixed strip costs. Coming back to a
+   *  conversation puts the file view away — `activate` does that, for every
+   *  route to a conversation and not just this one. */
+  #select(id: string): void {
+    if (isFileTab(id)) return showFile(id);
+    activate(id);
   }
 
   #chip(c: Conv): Chip {

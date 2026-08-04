@@ -27,13 +27,19 @@
        half the demo's argument with it. The drawer's own styling is in
        components/workspace-pane.ts, on the same breakpoint. */
     @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } }
-    acp-chat { min-width: 0; }
+    /* The chat and the viewer share the first column and take turns in it:
+       exactly one of them is ever un-hidden, and each hides itself (see their
+       render methods). Same column rather than a third one — going to look at
+       a file is a place you go and come back from, not a permanent split of
+       the room. */
+    acp-chat, acp-viewer { min-width: 0; }
   </style>
 </head>
 <body>
   <acp-top-bar></acp-top-bar>
   <main>
     <acp-chat></acp-chat>
+    <acp-viewer hidden></acp-viewer>
     <acp-workspace></acp-workspace>
   </main>
   <acp-details></acp-details>

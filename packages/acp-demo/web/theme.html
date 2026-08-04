@@ -48,6 +48,13 @@
     .specimen .sans-face { font-family: var(--fsio-sans); font-size: 0.95rem; color: var(--fsio-fg); }
     .specimen .what { color: var(--fsio-dimmer); font-size: 0.76rem; font-family: var(--fsio-mono); }
 
+    /* A pane, so the tree is judged on the ground it actually sits on: the
+       aside surface, with the border a column has. */
+    .pane {
+      background: var(--fsio-aside); border: 1px solid var(--fsio-line);
+      border-radius: 10px; padding: 0.4rem 0; width: min(22rem, 100%);
+    }
+
     /* Icon shelf */
     .shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr)); gap: 0.4rem; }
     .shelf .cell {
@@ -69,6 +76,11 @@
       display: flex; align-items: center; gap: 0.8rem;
       padding: 0.5rem 0.9rem; border-radius: 12px;
     }
+    /* The strip is given the room the real bar gives it (acp-demo's tab-bar:
+       flex + min-width:0), so its overflow behaviour — the "N more" list — is
+       the one the page has rather than a chip hanging off the end of the
+       preview. */
+    .bar fsio-tab-strip { flex: 1; min-width: 0; }
     .bar .where { display: flex; align-items: center; gap: 0.4rem; color: var(--fsio-dim); font-size: 0.83rem; }
     .bar .where .icon { color: var(--fsio-dimmer); }
     .bar .where b { color: var(--fsio-fg); font-weight: 500; }
@@ -157,10 +169,18 @@
 
     <section>
       <h2>The bar</h2>
-      <p class="sub">Real <code>&lt;fsio-tab-strip&gt;</code>: chips, dots, a badge, the "⋯" menu and the close confirm. Unchanged from the merge — it just reads the new tokens.</p>
+      <p class="sub">Real <code>&lt;fsio-tab-strip&gt;</code>: chips, dots, a badge, the "⋯" menu and the close confirm — and the quiet kind of chip, a file the page has open, which carries an icon instead of a state.</p>
       <div class="bar glass">
         <span class="where"><span class="icon sm">folder_open</span><b>myproject</b></span>
         <fsio-tab-strip id="strip"></fsio-tab-strip>
+      </div>
+    </section>
+
+    <section>
+      <h2>The folder</h2>
+      <p class="sub">Real <code>&lt;fsio-file-tree&gt;</code>, on a pane's ground: directories that open, a file that changed under you (lit, and revealed through whatever was closed above it), one already open, and a page's own per-row control on hover.</p>
+      <div class="pane">
+        <fsio-file-tree id="tree"></fsio-file-tree>
       </div>
     </section>
 

@@ -14,7 +14,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { controls, icons, tokens } from "@fsio/ui";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { active, agentFacts, asking, convs, entries, notice, phase, queued, superseded, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
+import { active, activeFile, agentFacts, asking, convs, entries, notice, phase, queued, superseded, turn, viewing, viewingHalf, type Entry, type PermissionEntry, type ToolEntry } from "../state";
 import { cancelTurn, sendPrompt, unqueue } from "../conversations";
 import { endSession, retakeSession, startAnother } from "../connection";
 import { renderMarkdown } from "../markdown";
@@ -35,6 +35,8 @@ class AcpChat extends SignalWatcher(LitElement) {
     icons,
     css`
     :host { display: flex; flex-direction: column; min-height: 0; }
+    /* The host's own display beats the UA sheet's [hidden]. */
+    :host([hidden]) { display: none !important; }
     .log { flex: 1; overflow-y: auto; padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.7rem; }
     .entry { max-width: 52rem; line-height: 1.5; }
     /* The one bubble on the page. It needs a border now that it sits on wood
@@ -181,6 +183,12 @@ class AcpChat extends SignalWatcher(LitElement) {
   ];
 
   override render(): TemplateResult {
+    // Standing aside while a file is open (files.ts). Hidden rather than torn
+    // down: this element holds the scroll position and whatever is half-typed
+    // in the composer, and losing either because you glanced at a file would
+    // make looking at one cost something. The conversation keeps running
+    // behind it — the chip says so, and the log has it when you come back.
+    this.toggleAttribute("hidden", activeFile.get() !== null);
     const n = notice.get();
     const t = turn.get();
     const q = queued.get();

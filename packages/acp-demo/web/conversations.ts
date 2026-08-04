@@ -36,7 +36,7 @@ import { RpcError, RpcErrors, type FsioSession } from "@fsio/client";
 import { AcpConnection } from "./acp";
 import { AgentSession } from "./agent";
 import { log, reporter, step } from "./reporter";
-import { active, activeId, convs, newConv, notice, phase, resumeError, type Conv, type ConvIO, type Diagnostics, type Entry, type Turn } from "./state";
+import { active, activeFile, activeId, convs, newConv, notice, phase, resumeError, type Conv, type ConvIO, type Diagnostics, type Entry, type Turn } from "./state";
 import { getClient, currentRoot } from "./connection";
 import { refreshPast } from "./history";
 import { peekAdoptable } from "./discovery";
@@ -66,6 +66,11 @@ function syncOpen(): void {
 export function activate(id: string): void {
   const c = find(id);
   if (!c) return;
+  // A conversation coming forward puts any open file view away — the two
+  // share the column, and this is the one place that has to say so, because
+  // every route to a conversation goes through here (a chip, a new one
+  // starting, one being adopted, a document opening).
+  activeFile.set(null);
   activeId.set(id);
   c.unread.set(0);
   phase.set("chat");
@@ -102,7 +107,9 @@ export function convIO(c: Conv): ConvIO {
   return {
     push: (e: Entry): Entry => {
       c.entries.set([...c.entries.get(), e]);
-      if (activeId.get() !== c.id) c.unread.set(c.unread.get() + 1);
+      // "Elsewhere" includes reading a file: the conversation is not on
+      // screen, so what it said while you were away is unread.
+      if (activeId.get() !== c.id || activeFile.get()) c.unread.set(c.unread.get() + 1);
       return e;
     },
     touch: () => c.entries.set([...c.entries.get()]),

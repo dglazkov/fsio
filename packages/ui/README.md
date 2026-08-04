@@ -41,6 +41,7 @@ mechanics. What a person is *looking at* is still prose, still slotted.
 | `<fsio-gate>` | the hard stop for a browser without File System Access, and the one thing it can offer: this page's address, copied. |
 | `<fsio-session-row>` | one session, offered: name, where it is, who holds it, what it last said, and a button. |
 | `<fsio-file-row>` | one file in a pane: tail-first name, one fact, the change-fade, and a slot for whatever the page lets you do to it. |
+| `<fsio-file-tree>` | the flat paths a folder walk reports, as directories that open and close. Rows in, `open` out; the page supplies each row's one fact (`metaFor`) and its controls (`actionsFor`). Owns collapse state, because it is the thing that lays rows out — and therefore the only thing that can re-open a directory when a file inside it changes. |
 | `<fsio-details>` | the "i" in the corner and the popover it opens. Page content slotted above (`default`) and below (`foot`); the theme switch and the page log are its own. |
 | `<fsio-cmd>` | a command to run in a terminal, and the button that copies it. |
 | `createReporter` | the cooperative-verification reporter (TESTING.md), parameterized by page name and by what the page calls the things it holds. |
@@ -85,8 +86,16 @@ any `static styles` that reads a `--fsio-*` variable.
   because it declares globals, and reaching an ambient declaration across a
   package boundary costs more plumbing than the 25 lines it saves. It is a
   shim for types the platform has and TypeScript does not, not UI.
-- **The file *panes*.** Two pages have one and they disagree about what a pane
-  is — a feed you watch, a picker you click ([#157](https://github.com/dglazkov/fsio/issues/157)).
-  The row they agreed on is in here; the panes are not.
+- **The file *panes*.** Two pages have one, and what is left of them after the
+  row and the tree came in here is what they never agreed on: their headers,
+  their blurbs, and the actuator's second half — the files the page holds,
+  which is a list and not a tree, because a copy has a name and not a place.
+
+  The disagreement this bullet used to record — a feed you watch versus a
+  picker you click ([#157](https://github.com/dglazkov/fsio/issues/157)) —
+  ended when the agent page grew somewhere to click *to*. Both panes open
+  files now. What the feed was actually protecting was "the thing that just
+  changed is findable", and the tree pays that back as auto-reveal plus the
+  glow rather than as an ordering.
 - **Anything one page renders once.** The chat log, the permission card, the
   xterm frame. One consumer is not a signal.
