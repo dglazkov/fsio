@@ -51,12 +51,12 @@ class AcpWizard extends SignalWatcher(LitElement) {
     const steps = !g && p === "wizard";
     return html`<fsio-wizard-frame
       edition="agent"
-      .tagline=${g ? "" : TAGLINE}
+      .tagline=${TAGLINE}
       .crumbs=${steps ? this.#crumbs() : []}
       ?open=${g !== null || p === "wizard" || p === "reconnect" || p === "resume-error" || p === "pick-session"}
     >
       ${g
-        ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
+        ? html`<fsio-gate .msg=${g.msg} .hint=${g.hint}></fsio-gate>`
         : p === "reconnect"
           ? this.#reconnect()
           : p === "resume-error"

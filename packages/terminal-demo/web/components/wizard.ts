@@ -28,14 +28,14 @@ class FsioWizard extends SignalWatcher(LitElement) {
     const steps = !g && p === "wizard";
     return html`<fsio-wizard-frame
       edition="terminal"
-      .tagline=${g ? "" : TAGLINE}
+      .tagline=${TAGLINE}
       .crumbs=${steps ? this.#crumbs() : []}
       ?open=${g !== null || (p !== "shell" && p !== "boot")}
       ?dismissible=${p === "picker" && tabs.get().length > 0}
       @dismiss=${() => dismissPicker()}
     >
       ${g
-        ? html`<div class="gate"><strong>${g.msg}</strong><div class="hint">${g.hint}</div></div>`
+        ? html`<fsio-gate .msg=${g.msg} .hint=${g.hint}></fsio-gate>`
         : p === "reconnect"
           ? this.#reconnect()
           : p === "picker"

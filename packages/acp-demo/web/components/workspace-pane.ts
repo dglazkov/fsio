@@ -6,17 +6,21 @@
 // demo is making: one grant, two uses, and no server anywhere. When the
 // agent edits a file, the row jumps to the top and lights up next to the
 // sentence where it said it would.
+//
+// The row and its fade are `@fsio/ui`'s now (`<fsio-file-row>`, `Ticker`):
+// the actuator demo's files pane had copied both out of this file, which is
+// the duplication rule 6 waits for. What stays here is that this pane is a
+// *feed* — you watch it, you do not click it.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
-import { ago, tokens } from "@fsio/ui";
-import { agentFacts, files, workspaceNote } from "../state";
-
-/** How long a changed file stays highlighted. */
-const GLOW_MS = 12_000;
+import { ago, tokens, Ticker } from "@fsio/ui";
+import { agentFacts, files, workspaceNote, workspaceOpen } from "../state";
 
 class AcpWorkspace extends SignalWatcher(LitElement) {
-  #tick: ReturnType<typeof setInterval> | undefined;
+  // The rows say how long ago on wall-clock time, and the fade expires on it
+  // too, so re-render on a slow tick rather than only when something changes.
+  #ticker = new Ticker(this);
 
   static override styles = [
     tokens,
@@ -30,48 +34,48 @@ class AcpWorkspace extends SignalWatcher(LitElement) {
         border-bottom: 1px solid var(--fsio-line);
         display: flex; justify-content: space-between; gap: 0.5rem;
       }
-      ul { list-style: none; margin: 0; padding: 0.3rem 0; overflow-y: auto; flex: 1; }
-      li {
-        display: flex; justify-content: space-between; gap: 0.6rem;
-        padding: 0.22rem 0.8rem; font-size: 0.8rem; color: var(--fsio-dim);
-        font-family: var(--fsio-mono);
-      }
-      li.hot { color: var(--fsio-fg-bright); background: var(--fsio-accent-wash); }
-      li .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-      li .meta { color: var(--fsio-dimmest); white-space: nowrap; }
-      li.hot .meta { color: var(--fsio-cyan); }
+      .rows { padding: 0.3rem 0; overflow-y: auto; flex: 1; }
       footer {
         padding: 0.5rem 0.8rem; font-size: 0.72rem; color: var(--fsio-dimmest);
         border-top: 1px solid var(--fsio-line);
       }
+      /* Narrow: this stops being a column and becomes a drawer over the
+         conversation, opened from the bar. The breakpoint matches the grid's
+         in index.html — one number, said in two places, because the layout
+         lives out there and the drawer lives in here. */
+      @media (max-width: 800px) {
+        :host {
+          position: absolute; inset: 0 0 0 auto; width: min(20rem, 88vw); z-index: 4;
+          box-shadow: var(--fsio-lift);
+          transform: translateX(100%); transition: transform 180ms ease-out;
+        }
+        :host([data-open]) { transform: none; }
+      }
+      @media (prefers-reduced-motion: reduce) { :host { transition: none; } }
     `,
   ];
-
-  override connectedCallback(): void {
-    super.connectedCallback();
-    // The glow expires on wall-clock time, so re-render on a slow tick.
-    this.#tick = setInterval(() => this.requestUpdate(), 2000);
-  }
-
-  override disconnectedCallback(): void {
-    clearInterval(this.#tick);
-    super.disconnectedCallback();
-  }
 
   override render(): TemplateResult {
     const rows = files.get();
     const facts = agentFacts.get();
     const now = Date.now();
+    // An attribute rather than a bound property: this element sits in the
+    // page's light DOM (index.html), so nothing is binding to it — it reads
+    // the signal itself, the way it already reads `files`.
+    this.toggleAttribute("data-open", workspaceOpen.get());
     return html`
       <header><span>workspace</span><span>${workspaceNote.get()}</span></header>
-      <ul>
+      <div class="rows" role="list">
         ${rows.map(
-          (r) => html`<li class=${now - r.seenChanged < GLOW_MS ? "hot" : ""}>
-            <span class="path" title=${r.path}>${r.path}</span>
-            <span class="meta">${ago(now - r.modified)}</span>
-          </li>`
+          (r) => html`<fsio-file-row
+            .path=${r.path}
+            .meta=${ago(now - r.modified)}
+            .hotSince=${r.seenChanged}
+            .now=${now}
+            title=${r.path}
+          ></fsio-file-row>`
         )}
-      </ul>
+      </div>
       ${facts ? html`<footer>this list is read directly by the page, through your folder grant.</footer>` : nothing}
     `;
   }

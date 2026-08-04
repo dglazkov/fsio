@@ -18,10 +18,15 @@
       display: flex; flex-direction: column;
     }
     main {
-      flex: 1; min-height: 0;
+      flex: 1; min-height: 0; position: relative;
       display: grid; grid-template-columns: minmax(0, 1fr) 320px;
     }
-    @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } acp-workspace { display: none; } }
+    /* Narrow: the workspace loses its column and becomes a drawer over the
+       conversation, opened from the bar. It used to be `display: none` — gone,
+       with nothing on screen saying it had been there — which quietly took
+       half the demo's argument with it. The drawer's own styling is in
+       components/workspace-pane.ts, on the same breakpoint. */
+    @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } }
     acp-chat { min-width: 0; }
   </style>
 </head>

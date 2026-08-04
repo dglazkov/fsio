@@ -62,8 +62,6 @@
     }
   },
   "dependencies": {
-    "@fontsource/instrument-serif": "^5.3.0",
-    "@fontsource/jetbrains-mono": "^5.3.0",
     "@fsio/client": "*",
     "@fsio/host": "*",
     "@fsio/ui": "*",

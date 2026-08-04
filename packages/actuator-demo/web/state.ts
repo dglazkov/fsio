@@ -43,6 +43,15 @@ export interface FileRow {
 export const folderFiles = signal<FileRow[]>([]);
 export const folderNote = signal<string>("no folder");
 
+/** Is the files pane showing? Only consulted at widths too narrow to give it
+ *  a column of its own, where it becomes a drawer. It used to be `display:
+ *  none` below the breakpoint — the pane simply gone, with nothing on screen
+ *  saying it had ever been there, which for this demo takes the second act
+ *  with it: the bottom half of that pane is the page's own custody of its
+ *  files. Closed by default, because the tab you are reading is what a narrow
+ *  window has room for. */
+export const filesOpen = signal(false);
+
 /** The bytes behind one tab, loaded (content.ts). Keyed `local:<path>` or
  *  `held:<fileId>`; a viewer of "none" is a file this demo cannot show, and
  *  `missing` is a reference whose file is gone — the honest end state of an

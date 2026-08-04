@@ -1,5 +1,5 @@
-// What this page knows about itself: what you are actually looking at, what
-// the active shell is doing, and the page's own log.
+// What this page knows about itself: what you are actually looking at, and
+// what the active shell is doing.
 //
 // This was a status bar along the bottom of the page, and everything in it
 // was one of two things: a fact already said better somewhere else (the
@@ -8,6 +8,12 @@
 // is what an "i" in the corner is for, and moving it there gave the terminal
 // back the bottom of the viewport. The corner and the popover are
 // `@fsio/ui`'s; the words are this page's.
+//
+// The theme switch and the page log left this file for the popover itself:
+// all three pages ended with those same two sections and had drifted to three
+// different qualities of them. This page's was the good one — the copy button
+// and the pinned scroll below are now what every page gets — so what it lost
+// here is only the copy, not the behavior.
 import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
@@ -25,6 +31,7 @@ class FsioDetailsPanel extends SignalWatcher(LitElement) {
     const t = activeTab.get();
     return html`<fsio-details
       label="what this page knows: what you're looking at, what this shell is doing, and the page log"
+      .log=${logText.get()}
     >
       <h3>what am I looking at?</h3>
       <p>
@@ -50,22 +57,11 @@ class FsioDetailsPanel extends SignalWatcher(LitElement) {
         history file, that was the sandbox saying no.)
       </p>
       ${t ? html`<h3>this shell</h3><pre>${t.detail.get()}</pre>` : nothing}
-      <h3>appearance</h3>
-      <fsio-theme-switch></fsio-theme-switch>
-      <h3>page log</h3>
-      <button class="small" @click=${() => void navigator.clipboard.writeText(logText.get())}>copy log</button>
-      <pre class="log">${logText.get()}</pre>
-      <div class="foot">
+      <div slot="foot" class="foot">
         an <a href="https://github.com/dglazkov/fsio">fsio</a> demo · the
         measurement workbench lives in the repo (<code>scripts/dev.sh</code>)
       </div>
     </fsio-details>`;
-  }
-
-  /** The log is read newest-first in practice, so it opens at the bottom. */
-  protected override updated(): void {
-    const pre = this.renderRoot.querySelector("pre.log");
-    if (pre) pre.scrollTop = pre.scrollHeight;
   }
 }
 

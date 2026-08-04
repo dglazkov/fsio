@@ -6,7 +6,7 @@
 // the page is showing — and the page's state never leaves the browser.
 // Self-reports into <folder>/.fsio/client/<clientId>/{log.txt,report.json}
 // for the cooperative verification loop (TESTING.md).
-import "./boot-theme.js"; // must stay first — see that file
+import "@fsio/ui/boot"; // must stay first — see that module
 import "@fsio/ui"; // registers the shared chrome's custom elements
 import "./components/app-shell";
 import { reporter, step } from "./reporter";
