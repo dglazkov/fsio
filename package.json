@@ -44,7 +44,6 @@
         "./packages/ui:build",
         "./packages/terminal-demo:build",
         "./packages/acp-demo:build",
-        "./packages/actuator-demo:build",
         "./packages/bench:build"
       ]
     },
@@ -57,7 +56,6 @@
         "./packages/fsiod:test",
         "./packages/terminal-demo:test",
         "./packages/acp-demo:test",
-        "./packages/actuator-demo:test",
         "check-anchors"
       ]
     },

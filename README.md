@@ -99,8 +99,6 @@ npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wire
 - `packages/bench` — node bench clients + protocol/lifecycle/client-conformance tests
 - `packages/terminal-demo` — /terminal demo helper: sandboxed working-folder shell (consumes `@fsio/host`)
 - `packages/acp-demo` — /acp demo: page + helper, a browser that is an ACP client driving a local agent
-- `packages/actuator-demo` — experimental /actuator demo: a local CLI queues
-  commands that a page applies to its IndexedDB-owned tab state
 - `packages/fsiod` — the hub daemon and the `fsio` CLI: one granted folder,
   many workspaces (also consumes `@fsio/host`)
 
