@@ -21,6 +21,8 @@
     "fsio": "node packages/fsiod/dist/cli.js",
     "fsiod": "node packages/fsiod/dist/fsiod.js",
     "bench": "node packages/bench/dist/node-client.js",
+    "actuator": "node packages/actuator-demo/dist/cli.js",
+    "actuator-helper": "node packages/actuator-demo/dist/helper.js",
     "dev": "scripts/dev.sh",
     "harness": "node scripts/browser-harness.mjs",
     "bg-lab": "node scripts/background-lab.mjs",
@@ -44,6 +46,7 @@
         "./packages/ui:build",
         "./packages/terminal-demo:build",
         "./packages/acp-demo:build",
+        "./packages/actuator-demo:build",
         "./packages/bench:build"
       ]
     },
@@ -56,6 +59,7 @@
         "./packages/fsiod:test",
         "./packages/terminal-demo:test",
         "./packages/acp-demo:test",
+        "./packages/actuator-demo:test",
         "check-anchors"
       ]
     },
