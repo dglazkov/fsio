@@ -360,33 +360,29 @@ to each other, so without a host, neither works. Starting a second host on
 the same folder fails.
 
 The host also launches processes. `pewt run`, `pewt shell`, and `pewt
-agent` all start something — `run` is the one that exists today — and the
-host asks first:
+agent` all start something, and the host asks first:
 
 ```
 12:06:02  ▸ run build --repo fsio                       from the page
 12:06:02    ?   npm run build
 12:06:02        vite build
 12:06:02        cwd repos/fsio
-12:06:02      allow once / deny  [y/N] y
-12:06:02    ✓ allowed once — run build --repo fsio
-12:06:09    run build --repo fsio → exit 0 · 41 lines
+12:06:02      allow once / allow always / deny  [o/a/D] a
+12:06:02    ✓ standing grant recorded → .pewter/grants.json
+12:06:09    ✓ exit 0 · 41 lines of output
 ```
 
 The question appears in the terminal, not in the page. The page is the
 thing asking for permission, so the page cannot be the thing granting it.
 
 Only commands that launch a process prompt. Sending a tab title does not.
+Answers are recorded in `.pewter/grants.json`; `pewt grants` lists them and
+`pewt grants revoke` takes one back.
 
 A host with no terminal in front of it — started by a script, by CI, or in
-the background — cannot ask, and a question nobody can answer is a denial.
-Such a host refuses every run and says which flag changes that:
-`pewt serve --allow-runs` allows them all without asking.
-
-Answers are not remembered yet. Every run asks, `.pewter/grants.json` does
-not exist, and neither do `pewt grants` and `pewt grants revoke` — the
-memory is the next thing to build here, and the question is the part that
-had to exist first.
+the background — cannot ask, so it cannot allow anything it was not told
+about in advance. `pewt serve --allow-runs` is that telling: it allows every
+run without asking, and is meant for hosts nobody is sitting at.
 
 The host is not optional. While it is down the page has no session, so
 browsing files and running commands both stop, and any process the host
@@ -424,6 +420,16 @@ and run any script your projects declare. Restricting that per extension
 needs a permission model, and there is not one. What you have instead is
 that you can read the code, and that the host asks before it runs anything
 new.
+
+**A memory for the host's answers.** The question above is real and every
+process goes through it, but the answer lasts exactly one run: today it is
+allow-once or deny, and the next run asks again. `.pewter/grants.json`,
+"allow always", `pewt grants` and `pewt grants revoke` are the part that is
+not built, which is also why a host with no terminal can only refuse.
+
+**`pewt shell` and `pewt agent`.** Both are in the command list above and
+neither exists. `pewt run` is the only thing the host starts today, so the
+agent level of "Who can do what" cannot be reached yet.
 
 **Published packages.** `pewt` and `pewter` are not on npm, so
 `npm create pewt` links them from a checkout of this repository rather than
