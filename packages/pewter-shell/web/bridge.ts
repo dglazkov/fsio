@@ -30,7 +30,7 @@
 //
 // What this removes is ambient access. It does not narrow the API — any
 // extension can ask for any operation, which is stated plainly in
-// NARRATIVE.md's "What is not built" and is the honest description of where
+// NARRATIVE.md's "Looking into the Future" and is the honest description of where
 // this stands.
 import { asCall, answer, connect, event, isHello, refusal } from "pewter";
 import { callHost, runOnHost, ShellCallError } from "./session";

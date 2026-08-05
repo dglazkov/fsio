@@ -411,7 +411,7 @@ read an extension. You cannot read an agent.
 An extension cannot reach the shell's storage or another extension, but it
 can ask for any operation you can. Nothing narrows that; see below.
 
-## What is not built
+## Looking into the Future
 
 **Limits on what an extension can ask for.** The sandbox stops an
 extension from reaching around the API. It does not narrow the API: any
@@ -420,10 +420,6 @@ and run any script your projects declare. Restricting that per extension
 needs a permission model, and there is not one. What you have instead is
 that you can read the code, and that the host asks before it runs anything
 new.
-
-**Version agreement between the shell and pewt.** The shell ships on our
-schedule and `pewt` is installed on yours, so the two can disagree about
-the API. Noticing that and saying so plainly is not designed yet.
 
 **Sharing.** Two people cannot use one pewter today. The obvious approach
 — move the page's storage to a cloud database — would put copies of your

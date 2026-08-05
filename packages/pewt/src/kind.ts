@@ -46,8 +46,9 @@ export function pewtKind(p: Pewter, log: HostLogger): KindHandler {
       // because the shell ships on our schedule and `pewt` is installed on
       // yours: the two can disagree about the API, and a client that can see
       // what this host actually serves can say so plainly instead of failing
-      // at the call. Noticing that disagreement is not designed yet
-      // (NARRATIVE.md, "What is not built") — this is the fact it will need.
+      // at the call. Noticing that disagreement is not built yet
+      // (https://github.com/dglazkov/fsio/issues/164) — this is the fact it
+      // will need.
       result: { pewter: p.name, operations: OPERATIONS.map((o) => o.method) },
       methods,
       onClose: () => log.info(`○ client detached (${ctx.sessionId})`),
