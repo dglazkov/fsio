@@ -149,7 +149,8 @@ Two things follow:
 
 - **You never run a build to see a change.** The host rebuilds whenever
   the source is newer than the last bundle, so you save a file and reload
-  the tab.
+  the tab. `pewt ext bundle <name>` is the same operation from a terminal,
+  which is how you see a compile error without opening the tab.
 - **An extension is one file.** Bundling inlines the JavaScript and CSS,
   which is why code splitting and runtime asset loading are not available
   to it.
@@ -295,7 +296,7 @@ PEWTER      serve · check · doctor · api
 PROJECTS    repos {new, clone, link, rm} · template {new, apply}
 RUNNING     run · shell · agent · agents
 THE PAGE    tabs {add, update, close, focus} · open · fling
-EXTENDING   ext {new, rm}
+EXTENDING   ext {new, rm, bundle}
 THE RECORD  sessions {log, replay} · grants {revoke}
 SHARING     publish · share · join · workspaces   (not built)
 ```

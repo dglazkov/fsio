@@ -1,0 +1,41 @@
+{
+  "name": "@fsio/pewt",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Pewter's host and command line: one pewter folder, the operations both front ends call, and the extension bundler",
+  "type": "module",
+  "bin": {
+    "pewt": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted",
+      "dependencies": ["../client:build", "../common:build", "../host:build"]
+    },
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-pewter.js dist/test-repos.js dist/test-bundle.js dist/test-ops.js dist/test-loop.js",
+      "files": ["../host/src/**", "../client/src/**"],
+      "output": [],
+      "dependencies": ["build"]
+    }
+  },
+  "dependencies": {
+    "@fsio/client": "*",
+    "@fsio/common": "*",
+    "@fsio/host": "*",
+    "esbuild": "^0.27.2"
+  }
+}

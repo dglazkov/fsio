@@ -727,6 +727,12 @@ test("registerKind: DATA roundtrip, custom RPC method, extra spawn-result fields
     },
     methods: {
       sum: (params) => ({ total: ((params as { xs: number[] }).xs ?? []).reduce((a, b) => a + b, 0) }),
+      // A method's refusal, in the kind's own vocabulary. The numbered codes
+      // belong to the protocol (1001–1007), so a kind's answer travels in
+      // `data` — which the host must forward, or the caller gets prose.
+      nope: () => {
+        throw new RpcError(RpcErrors.INTERNAL_ERROR, "the store said no", { code: "store_said_no", hint: "try later" });
+      },
     },
   }));
   await server.start();
@@ -750,6 +756,14 @@ test("registerKind: DATA roundtrip, custom RPC method, extra spawn-result fields
       await assert.rejects(s.request("no-such", {}, { timeoutMs: 5000 }), (e: unknown) => {
         assert.ok(e instanceof RpcError);
         assert.equal(e.code, RpcErrors.METHOD_NOT_FOUND);
+        return true;
+      });
+      // A method's throw keeps both halves: the code the protocol knows, and
+      // the `data` the kind wrote.
+      await assert.rejects(s.request("nope", {}, { timeoutMs: 5000 }), (e: unknown) => {
+        assert.ok(e instanceof RpcError);
+        assert.equal(e.code, RpcErrors.INTERNAL_ERROR);
+        assert.deepEqual(e.data, { code: "store_said_no", hint: "try later" });
         return true;
       });
     } finally {
