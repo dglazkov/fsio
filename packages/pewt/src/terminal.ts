@@ -45,9 +45,12 @@ export async function attachTerminal(dir: FsDirectory, spec: ShellSpec, streams:
   const onResize = (): void => {
     if (output.isTTY) shell.resize(output.columns, output.rows);
   };
-  // stdin ending is the pipe case: `echo pwd | pewt shell`. The shell sees
-  // end-of-input and exits on its own, so this only stops sending.
-  const onEnd = (): void => void shell.close();
+  // stdin ending is the pipe case: `echo pwd | pewt shell`. A pty has no
+  // end-of-file to pass on — the shell on the other side would sit waiting
+  // for a keystroke forever — so what it gets is the keystroke that means the
+  // same thing at a terminal. Closing the session here instead would end the
+  // command before the input it was just given had run.
+  const onEnd = (): void => shell.write("\x04");
 
   try {
     if (raw) input.setRawMode(true);

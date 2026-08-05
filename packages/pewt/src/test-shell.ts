@@ -226,9 +226,9 @@ test("closing a live shell stops what the host started", async () => {
 });
 
 test("a terminal that is not a terminal still works", async () => {
-  // `echo pwd | pewt shell` — no raw mode, no SIGWINCH, and the shell sees
-  // end-of-input and leaves. This drives `attachTerminal`, which is the
-  // function `pewt shell` calls, against streams that are not a tty.
+  // `echo "exit 4" | pewt shell` — no raw mode, no SIGWINCH. This drives
+  // `attachTerminal`, the function `pewt shell` calls, against streams that
+  // are not a tty.
   await withHost({}, async ({ dir }) => {
     const input = new PassThrough();
     let out = "";
@@ -244,5 +244,32 @@ test("a terminal that is not a terminal still works", async () => {
     const outcome = await attached;
     assert.equal(outcome.exitCode, 4);
     assert.match(out, /piped-in/);
+  });
+});
+
+test("stdin ending leaves the shell, and lets it finish first", async () => {
+  // The pipe that does not say `exit`. A pty has no end-of-file to pass on,
+  // so a run that ended the session on stdin's end would cut the command off
+  // before it had run — and one that did nothing at all would hang here
+  // forever. What it sends is the keystroke that means the same thing.
+  await withHost({}, async ({ dir }) => {
+    const input = new PassThrough();
+    let out = "";
+    const output = new PassThrough();
+    output.on("data", (chunk: Buffer) => (out += chunk.toString("utf8")));
+
+    // `/bin/sh` for the same reason as everywhere else here, through a
+    // variable because `cmd` is a session field the client-facing spec does
+    // not offer: an extension picking the program is not this operation.
+    const spec: Record<string, unknown> = { cmd: "/bin/sh" };
+    const attached = attachTerminal(dir, spec, {
+      input: input as unknown as NodeJS.ReadStream,
+      output: output as unknown as NodeJS.WriteStream,
+    });
+    input.write("echo before-the-end\n");
+    input.end();
+    const outcome = await attached;
+    assert.match(out, /before-the-end/);
+    assert.equal(outcome.exitCode, 0);
   });
 });

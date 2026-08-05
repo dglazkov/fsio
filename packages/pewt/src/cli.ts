@@ -124,7 +124,9 @@ if (parsed.kind === "serve") {
         process.stderr.write("pewt: the host stopped, and the shell stopped with it\n");
         process.exit(3);
       }
-      process.exit(outcome.exitCode ?? 0);
+      // No code means the shell did not report one, which is not the same as
+      // success and must not be spelled like it (`run` does the same).
+      process.exit(outcome.exitCode ?? 1);
     } catch (e) {
       const err = e instanceof CallError ? e : null;
       console.error(`pewt: ${err ? err.message : e instanceof Error ? e.message : String(e)}`);
