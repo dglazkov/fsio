@@ -50,10 +50,11 @@ called, and you can have as many as you want.
 
 `npm start` runs `pewt serve`, which opens pewter.town and waits. It looks
 for a Chromium rather than your default browser, because the page needs
-the File System Access API. The last step is yours: pick the folder in the
-browser and allow it. `pewt` cannot do that part. Picking and allowing a
-folder are gestures only Chrome can offer, and they are what stops the
-page from reaching anything you did not choose.
+the File System Access API. The last step is yours: hand the folder to the
+page — drop it on the page, or pick it — and allow it. `pewt` cannot do that
+part. Handing over a folder and allowing it are gestures only Chrome can
+offer, and they are what stops the page from reaching anything you did not
+choose.
 
 The shell is an ordinary web page, and after it loads it makes no network
 requests. Listing projects, running builds, and loading its own screens
@@ -405,6 +406,13 @@ and run any script your projects declare. Restricting that per extension
 needs a permission model, and there is not one. What you have instead is
 that you can read the code, and that the host asks before it runs anything
 new.
+
+**Published packages.** `pewt` and `pewter` are not on npm, so
+`npm create pewt` links them from a checkout of this repository rather than
+installing them. A pewter made today needs that checkout as well as itself,
+which is the one place the folder is not yet self-contained: `git clone`
+followed by `npm i` does not restore one the way it is described above.
+Nothing else changes when they publish.
 
 **A development harness.** Debugging a bundle is worse than debugging the
 files you wrote. A local dev server would give extensions real URLs, hot
