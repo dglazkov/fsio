@@ -18,6 +18,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { readReport, waitFor } from "./harness-rig.mjs";
 
 const repo = path.resolve(import.meta.dirname, "..");
@@ -94,6 +95,28 @@ document.title = "projects";
 `
   );
   return root;
+}
+
+/** Has the shell reported the two things a verdict needs?
+ *
+ *  The reporter spreads its `facts` into the top level of report.json rather
+ *  than nesting them under a `facts` key (@fsio/ui/reporter.ts), and the
+ *  summary lands under whatever `summaryKey` the page chose — `calls` here.
+ *  The first version of this rig read `report.facts.open`, which is always
+ *  undefined, so a run in which everything worked timed out waiting for
+ *  itself. Exported and pure so it can be checked against a report from a
+ *  real run without spending another human click on it. */
+export const ready = (report) => (report?.open && report.calls?.length ? report : null);
+
+/** The verdict, as a list of [what, ok, detail]. Pure for the same reason. */
+export function verdict({ report, bundleExists, rendered }) {
+  return [
+    ["the extension opened", !!report.open, report.open],
+    ["its frame has an origin of its own", report.opaqueOrigin === true, report.opaqueOrigin],
+    ["the bundle is on disk", bundleExists, bundleExists],
+    ["repos.list round-tripped through the API", report.calls.some((c) => c.method === "repos.list" && c.ok), report.calls],
+    ["the extension rendered what the host answered", rendered === "2 projects, read through the folder", rendered],
+  ];
 }
 
 const children = [];
@@ -183,10 +206,7 @@ async function run() {
   // every other page here is verified by (TESTING.md).
   const report = await waitFor(
     "the shell's report, with the extension open and a call served",
-    () => {
-      const r = readReport(root);
-      return r?.facts?.open && r.calls?.length ? r : null;
-    },
+    () => ready(readReport(root)),
     30_000
   );
 
@@ -201,17 +221,7 @@ async function run() {
     .catch((e) => `unreadable: ${e instanceof Error ? e.message : String(e)}`);
 
   const bundle = path.join(root, ".pewter", "build", "repos.html");
-  const checks = [
-    ["the extension opened", !!report.facts.open, report.facts.open],
-    ["its frame has an origin of its own", report.facts.opaqueOrigin === true, report.facts.opaqueOrigin],
-    ["the bundle is on disk", fs.existsSync(bundle), bundle],
-    ["repos.list round-tripped through the API", report.calls.some((c) => c.method === "repos.list" && c.ok), report.calls],
-    [
-      "the extension rendered what the host answered",
-      rendered === "2 projects, read through the folder",
-      rendered,
-    ],
-  ];
+  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered });
 
   console.log();
   let failed = 0;
@@ -226,15 +236,23 @@ async function run() {
   return failed;
 }
 
-let code = 1;
-try {
-  code = (await run()) === 0 ? 0 : 1;
-} catch (e) {
-  console.error(`[pewter-rig] ${e instanceof Error ? e.message : String(e)}`);
-  for (const { name, tail } of children) {
-    if (tail.length) console.error(`\n--- ${name} ---\n${tail.join("\n")}`);
+// Only when run, never when imported. `ready` and `verdict` above are
+// exported so they can be checked against a real report without spending a
+// human click — and an import that launched a browser and drove a whole run
+// instead would be a nasty surprise for whoever tried it. (It was.)
+const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+
+if (invoked) {
+  let code = 1;
+  try {
+    code = (await run()) === 0 ? 0 : 1;
+  } catch (e) {
+    console.error(`[pewter-rig] ${e instanceof Error ? e.message : String(e)}`);
+    for (const { name, tail } of children) {
+      if (tail.length) console.error(`\n--- ${name} ---\n${tail.join("\n")}`);
+    }
+  } finally {
+    await teardown();
   }
-} finally {
-  await teardown();
+  process.exit(code);
 }
-process.exit(code);
