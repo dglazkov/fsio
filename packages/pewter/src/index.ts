@@ -17,7 +17,7 @@
 import { apiFor, Channel, type PewtApi } from "./api.js";
 import { hello, isConnect } from "./wire.js";
 
-export { PewtError, METHODS, type PewtApi, type Project, type Bundle } from "./api.js";
+export { PewtError, METHODS, type PewtApi, type Project, type Bundle, type RunOptions, type RunResult } from "./api.js";
 export { Channel, apiFor } from "./api.js";
 export * from "./wire.js";
 

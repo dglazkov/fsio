@@ -10,11 +10,14 @@
 // The spellings differ where each side has its own conventions — `pewt
 // repos` against `repos.list` — and the operation does not.
 //
-// Every operation here is answered by the host. Pewter has a second family
-// that only the page can answer (`tabs`, `open`, `fling`: that state lives
-// in the browser and never touches disk), and the router serving both is
-// deliberately not built yet — see
-// https://github.com/dglazkov/fsio/issues/165.
+// There are two families in this file and they split by *shape*: a request
+// has one answer, and a process has a stream that ends in an exit code. Both
+// are answered by the host.
+//
+// Pewter has a third family that only the page can answer (`tabs`, `open`,
+// `fling`: that state lives in the browser and never touches disk), and the
+// router serving both directions is deliberately not built yet — see
+// https://github.com/dglazkov/fsio/issues/164.
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
 import { listRepos, type Project } from "./repos.js";
 import type { Pewter } from "./pewter.js";
@@ -144,12 +147,71 @@ export const OPERATIONS: Operation[] = [reposList, extBundle];
 export const byMethod = (method: string): Operation | undefined =>
   OPERATIONS.find((o) => o.method === method);
 
+// ---- the second family: operations that start a process
+//
+// A request has one answer; a run has a stream that ends in an exit code, so
+// it cannot be an `Operation` and is not pretending to be one. What it shares
+// with the table above is everything that keeps the two front ends from
+// drifting: one entry, one spelling on each side, one place to add the next
+// one (`shell` and `agent` land here).
+
+/** One process operation. `method` is what an extension calls and what the
+ *  session's kind is named — the same word, because the session IS the call. */
+export interface ProcessOperation {
+  method: string;
+  cli: string[];
+  summary: string;
+  usage: string;
+  /** whether `--repo` means anything here. */
+  repo: boolean;
+  /** argv after the command words → the session spec, minus the repo. */
+  fromArgv(argv: string[]): Record<string, unknown>;
+  /** what arrived → what this will accept. Both front ends land here. */
+  parse(params: unknown): Record<string, unknown>;
+}
+
+export const runProcess: ProcessOperation = {
+  method: "run",
+  cli: ["run"],
+  summary: "run a script the project declares",
+  usage: "<script>",
+  repo: true,
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "run takes one script name");
+    return { script: argv[0] };
+  },
+  // The script is checked against the project's package.json when the run is
+  // planned (run.ts), which is the only check that means anything: a name
+  // that is not in that file is not runnable however well-formed it looks.
+  parse: (params) => ({ script: str(params, "script"), ...repoOf(params) }),
+};
+
+/** The optional project name, in the one shape every operation reads it. */
+function repoOf(params: unknown): { repo?: string } {
+  const value = (params as Record<string, unknown> | null)?.["repo"];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "string" || value === "") throw new OpError("bad_params", "repo must be a project name");
+  return { repo: value };
+}
+
+export const PROCESSES: ProcessOperation[] = [runProcess];
+
+export const processByMethod = (method: string): ProcessOperation | undefined =>
+  PROCESSES.find((o) => o.method === method);
+
+/** Every operation's command-line spelling, both families, for `pewt help`. */
+export const COMMAND_LIST: { cli: string[]; usage: string; summary: string; repo: boolean }[] = [
+  ...OPERATIONS.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: false })),
+  ...PROCESSES.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: o.repo })),
+];
+
 /** The operation a command line names, and what is left over as arguments.
  *  Longest match wins, so `ext bundle` is found before a future `ext`. */
-export function byArgv(argv: string[]): { op: Operation; rest: string[] } | null {
-  const matches = OPERATIONS.filter((o) => o.cli.every((word, i) => argv[i] === word)).sort(
-    (a, b) => b.cli.length - a.cli.length
-  );
-  const op = matches[0];
-  return op ? { op, rest: argv.slice(op.cli.length) } : null;
+export function byArgv(argv: string[]): { op: Operation; rest: string[] } | { process: ProcessOperation; rest: string[] } | null {
+  const words = (cli: string[]): boolean => cli.every((word, i) => argv[i] === word);
+  const op = OPERATIONS.filter((o) => words(o.cli)).sort((a, b) => b.cli.length - a.cli.length)[0];
+  const proc = PROCESSES.filter((o) => words(o.cli)).sort((a, b) => b.cli.length - a.cli.length)[0];
+  if (op && (!proc || op.cli.length >= proc.cli.length)) return { op, rest: argv.slice(op.cli.length) };
+  if (proc) return { process: proc, rest: argv.slice(proc.cli.length) };
+  return null;
 }

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { apiFor, Channel, PewtError } from "./api.js";
-import { answer, asCall, refusal, WIRE_VERSION } from "./wire.js";
+import { answer, asCall, event, refusal, WIRE_VERSION } from "./wire.js";
 
 /** The shell, as these tests play it: answer every call with `reply`. */
 function shell(port: MessagePort, reply: (method: string, params: unknown) => unknown): string[] {
@@ -101,6 +101,69 @@ test("a frame from another build is dropped rather than answered", async () => {
   port2.postMessage("not even an object");
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(settled, false);
+  port1.close();
+  port2.close();
+});
+
+test("a run's output arrives while it is still running, then its answer", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const order: string[] = [];
+  port2.onmessage = (e: MessageEvent) => {
+    const call = asCall(e.data)!;
+    // The shape the shell produces (pewter-shell/web/bridge.ts): events keyed
+    // to the call, then one answer.
+    port2.postMessage(event(call.id, { o: "compiling" }));
+    port2.postMessage(event(call.id, { e: "one warning" }));
+    port2.postMessage(answer(call.id, { exitCode: 0 }));
+  };
+  port2.start();
+
+  const channel = new Channel();
+  channel.attach(port1);
+  const result = await apiFor(channel).run("build", {
+    repo: "site",
+    onOutput: (line, stream) => order.push(`${stream}: ${line}`),
+  });
+  assert.deepEqual(result, { exitCode: 0 });
+  assert.deepEqual(order, ["out: compiling", "err: one warning"]);
+  port1.close();
+  port2.close();
+});
+
+test("an extension's own callback throwing does not lose the run's answer", async () => {
+  const { port1, port2 } = new MessageChannel();
+  port2.onmessage = (e: MessageEvent) => {
+    const call = asCall(e.data)!;
+    port2.postMessage(event(call.id, { o: "a line" }));
+    port2.postMessage(answer(call.id, { exitCode: 2 }));
+  };
+  port2.start();
+  const channel = new Channel();
+  channel.attach(port1);
+  const result = await apiFor(channel).run("build", {
+    onOutput: () => {
+      throw new Error("the extension has a bug");
+    },
+  });
+  assert.deepEqual(result, { exitCode: 2 });
+  port1.close();
+  port2.close();
+});
+
+test("an event for a call that already ended is dropped", async () => {
+  const { port1, port2 } = new MessageChannel();
+  port2.onmessage = (e: MessageEvent) => {
+    const call = asCall(e.data)!;
+    port2.postMessage(answer(call.id, { exitCode: 0 }));
+    port2.postMessage(event(call.id, { o: "too late" }));
+  };
+  port2.start();
+  const channel = new Channel();
+  channel.attach(port1);
+  const seen: string[] = [];
+  await apiFor(channel).run("build", { onOutput: (line) => seen.push(line) });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(seen, []);
   port1.close();
   port2.close();
 });

@@ -32,8 +32,8 @@
 // extension can ask for any operation, which is stated plainly in
 // NARRATIVE.md's "What is not built" and is the honest description of where
 // this stands.
-import { asCall, answer, connect, isHello, refusal } from "pewter";
-import { callHost, ShellCallError } from "./session";
+import { asCall, answer, connect, event, isHello, refusal } from "pewter";
+import { callHost, runOnHost, ShellCallError } from "./session";
 import { opaque, served } from "./state";
 import { log, reporter } from "./reporter";
 
@@ -112,7 +112,16 @@ async function serve(data: unknown, port: MessagePort, name: string): Promise<vo
   }
   const t0 = performance.now();
   try {
-    const result = await callHost(call.method, call.params);
+    // Two shapes, one channel. Most operations are a question with an answer;
+    // a process has output while it runs, which arrives here as events keyed
+    // to this call's id and ends with the ordinary answer. The extension's
+    // callback never crosses the boundary — only the id does.
+    const result =
+      call.method === "run"
+        ? await runOnHost(call.params as Record<string, unknown>, (line, stream) =>
+            port.postMessage(event(call.id, stream === "out" ? { o: line } : { e: line }))
+          )
+        : await callHost(call.method, call.params);
     port.postMessage(answer(call.id, result));
     record(call.method, true, t0);
   } catch (e) {

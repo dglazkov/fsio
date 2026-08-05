@@ -31,7 +31,12 @@ export interface CallOptions {
   pollMs?: number;
 }
 
-export async function call(dir: FsDirectory, method: string, params: unknown, opts: CallOptions = {}): Promise<unknown> {
+/** A client on a folder with a live host in it, or the reason there is none.
+ *
+ *  Shared by the two things a command can be: a call that has one answer
+ *  (below) and a run that has a stream (stream.ts). Both start the same way,
+ *  and "no host is running" has to read identically whichever one asked. */
+export async function connect(dir: FsDirectory): Promise<FsioClient> {
   const client = new FsioClient(dir);
 
   // Probe for `.fsio` WITHOUT creating it: connect() would create one in
@@ -52,7 +57,11 @@ export async function call(dir: FsDirectory, method: string, params: unknown, op
       "start one: npm start"
     );
   }
+  return client;
+}
 
+export async function call(dir: FsDirectory, method: string, params: unknown, opts: CallOptions = {}): Promise<unknown> {
+  const client = await connect(dir);
   const session = client.createSession({ kind: "pewt", client: "pewt-cli" }, { pollMs: opts.pollMs ?? 15, heartbeatMs: 0 });
   try {
     await session.ready.catch((e: unknown) => {

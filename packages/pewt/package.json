@@ -37,7 +37,7 @@
       ]
     },
     "test": {
-      "command": "node --test --test-concurrency=1 dist/test-pewter.js dist/test-repos.js dist/test-bundle.js dist/test-ops.js dist/test-api.js dist/test-loop.js",
+      "command": "node --test --test-concurrency=1 dist/test-pewter.js dist/test-repos.js dist/test-bundle.js dist/test-ops.js dist/test-api.js dist/test-loop.js dist/test-run.js",
       "files": [
         "../host/src/**",
         "../client/src/**"

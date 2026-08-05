@@ -219,6 +219,61 @@ export async function callHost(method: string, params: unknown): Promise<unknown
   }
 }
 
+/** Run a script on the host, streaming its output back as it arrives.
+ *
+ *  This is the second kind of session this page opens, and the first one that
+ *  is not the API: a run is a process, so it gets a session of its own for as
+ *  long as it lasts (packages/pewt/src/run.ts says why). The control session
+ *  above stays exactly what it was.
+ *
+ *  The host asks a human at its own terminal before it starts anything, so
+ *  `ready` here can take as long as somebody takes to answer, and a refusal
+ *  is a normal outcome rather than a failure. */
+export async function runOnHost(spec: Record<string, unknown>, onLine: (line: string, stream: "out" | "err") => void): Promise<{ exitCode: number | null }> {
+  if (!client) throw new ShellCallError("no_session", "the shell is not connected to a host", "start one in the pewter: npm start");
+  const run = client.createSession({ kind: "run", client: "pewter-shell", ...spec }, { pollMs: 15 });
+
+  let settle: ((result: { exitCode: number | null }) => void) | null = null;
+  const finished = new Promise<{ exitCode: number | null }>((resolve) => {
+    settle = resolve;
+  });
+  run.on("data", (bytes) => {
+    let frame: { o?: unknown; e?: unknown; end?: unknown };
+    try {
+      frame = JSON.parse(new TextDecoder().decode(bytes)) as typeof frame;
+    } catch {
+      return; // not a frame this build reads; dropping it beats guessing
+    }
+    if (typeof frame.o === "string") onLine(frame.o, "out");
+    else if (typeof frame.e === "string") onLine(frame.e, "err");
+    else if ("end" in frame) settle?.({ exitCode: typeof frame.end === "number" ? frame.end : null });
+  });
+  // The backstop, not the signal: `status.json` and `out.log` are separate
+  // files with no ordering between them, so finishing on the status alone
+  // would cut off the last lines of a build. Late on purpose.
+  let backstop: ReturnType<typeof setTimeout> | undefined;
+  run.on("status", (status) => {
+    if ((status.state !== "exited" && status.state !== "error") || backstop) return;
+    backstop = setTimeout(() => settle?.({ exitCode: status.exitCode ?? null }), 500);
+  });
+
+  try {
+    await run.ready;
+    return await finished;
+  } catch (e) {
+    if (e instanceof RpcError) {
+      const data = (e.data ?? {}) as { code?: string; hint?: string };
+      throw new ShellCallError(data.code ?? "refused", e.message, data.hint);
+    }
+    throw new ShellCallError("transport", e instanceof Error ? e.message : String(e));
+  } finally {
+    clearTimeout(backstop);
+    // Closing a live run is also how it is stopped: the host kills the
+    // process group it started (D6 — the host owns cleanup).
+    await run.close().catch(() => {});
+  }
+}
+
 /** Read a folder-relative path through the grant this page already holds.
  *
  *  This is how an extension's bundle reaches the shell: the host says where

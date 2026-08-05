@@ -6,19 +6,19 @@
 // second host on the same folder fails, which @fsio/host already enforces
 // (#40) and this only has to report.
 //
-// The skeleton's host launches nothing. `run`, `shell` and `agent` are the
-// operations that start processes, and the question the host asks before
-// starting one belongs with them
-// (https://github.com/dglazkov/fsio/issues/165 lists both as out of scope).
-// Until then the spawn policy has nothing to judge: the `pewt` kind spawns
-// no process at all.
+// This host launches one thing: a script a project declares (`run`). `shell`
+// and `agent` are the other two, and they are not built. So the spawn policy
+// below has exactly one judgment to make, and it does not make it — it asks
+// the human at this terminal (ask.ts) and reports the answer.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HostServer, type HostLogger } from "@fsio/host";
+import { spawnGate, terminalAsker, type Asker } from "./ask.js";
 import { pewtKind } from "./kind.js";
 import { hasClientDirs, openInChromium, pageIsWatching } from "./open.js";
 import { ensureState, type Pewter } from "./pewter.js";
+import { runKind } from "./run.js";
 
 /** Where the shell lives. pewter.town is where it will be served from;
  *  until it deploys, this is the dev server (packages/pewter-shell), and
@@ -31,7 +31,14 @@ export interface ServeOptions {
   /** print the URL and open nothing. For scripts, ssh, and anyone who does
    *  not want a tab. */
   open?: boolean;
+  /** allow every run without asking. For a rig, for CI, and for a host with
+   *  no terminal in front of it — all of which would otherwise be denied,
+   *  because a question nobody can answer is a denial. */
+  allowRuns?: boolean;
   log?: HostLogger;
+  /** where the question goes. The default is this process's terminal; tests
+   *  pass their own. */
+  asker?: Asker;
 }
 
 export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostServer> {
@@ -57,20 +64,17 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
   // back afterwards is a live page (open.ts).
   const folderHasSeenAPage = hasClientDirs(p.fsio);
 
+  const asker = opts.asker ?? terminalAsker();
   const server = new HostServer({
     root: p.root,
     fresh: true,
-    // Nothing in this kind spawns a process, so there is no judgment to make
-    // and nothing to narrate but the connection itself.
-    onSpawnRequest: (_spec, info) => {
-      log.info(`● ${info.kind} session — origin: ${info.origin ?? "(none reported)"}`);
-      return true;
-    },
+    onSpawnRequest: spawnGate(p, { asker, ...(opts.allowRuns !== undefined ? { allowRuns: opts.allowRuns } : {}) }, log),
     // No shells here yet, so a missing node-pty is not worth a word about.
     pty: false,
     logger: log,
   });
   server.registerKind("pewt", pewtKind(p, log));
+  server.registerKind("run", runKind(p, log));
   await server.start();
 
   console.log(`
@@ -82,6 +86,8 @@ pewter · ${p.root}
   page from reaching anything you did not choose.
 
   from a terminal, in this folder:  pewt repos
+
+  ${runPolicy(opts, asker)}
 
 (Ctrl-C stops the host and sweeps .fsio)
 `);
@@ -97,6 +103,14 @@ pewter · ${p.root}
   }
 
   return server;
+}
+
+/** What happens when something asks to run a script, said at startup rather
+ *  than discovered at the first prompt — or, worse, at the first denial. */
+function runPolicy(opts: ServeOptions, asker: Asker): string {
+  if (opts.allowRuns) return "--allow-runs: every `pewt run` starts without asking. Nothing here will stop one.";
+  if (!asker.ask) return "this host has no terminal to ask in, so it will deny every run. Restart it with --allow-runs to allow them.";
+  return "a `pewt run` asks here first, every time, and starts nothing until you answer.";
 }
 
 /** What this pewter can show, said once at startup. A pewter with no
