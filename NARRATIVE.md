@@ -421,16 +421,6 @@ needs a permission model, and there is not one. What you have instead is
 that you can read the code, and that the host asks before it runs anything
 new.
 
-**A memory for the host's answers.** The question above is real and every
-process goes through it, but the answer lasts exactly one run: today it is
-allow-once or deny, and the next run asks again. `.pewter/grants.json`,
-"allow always", `pewt grants` and `pewt grants revoke` are the part that is
-not built, which is also why a host with no terminal can only refuse.
-
-**`pewt shell` and `pewt agent`.** Both are in the command list above and
-neither exists. `pewt run` is the only thing the host starts today, so the
-agent level of "Who can do what" cannot be reached yet.
-
 **Published packages.** `pewt` and `pewter` are not on npm, so
 `npm create pewt` links them from a checkout of this repository rather than
 installing them. A pewter made today needs that checkout as well as itself,

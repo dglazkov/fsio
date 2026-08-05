@@ -24,7 +24,10 @@ style.
   `spec/PRINCIPLES.md` — platform principles, P-numbered (handles below).
 - `TESTING.md` — test tiers and what deliberately isn't tested.
 - `NARRATIVE.md` — what Pewter is: the pewter folder, the `pewt` CLI, and
-  how the demos compose into one environment.
+  how the demos compose into one environment. Its **"What is not built"
+  section is the narrative's next generation** — the chapters still to come,
+  like sharing and the hub daemon — and not a gap list. What is missing
+  today goes in the tracker, and two sessions running have mistaken the two.
 - `packages/{common,client,host,fsiod,confine,ui,workbench,terminal-demo,acp-demo,actuator-demo,pewt,bench}`
   — npm workspaces; `common` is the single source of protocol truth (types +
   codec + JSON-RPC), both sides import it. `confine` is the Seatbelt write
