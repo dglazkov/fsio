@@ -32,7 +32,7 @@
 // extension can ask for any operation, which is stated plainly in
 // NARRATIVE.md's "What is not built" and is the honest description of where
 // this stands.
-import { asCall, answer, connect, refusal } from "pewter";
+import { asCall, answer, connect, isHello, refusal } from "pewter";
 import { callHost, ShellCallError } from "./session";
 import { opaque, served } from "./state";
 import { log, reporter } from "./reporter";
@@ -51,10 +51,24 @@ export function mount(html: string, name: string): HTMLIFrameElement {
   frame.setAttribute("title", `${name} (extension)`);
   frame.srcdoc = html;
 
-  frame.addEventListener("load", () => {
+  // The extension speaks first (pewter/src/wire.ts says why, and what was
+  // measured about handing the port over on `load` instead), so the shell
+  // listens for its hello from before the frame exists.
+  //
+  // The sender is matched by identity — `event.source === frame.contentWindow`
+  // — and not by origin. The frame's origin is opaque and arrives as "null",
+  // which every sandboxed frame on the page would also claim; the window
+  // reference is the only thing here that cannot be spoofed.
+  const listener = (event: MessageEvent): void => {
+    if (event.source !== frame.contentWindow || !isHello(event.data)) return;
+    removeEventListener("message", listener);
     opaque.set(isOpaque(frame));
     handshake(frame, name);
-  });
+  };
+  addEventListener("message", listener);
+  // An extension that never imports `pewter` never says hello and never needs
+  // a port — but whether the wall is up is still worth knowing about it.
+  frame.addEventListener("load", () => opaque.set(isOpaque(frame)));
   return frame;
 }
 

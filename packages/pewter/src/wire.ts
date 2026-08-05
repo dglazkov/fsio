@@ -16,7 +16,27 @@
  *  in a folder somebody owns. */
 export const WIRE_VERSION = 1;
 
-/** Shell → extension, once, on the window: "here is your port".
+/** Extension → shell, once, on the parent window: "I am here".
+ *
+ *  The handshake is the child's to start. The alternative is the shell
+ *  handing over a port on the frame's `load` event, and that works —
+ *  measured: Chrome fires an iframe's `load` about 15 ms in while the
+ *  frame's module script is still suspended on a 1500 ms top-level await, so
+ *  an extension whose first line is `await pewt.repos.list()` still gets its
+ *  port. (That was checked because the opposite seemed likely and would have
+ *  deadlocked: the port waiting for the call and the call for the port.)
+ *
+ *  What the child speaking first buys is not having to be right about that
+ *  ordering. The shell listens from before the frame exists, so there is no
+ *  event it can be late for and no relationship between "the document
+ *  finished loading" and "the extension is ready to be handed something"
+ *  that either side has to model. */
+export interface Hello {
+  v: number;
+  type: "pewt:hello";
+}
+
+/** Shell → extension: "here is your port".
  *
  *  The port IS the capability. The extension holds no origin it could check
  *  and needs none: a party that did not receive this port cannot talk to the
@@ -48,8 +68,12 @@ export interface ApiError {
   hint?: string;
 }
 
-export const isConnect = (value: unknown): value is Connect =>
-  !!value && typeof value === "object" && (value as Connect).type === "pewt:connect" && (value as Connect).v === WIRE_VERSION;
+const isType = (value: unknown, type: string): boolean =>
+  !!value && typeof value === "object" && (value as Hello).type === type && (value as Hello).v === WIRE_VERSION;
+
+export const isHello = (value: unknown): value is Hello => isType(value, "pewt:hello");
+
+export const isConnect = (value: unknown): value is Connect => isType(value, "pewt:connect");
 
 /** A call, or null. Null means the frame is not one — which is a thing to
  *  drop and log, never a thing to throw over: the channel outlives one bad
@@ -74,3 +98,5 @@ export const answer = (id: number, result: unknown): Answer => ({ v: WIRE_VERSIO
 export const refusal = (id: number, error: ApiError): Answer => ({ v: WIRE_VERSION, id, ok: false, error });
 
 export const connect = (): Connect => ({ v: WIRE_VERSION, type: "pewt:connect" });
+
+export const hello = (): Hello => ({ v: WIRE_VERSION, type: "pewt:hello" });

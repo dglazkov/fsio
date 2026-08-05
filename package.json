@@ -27,6 +27,7 @@
     "dev": "scripts/dev.sh",
     "harness": "node scripts/browser-harness.mjs",
     "pewter-rig": "node scripts/pewter-rig.mjs",
+    "bridge-probe": "node scripts/bridge-probe.mjs",
     "bg-lab": "node scripts/background-lab.mjs",
     "cost-lab": "node scripts/cost-lab.mjs",
     "confinement-lab": "node scripts/confinement-lab.mjs",

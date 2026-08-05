@@ -6,14 +6,16 @@
 // It is an ordinary package in your pewter's node_modules, so an extension
 // imports it like anything else and your editor knows the types.
 //
-// The handshake is why there is nothing to call first. The shell loads an
-// extension into a sandboxed iframe and then posts it one message carrying a
-// MessagePort; this module listens for that message from the moment it
-// loads, so an extension that calls `pewt.repos.list()` on its first line
-// gets an answer rather than a race (the call waits in the channel until the
-// port lands).
+// The handshake is why there is nothing to call first. This module announces
+// itself to the shell as it evaluates and listens for the port that comes
+// back; an extension that calls `pewt.repos.list()` on its first line gets an
+// answer rather than a race, because the call waits in the channel until the
+// port lands.
+//
+// The extension speaks first so that neither side has to model when a frame
+// is "ready" — see wire.ts for what was measured about the alternative.
 import { apiFor, Channel, type PewtApi } from "./api.js";
-import { isConnect } from "./wire.js";
+import { hello, isConnect } from "./wire.js";
 
 export { PewtError, METHODS, type PewtApi, type Project, type Bundle } from "./api.js";
 export { Channel, apiFor } from "./api.js";
@@ -28,20 +30,23 @@ export function connectTo(port: MessagePort): void {
   channel.attach(port);
 }
 
-// Registered at import, in a browser only: this package is also compiled and
-// tested in Node, where there is no window and nothing to listen to.
-if (typeof addEventListener === "function" && typeof window !== "undefined") {
+// Both halves run at import, in a browser only: this package is compiled and
+// tested in Node too, where there is no window and nobody to talk to.
+if (typeof window !== "undefined" && window.parent !== window) {
   addEventListener("message", (event: MessageEvent) => {
     // The port is the capability, so there is no origin here worth checking:
     // an extension's own origin is opaque, the shell's arrives as "null"
     // through a sandboxed frame, and a party that never received a port
     // cannot reach the shell whatever it claims to be. What is checked is
-    // that this is the message we are waiting for and that a port came with
-    // it (wire.ts).
+    // that this is the message being waited for and that a port came with it.
     if (!isConnect(event.data) || channel.attached) return;
     const port = event.ports[0];
     if (port) channel.attach(port);
   });
+  // "*" because this frame cannot name the shell's origin any more than the
+  // shell can name its own opaque one. The shell answers the frame it
+  // recognizes by identity, not by what this message claims to be.
+  window.parent.postMessage(hello(), "*");
 }
 
 /** The API. Everything an extension can ask for, and nothing else. */
