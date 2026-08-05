@@ -421,18 +421,6 @@ needs a permission model, and there is not one. What you have instead is
 that you can read the code, and that the host asks before it runs anything
 new.
 
-**Published packages.** `pewt` and `pewter` are not on npm, so
-`npm create pewt` links them from a checkout of this repository rather than
-installing them. A pewter made today needs that checkout as well as itself,
-which is the one place the folder is not yet self-contained: `git clone`
-followed by `npm i` does not restore one the way it is described above.
-Nothing else changes when they publish.
-
-**A development harness.** Debugging a bundle is worse than debugging the
-files you wrote. A local dev server would give extensions real URLs, hot
-reload, and type errors on screen as you type. Worth building when the
-loop hurts, not before.
-
 **Version agreement between the shell and pewt.** The shell ships on our
 schedule and `pewt` is installed on yours, so the two can disagree about
 the API. Noticing that and saying so plainly is not designed yet.
