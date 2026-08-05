@@ -190,6 +190,16 @@ async function run() {
     30_000
   );
 
+  // Read once, from inside the frame. An earlier version also accepted
+  // `page.title() === "Projects"` as a pass — but `page` is the shell, whose
+  // title is "Pewter", so that clause could never be true and was quietly
+  // widening a check that looked like it had two ways to succeed.
+  const rendered = await page
+    .frameLocator("iframe")
+    .locator("#note")
+    .textContent()
+    .catch((e) => `unreadable: ${e instanceof Error ? e.message : String(e)}`);
+
   const bundle = path.join(root, ".pewter", "build", "repos.html");
   const checks = [
     ["the extension opened", !!report.facts.open, report.facts.open],
@@ -198,13 +208,8 @@ async function run() {
     ["repos.list round-tripped through the API", report.calls.some((c) => c.method === "repos.list" && c.ok), report.calls],
     [
       "the extension rendered what the host answered",
-      (await page.title()) === "Projects" ||
-        (await page
-          .frameLocator("iframe")
-          .locator("#note")
-          .textContent()
-          .catch(() => "")) === "2 projects, read through the folder",
-      await page.frameLocator("iframe").locator("#note").textContent().catch((e) => String(e)),
+      rendered === "2 projects, read through the folder",
+      rendered,
     ],
   ];
 
