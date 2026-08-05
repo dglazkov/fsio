@@ -8,10 +8,19 @@ export type Parsed =
   | { kind: "serve"; dir: string | null; url: string | null; open: boolean }
   | { kind: "op"; dir: string | null; json: boolean; method: string; params: unknown };
 
+// `serve` is not an operation — it is the host rather than a call on one —
+// so it is written here, and everything else comes off the table. One column
+// width for all of them, computed rather than typed, because a hand-aligned
+// column is wrong the first time an operation with a longer name arrives.
+const COMMANDS: [string, string][] = [
+  ["serve", "run the host for this pewter"],
+  ...OPERATIONS.map((o): [string, string] => [[...o.cli, o.usage].filter(Boolean).join(" "), o.summary]),
+];
+const WIDTH = Math.max(...COMMANDS.map(([spelling]) => spelling.length)) + 2;
+
 const USAGE = `pewt — the command line for a pewter
 
-  pewt serve                    run the host for this pewter
-${OPERATIONS.map((o) => `  pewt ${[...o.cli, o.usage].filter(Boolean).join(" ").padEnd(26)}${o.summary}`).join("\n")}
+${COMMANDS.map(([spelling, summary]) => `  pewt ${spelling.padEnd(WIDTH)}${summary}`).join("\n")}
 
 Anywhere:
   --dir <path>   act on the pewter at <path> instead of the one containing
