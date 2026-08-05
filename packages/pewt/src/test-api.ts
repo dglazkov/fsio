@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { METHODS, type Bundle as ApiBundle, type Project as ApiProject } from "pewter";
 import type { Bundle } from "./bundle.js";
-import { OPERATIONS } from "./ops.js";
+import { OPERATIONS, PROCESSES } from "./ops.js";
 import type { Project } from "./repos.js";
 
 // Compile-time, both directions: either side gaining a field the other lacks
@@ -29,5 +29,8 @@ void _bundleToApi;
 void _apiToBundle;
 
 test("the API package spells exactly the operations the host serves", () => {
-  assert.deepEqual([...METHODS].sort(), OPERATIONS.map((o) => o.method).sort());
+  // Both families: a process is an operation an extension calls the same way
+  // it calls any other, and one missing from either side is the drift this
+  // file exists to stop.
+  assert.deepEqual([...METHODS].sort(), [...OPERATIONS.map((o) => o.method), ...PROCESSES.map((o) => o.method)].sort());
 });

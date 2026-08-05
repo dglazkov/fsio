@@ -193,9 +193,14 @@ or start a process. When it needs one of those, it asks:
 ```ts
 await pewt.run("build", {
   repo: "fsio",
-  onOutput: proxy((line) => log.append(line)),
+  onOutput: (line) => log.append(line),
 });
 ```
+
+The callback stays in your tab. Only the call's number crosses the message
+channel, and the shell sends each line back against that number — so a
+function you pass here is an ordinary function, not something shipped
+across a boundary.
 
 `pewt.run` runs a script the project already declares. There is no
 Pewter-specific registry, and nothing has to be added to a project to make
@@ -220,9 +225,10 @@ mechanism for this:
 
 The script runs with the project as its working directory and `pewt` on
 its `PATH`, so an existing build can call back in without ceremony. The
-host asks before starting anything new.
+host asks before starting anything.
 
-Typing `pewt run build --repo fsio` in a terminal does the same thing.
+Typing `pewt run build --repo fsio` in a terminal does the same thing, and
+exits with the script's own exit code the way `npm run` does.
 
 ## Agents
 
@@ -302,9 +308,15 @@ THE RECORD  sessions {log, replay} · grants {revoke}
 SHARING     publish · share · join · workspaces   (not built)
 ```
 
-Every command accepts `--repo`, `--json`, and `--dry-run`. Exit codes
+Commands that act on a project accept `--repo`; every command accepts
+`--json`, and the ones that start something accept `--dry-run`. Exit codes
 distinguish the two ways the system can be unavailable: `3` means no host
 is running, and `4` means no page is open. They need different fixes.
+
+`pewt run` is the exception, and it is the exception `npm run` set: it
+exits with the script's own code, because a script that calls it wants the
+build's answer. So a script that exits 3 and a pewter with no host look
+alike from the outside, and the line on stderr is what tells them apart.
 
 ## One API, two ways in
 
@@ -348,27 +360,33 @@ to each other, so without a host, neither works. Starting a second host on
 the same folder fails.
 
 The host also launches processes. `pewt run`, `pewt shell`, and `pewt
-agent` all start something, and the host asks first:
+agent` all start something — `run` is the one that exists today — and the
+host asks first:
 
 ```
 12:06:02  ▸ run build --repo fsio                       from the page
-12:06:02    ? this script has not run before
+12:06:02    ?   npm run build
 12:06:02        vite build
 12:06:02        cwd repos/fsio
-12:06:02      allow once / allow always / deny  [o/a/D] a
-12:06:02    ✓ standing grant recorded → .pewter/grants.json
-12:06:09    ✓ exit 0 · 41 lines of output
-
-12:09:55  ▸ tabs add --title "CI"                        from a terminal
-12:09:55    ✓ t-20                        (no process — nothing to allow)
+12:06:02      allow once / deny  [y/N] y
+12:06:02    ✓ allowed once — run build --repo fsio
+12:06:09    run build --repo fsio → exit 0 · 41 lines
 ```
 
 The question appears in the terminal, not in the page. The page is the
 thing asking for permission, so the page cannot be the thing granting it.
 
 Only commands that launch a process prompt. Sending a tab title does not.
-Answers are recorded in `.pewter/grants.json`; `pewt grants` lists them and
-`pewt grants revoke` takes one back.
+
+A host with no terminal in front of it — started by a script, by CI, or in
+the background — cannot ask, and a question nobody can answer is a denial.
+Such a host refuses every run and says which flag changes that:
+`pewt serve --allow-runs` allows them all without asking.
+
+Answers are not remembered yet. Every run asks, `.pewter/grants.json` does
+not exist, and neither do `pewt grants` and `pewt grants revoke` — the
+memory is the next thing to build here, and the question is the part that
+had to exist first.
 
 The host is not optional. While it is down the page has no session, so
 browsing files and running commands both stop, and any process the host

@@ -57,7 +57,20 @@ function makePewter() {
 
   fs.writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({ name: "rig-pewter", private: true, type: "module", pewter: {} }, null, 2)
+    JSON.stringify(
+      {
+        name: "rig-pewter",
+        private: true,
+        type: "module",
+        pewter: {},
+        // The script the extension asks the host to run. An extension can
+        // only run what a package.json already declares, so the run under
+        // test needs one — and this is the whole of it.
+        scripts: { hello: `node -e "console.log('hello from the rig pewter')"` },
+      },
+      null,
+      2
+    )
   );
   // `pewter` has to resolve from inside the pewter, because that is where
   // esbuild resolves an extension's imports from. A link stands in for the
@@ -73,7 +86,7 @@ function makePewter() {
   fs.mkdirSync(ext, { recursive: true });
   fs.writeFileSync(
     path.join(ext, "index.html"),
-    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p></main>\n<script type="module" src="./main.ts"></script>\n`
+    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
   );
   // The extension under test: it imports the package, calls the API, and
   // renders the answer. Nothing about it is special to the rig.
@@ -91,6 +104,16 @@ for (const repo of repos) {
   list.append(row);
 }
 note.textContent = \`\${repos.length} projects, read through the folder\`;
+
+// A process, asked for from inside the sandbox: the host starts it, its
+// output arrives here line by line while it runs, and the call answers with
+// its exit code.
+const lines: string[] = [];
+const { exitCode } = await pewt.run("hello", { onOutput: (line) => lines.push(line) });
+document.getElementById("ran")!.textContent = lines.includes("hello from the rig pewter")
+  ? \`exit \${exitCode} · the script's line arrived\`
+  : \`exit \${exitCode} · nothing the script printed arrived\`;
+
 document.title = "projects";
 `
   );
@@ -106,16 +129,18 @@ document.title = "projects";
  *  undefined, so a run in which everything worked timed out waiting for
  *  itself. Exported and pure so it can be checked against a report from a
  *  real run without spending another human click on it. */
-export const ready = (report) => (report?.open && report.calls?.length ? report : null);
+export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "run") ? report : null);
 
 /** The verdict, as a list of [what, ok, detail]. Pure for the same reason. */
-export function verdict({ report, bundleExists, rendered }) {
+export function verdict({ report, bundleExists, rendered, ran }) {
   return [
     ["the extension opened", !!report.open, report.open],
     ["its frame has an origin of its own", report.opaqueOrigin === true, report.opaqueOrigin],
     ["the bundle is on disk", bundleExists, bundleExists],
     ["repos.list round-tripped through the API", report.calls.some((c) => c.method === "repos.list" && c.ok), report.calls],
     ["the extension rendered what the host answered", rendered === "2 projects, read through the folder", rendered],
+    ["a run the extension asked for started on the machine", report.calls.some((c) => c.method === "run" && c.ok), report.calls],
+    ["its output reached the extension, and so did its exit code", ran === "exit 0 · the script's line arrived", ran],
   ];
 }
 
@@ -163,7 +188,11 @@ async function run() {
     JSON.stringify({ safebrowsing: { enabled: false, enhanced: false } })
   );
 
-  child("pewt", process.execPath, [path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open"]);
+  // `--allow-runs` because this host has no terminal: it is a background
+  // child of this script, so the question it would otherwise ask before
+  // starting a process is one nobody could answer, and the answer to a
+  // question nobody can answer is no. The flag is exactly for this caller.
+  child("pewt", process.execPath, [path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open", "--allow-runs"]);
   child("shell", "npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], path.join(repo, "packages/pewter-shell"));
   await waitFor(
     `http://localhost:${PORT}/`,
@@ -214,14 +243,17 @@ async function run() {
   // `page.title() === "Projects"` as a pass — but `page` is the shell, whose
   // title is "Pewter", so that clause could never be true and was quietly
   // widening a check that looked like it had two ways to succeed.
-  const rendered = await page
-    .frameLocator("iframe")
-    .locator("#note")
-    .textContent()
-    .catch((e) => `unreadable: ${e instanceof Error ? e.message : String(e)}`);
+  const read = (selector) =>
+    page
+      .frameLocator("iframe")
+      .locator(selector)
+      .textContent()
+      .catch((e) => `unreadable: ${e instanceof Error ? e.message : String(e)}`);
+  const rendered = await read("#note");
+  const ran = await read("#ran");
 
   const bundle = path.join(root, ".pewter", "build", "repos.html");
-  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered });
+  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered, ran });
 
   console.log();
   let failed = 0;

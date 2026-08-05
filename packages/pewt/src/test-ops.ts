@@ -6,7 +6,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseArgs } from "./args.js";
-import { byArgv, byMethod, OPERATIONS, OpError } from "./ops.js";
+import { byArgv, byMethod, OPERATIONS, OpError, processByMethod, PROCESSES } from "./ops.js";
+
+const asOp = (found: ReturnType<typeof byArgv>) => (found && "op" in found ? found.op : null);
 
 test("every operation has both spellings and a summary", () => {
   for (const op of OPERATIONS) {
@@ -14,18 +16,30 @@ test("every operation has both spellings and a summary", () => {
     assert.ok(op.cli.length > 0, `${op.method} has no command-line spelling`);
     assert.ok(op.summary, `${op.method} has no summary`);
     assert.equal(byMethod(op.method), op);
-    assert.equal(byArgv([...op.cli, "x"])?.op, op);
+    assert.equal(asOp(byArgv([...op.cli, "x"])), op);
+  }
+});
+
+test("every process operation has both spellings too", () => {
+  for (const op of PROCESSES) {
+    assert.match(op.method, /^[a-z]+$/, `${op.method} is not a wire name`);
+    assert.ok(op.cli.length > 0, `${op.method} has no command-line spelling`);
+    assert.ok(op.summary, `${op.method} has no summary`);
+    assert.equal(processByMethod(op.method), op);
+    const found = byArgv([...op.cli, "x"]);
+    assert.equal(found && "process" in found ? found.process : null, op);
   }
 });
 
 test("no two operations share a wire name or a command line", () => {
-  assert.equal(new Set(OPERATIONS.map((o) => o.method)).size, OPERATIONS.length);
-  assert.equal(new Set(OPERATIONS.map((o) => o.cli.join(" "))).size, OPERATIONS.length);
+  const all = [...OPERATIONS, ...PROCESSES];
+  assert.equal(new Set(all.map((o) => o.method)).size, all.length);
+  assert.equal(new Set(all.map((o) => o.cli.join(" "))).size, all.length);
 });
 
 test("the longest command-line match wins", () => {
   const found = byArgv(["ext", "bundle", "repos"]);
-  assert.equal(found?.op.method, "ext.bundle");
+  assert.equal(asOp(found)?.method, "ext.bundle");
   assert.deepEqual(found?.rest, ["repos"]);
 });
 
@@ -42,7 +56,27 @@ test("pewt ext bundle carries the name the wire expects", () => {
   assert.deepEqual(parsed.kind === "op" && parsed.params, { name: "repos" });
 });
 
+test("pewt run carries the script and the project the wire expects", () => {
+  const parsed = parseArgs(["run", "build", "--repo", "site"]);
+  assert.equal(parsed.kind, "process");
+  assert.equal(parsed.kind === "process" && parsed.method, "run");
+  assert.deepEqual(parsed.kind === "process" && parsed.spec, { script: "build", repo: "site" });
+  // No --repo means the pewter itself, which is an absent field rather than
+  // an empty one: the host reads "no repo" and never a repo named "".
+  const bare = parseArgs(["run", "build"]);
+  assert.deepEqual(bare.kind === "process" && bare.spec, { script: "build" });
+});
+
+test("--repo and --dry-run are refused by commands that start nothing", () => {
+  assert.equal(parseArgs(["repos", "--repo", "site"]).kind, "error");
+  assert.equal(parseArgs(["repos", "--dry-run"]).kind, "error");
+  const dry = parseArgs(["run", "build", "--dry-run"]);
+  assert.equal(dry.kind === "process" && dry.dryRun, true);
+});
+
 test("a missing argument is a usage error, not a call", () => {
+  assert.equal(parseArgs(["run"]).kind, "error");
+  assert.equal(parseArgs(["run", "a", "b"]).kind, "error");
   assert.equal(parseArgs(["ext", "bundle"]).kind, "error");
   assert.equal(parseArgs(["ext", "bundle", "a", "b"]).kind, "error");
 });
@@ -73,6 +107,13 @@ test("what arrives on the wire is checked, whichever front end sent it", () => {
   assert.deepEqual(bundle.parse({ name: "repos" }), { name: "repos" });
   for (const bad of [{}, { name: 42 }, { name: "" }, null]) {
     assert.throws(() => bundle.parse(bad), (e: unknown) => e instanceof OpError && e.code === "bad_params");
+  }
+
+  const run = processByMethod("run")!;
+  assert.deepEqual(run.parse({ script: "build" }), { script: "build" });
+  assert.deepEqual(run.parse({ script: "build", repo: "site" }), { script: "build", repo: "site" });
+  for (const bad of [{}, { script: 1 }, { script: "" }, { script: "build", repo: "" }, { script: "build", repo: 7 }, null]) {
+    assert.throws(() => run.parse(bad), (e: unknown) => e instanceof OpError && e.code === "bad_params");
   }
 });
 

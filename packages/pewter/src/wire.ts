@@ -13,8 +13,12 @@
 /** Bumped when a field's meaning changes. A shell and an extension from
  *  different builds meet in a tab more often than you would think — the
  *  shell ships on our schedule, and the extension was bundled from source
- *  in a folder somebody owns. */
-export const WIRE_VERSION = 1;
+ *  in a folder somebody owns.
+ *
+ *  2: calls may now be answered by zero or more `Event` messages before the
+ *  one `Answer`. Nothing is published and no shell is deployed, so no old
+ *  build exists to meet this one in a tab. */
+export const WIRE_VERSION = 2;
 
 /** Extension → shell, once, on the parent window: "I am here".
  *
@@ -59,6 +63,25 @@ export type Answer =
   | { v: number; id: number; ok: true; result: unknown }
   | { v: number; id: number; ok: false; error: ApiError };
 
+/** Shell → extension, on the port: something happened while a call is still
+ *  running. Zero or more per call, always before that call's `Answer`.
+ *
+ *  This exists because a run is not a question with an answer — it is a
+ *  process, and its output is worth having while it is still going. The
+ *  callback an extension passes to `pewt.run` never leaves the frame: the
+ *  shell keys events to the call's id and `api.ts` finds the callback again
+ *  on this side. (NARRATIVE.md used to spell this `proxy(...)`, which is
+ *  Comlink's word for shipping a function across; nothing here ships one.) */
+export interface Event {
+  v: number;
+  id: number;
+  type: "pewt:event";
+  /** what happened, in the operation's own vocabulary. A run sends
+   *  `{o: line}` and `{e: line}`; the extension never sees the run's final
+   *  frame, because that one is the `Answer`. */
+  event: unknown;
+}
+
 /** Why the answer was no. `code` is the operation's own word for it and
  *  `hint` is what to do instead — both travel from the host untouched, so an
  *  extension can act on them rather than parse a sentence. */
@@ -92,6 +115,14 @@ export function asAnswer(value: unknown): Answer | null {
   if (msg.v !== WIRE_VERSION || typeof msg.id !== "number" || typeof msg.ok !== "boolean") return null;
   return msg;
 }
+
+export function asEvent(value: unknown): Event | null {
+  if (!isType(value, "pewt:event")) return null;
+  const msg = value as Event;
+  return typeof msg.id === "number" ? msg : null;
+}
+
+export const event = (id: number, payload: unknown): Event => ({ v: WIRE_VERSION, id, type: "pewt:event", event: payload });
 
 export const answer = (id: number, result: unknown): Answer => ({ v: WIRE_VERSION, id, ok: true, result });
 
