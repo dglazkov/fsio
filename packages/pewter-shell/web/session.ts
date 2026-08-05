@@ -112,6 +112,10 @@ async function connectTo(dir: FileSystemDirectoryHandle): Promise<void> {
   } catch {
     client = null;
     host.set("none");
+    // Back to `setup`, not left at `awaiting-grant`: the folder was allowed,
+    // it just has no host in it. A page attribute that still says a grant is
+    // outstanding would be wrong on screen and wrong to anything reading it.
+    markState("setup");
     pickError.set(
       `No host in ${dir.name}/. Is this a pewter, with \`npm start\` running in it? A host creates a .fsio directory there and we do not see one — nothing was written to the folder you just picked.`
     );
@@ -126,6 +130,7 @@ async function connectTo(dir: FileSystemDirectoryHandle): Promise<void> {
     reporter.event("connected", { folder: dir.name });
   } catch (e) {
     client = null;
+    markState("setup");
     pickError.set(`Could not open ${dir.name}/.fsio — ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
