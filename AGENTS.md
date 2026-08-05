@@ -25,12 +25,15 @@ style.
 - `TESTING.md` — test tiers and what deliberately isn't tested.
 - `NARRATIVE.md` — what Pewter is: the pewter folder, the `pewt` CLI, and
   how the demos compose into one environment.
-- `packages/{common,client,host,fsiod,confine,ui,workbench,terminal-demo,acp-demo,actuator-demo,bench}`
+- `packages/{common,client,host,fsiod,confine,ui,workbench,terminal-demo,acp-demo,actuator-demo,pewt,bench}`
   — npm workspaces; `common` is the single source of protocol truth (types +
   codec + JSON-RPC), both sides import it. `confine` is the Seatbelt write
   wall and `ui` is the two pages' shared chrome, both extracted from the two
   demos that wrote them (PROCESS.md rule 6). The `*-demo` packages are page +
-  native helper pairs consuming `@fsio/host` as a library.
+  native helper pairs consuming `@fsio/host` as a library. `pewt` is Pewter's
+  host and command line — the environment NARRATIVE.md describes, being built
+  beside the three demos rather than out of them
+  ([#164](https://github.com/dglazkov/fsio/issues/164)).
 
 ## Principles (P1–P6)
 

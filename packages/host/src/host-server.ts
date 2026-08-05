@@ -1980,7 +1980,14 @@ export class HostServer {
           .catch((e: unknown) => {
             if (!isRequest || s.done) return;
             const code = typeof (e as { code?: unknown })?.code === "number" ? (e as { code: number }).code : RpcErrors.INTERNAL_ERROR;
-            s.appendJson(FrameType.RPC, rpcError(id, code, errMsg(e)));
+            // `data` travels with the code. A kind's refusals are its own
+            // vocabulary — "no such extension", and what to do instead — and
+            // the numbered codes are the protocol's, not a kind's to mint
+            // (1001–1007 are spoken for). Dropping `data` left a kind with
+            // nowhere to put its answer, so every refusal arrived as prose a
+            // caller had to pattern-match.
+            const data = (e as { data?: unknown })?.data;
+            s.appendJson(FrameType.RPC, rpcError(id, code, errMsg(e), data));
           });
         return;
       }

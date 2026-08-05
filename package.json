@@ -23,6 +23,7 @@
     "bench": "node packages/bench/dist/node-client.js",
     "actuator": "node packages/actuator-demo/dist/cli.js",
     "actuator-helper": "node packages/actuator-demo/dist/helper.js",
+    "pewt": "node packages/pewt/dist/cli.js",
     "dev": "scripts/dev.sh",
     "harness": "node scripts/browser-harness.mjs",
     "bg-lab": "node scripts/background-lab.mjs",
@@ -47,6 +48,7 @@
         "./packages/terminal-demo:build",
         "./packages/acp-demo:build",
         "./packages/actuator-demo:build",
+        "./packages/pewt:build",
         "./packages/bench:build"
       ]
     },
@@ -60,6 +62,7 @@
         "./packages/terminal-demo:test",
         "./packages/acp-demo:test",
         "./packages/actuator-demo:test",
+        "./packages/pewt:test",
         "check-anchors"
       ]
     },
