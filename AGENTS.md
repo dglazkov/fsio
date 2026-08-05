@@ -23,8 +23,9 @@ style.
   platform behaviors, F-numbered. `spec/DECISIONS.md` — ADR-lite, D-numbered.
   `spec/PRINCIPLES.md` — platform principles, P-numbered (handles below).
 - `TESTING.md` — test tiers and what deliberately isn't tested.
-- `NARRATIVE.md` — the demo through-line: which act each demo plays.
-- `packages/{common,client,host,fsiod,confine,ui,workbench,terminal-demo,acp-demo,bench}`
+- `NARRATIVE.md` — what Pewter is: the pewter folder, the `pewt` CLI, and
+  how the demos compose into one environment.
+- `packages/{common,client,host,fsiod,confine,ui,workbench,terminal-demo,acp-demo,actuator-demo,bench}`
   — npm workspaces; `common` is the single source of protocol truth (types +
   codec + JSON-RPC), both sides import it. `confine` is the Seatbelt write
   wall and `ui` is the two pages' shared chrome, both extracted from the two
@@ -133,10 +134,22 @@ other branch.
    `-F`/`--body-file` — heredocs inside `"$(cat <<'EOF' …)"` get mangled
    by the tool shell (bad substitution; cost a retry more than once).
 
-## House style (issues, records, commits, PR bodies)
+## House style (docs, records, issues, commits, and chat)
 
-A future session reads this cold, with less context than you have now.
-Five rules protect that reader.
+The base is the [Google developer documentation style
+guide](https://developers.google.com/style): second person, present tense,
+active voice, short sentences, and no term used before it is defined.
+
+**It covers chat, not just files.** Give the plain answer first. F/D/P
+numbers and `file:line` refs belong in commits, comments and records,
+where they resolve — in a reply they are noise. Extended metaphors,
+framing devices and invented vocabulary are not style; they are a second
+thing the reader has to decode before reaching the content. NARRATIVE.md
+was once written as a five-act play with a "recurring character," which
+buried the folder layout and the command line it existed to describe.
+
+A future session reads the records cold, with less context than you have
+now. Five more rules protect that reader.
 
 - **Answer first.** The opening sentence says what is true or what to do.
   History follows it, and only the history the reader needs to act.

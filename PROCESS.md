@@ -339,12 +339,15 @@ does, the ratio is worse than it was, not better.
 - **One shelf for findings, protocol-only.** Ground the protocol does not
   stand on moves out with the thing that stands on it.
 - **Demos do not run labs.** Rule 2a.
-- **Deployment does not graduate a demo.** `terminal-demo` is shipped,
-  deployed and load-bearing for NARRATIVE.md, and it is still a demo:
-  still deletable, still free to be wrong, still owed no record. Moving it
-  out of this repo into ship-land is a separate, deliberate act — the
-  owner's call, made once and out loud, not a status it drifts into by
-  being useful.
+- **A demo is a product that has not been heavily invested in.** It can
+  deploy, it can have users, it can be the thing this repo's own work gets
+  built inside. None of that is evidence about its status: what ends demo
+  status is a call about long-term investment, and that call is made well
+  outside this repo. `terminal-demo` is shipped, deployed and load-bearing
+  for NARRATIVE.md, and it is still a demo — still deletable, still free to
+  be wrong, still owed no record. So there is no signal in here to read,
+  and looking for one is the error: presume demo, and let the default flip
+  only when the owner says so, once and out loud.
 
 ## Still open
 
