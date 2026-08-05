@@ -18,6 +18,7 @@
 // `fling`: that state lives in the browser and never touches disk), and the
 // router serving both directions is deliberately not built yet — see
 // https://github.com/dglazkov/fsio/issues/164.
+import { shellSpec } from "pewter";
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
 import { listRepos, type Project } from "./repos.js";
 import type { Pewter } from "./pewter.js";
@@ -153,7 +154,14 @@ export const byMethod = (method: string): Operation | undefined =>
 // it cannot be an `Operation` and is not pretending to be one. What it shares
 // with the table above is everything that keeps the two front ends from
 // drifting: one entry, one spelling on each side, one place to add the next
-// one (`shell` and `agent` land here).
+// one (`agent` lands here).
+//
+// The two in it are not built the same way, and the difference is worth
+// knowing before reading further. `run` is a session kind this project wrote,
+// so its spec is its own and the host resolves it. `shell` is @fsio/host's
+// kind — the library has the pty, the resize plumbing and the flow control —
+// so its spec is the library's, and the translation from `--repo site` to a
+// working directory happens on the client (packages/pewter/src/shell.ts).
 
 /** One process operation. `method` is what an extension calls and what the
  *  session's kind is named — the same word, because the session IS the call. */
@@ -164,9 +172,11 @@ export interface ProcessOperation {
   usage: string;
   /** whether `--repo` means anything here. */
   repo: boolean;
-  /** argv after the command words → the session spec, minus the repo. */
+  /** argv after the command words → what was asked for, minus the repo. */
   fromArgv(argv: string[]): Record<string, unknown>;
-  /** what arrived → what this will accept. Both front ends land here. */
+  /** what was asked for → the spec a session carries. The command line lands
+   *  here (args.ts); an extension is in a browser and lands on the same
+   *  translation in the `pewter` package instead. */
   parse(params: unknown): Record<string, unknown>;
 }
 
@@ -194,7 +204,24 @@ function repoOf(params: unknown): { repo?: string } {
   return { repo: value };
 }
 
-export const PROCESSES: ProcessOperation[] = [runProcess];
+export const shellProcess: ProcessOperation = {
+  method: "shell",
+  cli: ["shell"],
+  summary: "open a shell on your machine",
+  usage: "",
+  repo: true,
+  fromArgv: (argv) => {
+    if (argv.length > 0) throw new OpError("usage", "shell takes no arguments — `--repo <name>` picks the project");
+    return {};
+  },
+  // The spec that goes on the wire is @fsio/host's, not this table's, so this
+  // reads `--repo` and hands it to the one function both front ends translate
+  // with (packages/pewter/src/shell.ts). What the host checks is the resolved
+  // directory, which is the only check that means anything.
+  parse: (params) => shellSpec(repoOf(params)),
+};
+
+export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess];
 
 export const processByMethod = (method: string): ProcessOperation | undefined =>
   PROCESSES.find((o) => o.method === method);

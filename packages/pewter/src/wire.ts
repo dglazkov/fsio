@@ -17,8 +17,11 @@
  *
  *  2: calls may now be answered by zero or more `Event` messages before the
  *  one `Answer`. Nothing is published and no shell is deployed, so no old
- *  build exists to meet this one in a tab. */
-export const WIRE_VERSION = 2;
+ *  build exists to meet this one in a tab.
+ *
+ *  3: a call in flight can now be sent more (`Send`), which is what a shell
+ *  needs and nothing before it did. */
+export const WIRE_VERSION = 3;
 
 /** Extension → shell, once, on the parent window: "I am here".
  *
@@ -82,6 +85,26 @@ export interface Event {
   event: unknown;
 }
 
+/** Extension → shell, on the port: more for a call that is still running.
+ *  Zero or more per call, always before that call's `Answer`.
+ *
+ *  `Event` runs the other way, and the pair is what makes a shell possible: a
+ *  terminal is not a question with an answer, it is bytes in both directions
+ *  until one side stops. Before this existed a call could only be asked once,
+ *  which is why the version went to 3.
+ *
+ *  A `Send` for a call that has already been answered is dropped. There is no
+ *  acknowledgement and no ordering guarantee beyond the channel's own, which
+ *  is what a terminal already assumes about a keyboard. */
+export interface Send {
+  v: number;
+  id: number;
+  type: "pewt:send";
+  /** what to send, in the operation's own vocabulary. A shell sends
+   *  `{d: keystrokes}`, `{cols, rows}` and `{close: true}`. */
+  body: unknown;
+}
+
 /** Why the answer was no. `code` is the operation's own word for it and
  *  `hint` is what to do instead — both travel from the host untouched, so an
  *  extension can act on them rather than parse a sentence. */
@@ -122,7 +145,15 @@ export function asEvent(value: unknown): Event | null {
   return typeof msg.id === "number" ? msg : null;
 }
 
+export function asSend(value: unknown): Send | null {
+  if (!isType(value, "pewt:send")) return null;
+  const msg = value as Send;
+  return typeof msg.id === "number" ? msg : null;
+}
+
 export const event = (id: number, payload: unknown): Event => ({ v: WIRE_VERSION, id, type: "pewt:event", event: payload });
+
+export const send = (id: number, body: unknown): Send => ({ v: WIRE_VERSION, id, type: "pewt:send", body });
 
 export const answer = (id: number, result: unknown): Answer => ({ v: WIRE_VERSION, id, ok: true, result });
 

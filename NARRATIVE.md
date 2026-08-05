@@ -230,6 +230,40 @@ host asks before starting anything.
 Typing `pewt run build --repo fsio` in a terminal does the same thing, and
 exits with the script's own exit code the way `npm run` does.
 
+### Terminals
+
+A script is what a project already declares. A terminal is everything else:
+
+```sh
+pewt shell --repo fsio
+```
+
+That is your shell — `$SHELL`, on a real pty, starting in the project you
+named. It exits with its own exit code, and it stops if the host stops.
+
+A tab can hold one too, and it is the same operation:
+
+```ts
+const shell = await pewt.shell({ repo: "fsio", onData: (bytes) => term.write(bytes) });
+shell.write("git status\n");
+shell.resize(term.cols, term.rows);
+await shell.exit;
+```
+
+What arrives is the terminal's own bytes, escape sequences included, so
+whatever draws it is a terminal emulator you chose. Nothing about the
+terminal is built into the shell.
+
+The host asks before it opens one, the same way it asks before a run, and
+`pewt serve --allow-shells` is the separate answer-in-advance for a host
+nobody is sitting at. Separate from `--allow-runs` on purpose: something
+that was told it could build a project has not been told it can do
+anything.
+
+Nothing confines what a shell can reach. It is your account on your
+machine, and the host's question is the whole control — see "Looking into
+the Future".
+
 ## Agents
 
 Pewter ships no agent. It speaks the Agent Client Protocol, so the shell
@@ -328,6 +362,7 @@ operations. Neither is the real one:
 | `pewt repos` | `await pewt.repos.list()` |
 | `pewt repos new site --github` | `await pewt.repos.create({ name: "site", github: true })` |
 | `pewt run build --repo site` | `await pewt.run("build", { repo: "site" })` |
+| `pewt shell --repo site` | `await pewt.shell({ repo: "site" })` |
 | `pewt fling report.html` | `await pewt.fling("report.html")` |
 
 The spellings differ where each side has its own conventions. The
@@ -381,8 +416,10 @@ Answers are recorded in `.pewter/grants.json`; `pewt grants` lists them and
 
 A host with no terminal in front of it — started by a script, by CI, or in
 the background — cannot ask, so it cannot allow anything it was not told
-about in advance. `pewt serve --allow-runs` is that telling: it allows every
-run without asking, and is meant for hosts nobody is sitting at.
+about in advance. `pewt serve --allow-runs` and `pewt serve --allow-shells`
+are that telling, and they are separate flags: something told it could build
+a project has not been told it can open a terminal. Both are meant for hosts
+nobody is sitting at.
 
 The host is not optional. While it is down the page has no session, so
 browsing files and running commands both stop, and any process the host
@@ -420,6 +457,22 @@ and run any script your projects declare. Restricting that per extension
 needs a permission model, and there is not one. What you have instead is
 that you can read the code, and that the host asks before it runs anything
 new.
+
+**Confinement.** Nothing Pewter starts is confined. A script from `pewt
+run` and a shell from `pewt shell` are ordinary processes running as you,
+so either can read your ssh keys, write outside the folder you granted,
+and reach the network. What stands in front of them is the host's
+question, and the question is answered per process rather than once.
+
+That is a choice, not an omission. Confining a child process is
+per-operating-system work — the `terminal-demo` in this repository does it
+with `sandbox-exec`, which exists on macOS and nowhere else — so a
+confined Pewter would be a Pewter whose shells behave differently
+depending on where you run it, and whose shells cannot use `~/.ssh`,
+`~/.npm` or `~/.config` without carving each one back out by hand. The
+version worth building is one where the confinement is legible: you can
+read what a shell may reach before you allow it, and the answer does not
+depend on which machine you are on. Unbuilt and unscheduled.
 
 **Sharing.** Two people cannot use one pewter today. The obvious approach
 — move the page's storage to a cloud database — would put copies of your

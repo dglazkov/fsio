@@ -19,6 +19,7 @@ import { hello, isConnect } from "./wire.js";
 
 export { PewtError, METHODS, type PewtApi, type Project, type Bundle, type RunOptions, type RunResult } from "./api.js";
 export { Channel, apiFor } from "./api.js";
+export * from "./shell.js";
 export * from "./wire.js";
 
 const channel = new Channel();

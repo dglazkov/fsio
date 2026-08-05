@@ -32,8 +32,8 @@
 // extension can ask for any operation, which is stated plainly in
 // NARRATIVE.md's "Looking into the Future" and is the honest description of where
 // this stands.
-import { asCall, answer, connect, event, isHello, refusal } from "pewter";
-import { callHost, runOnHost, ShellCallError } from "./session";
+import { asCall, asSend, answer, connect, event, isHello, refusal } from "pewter";
+import { callHost, runOnHost, shellOnHost, ShellCallError } from "./session";
 import { opaque, served } from "./state";
 import { log, reporter } from "./reporter";
 
@@ -89,7 +89,11 @@ function isOpaque(frame: HTMLIFrameElement): boolean {
 
 function handshake(frame: HTMLIFrameElement, name: string): void {
   const channel = new MessageChannel();
-  channel.port1.onmessage = (event: MessageEvent) => void serve(event.data, channel.port1, name);
+  // Calls that are still running and can still be sent to. One map per
+  // extension, because one channel is one extension: a frame cannot reach
+  // another's calls any more than it can reach another's storage.
+  const live = new Map<number, (body: unknown) => void>();
+  channel.port1.onmessage = (event: MessageEvent) => void serve(event.data, channel.port1, name, live);
   channel.port1.start();
   // The frame is opaque, so "*" is the only target origin there is. See the
   // header note: the port is what carries the authority, not the origin.
@@ -101,7 +105,16 @@ function handshake(frame: HTMLIFrameElement, name: string): void {
  *  The shell adds nothing to the request and removes nothing from it. That
  *  is the whole point of the level — an extension reaches exactly what the
  *  command line reaches, because both end up at the same session. */
-async function serve(data: unknown, port: MessagePort, name: string): Promise<void> {
+async function serve(data: unknown, port: MessagePort, name: string, live: Map<number, (body: unknown) => void>): Promise<void> {
+  // More for a call already running — a keystroke, a window size. It goes to
+  // the call it names and nowhere else; one for a call that has ended is
+  // dropped, because the extension has no way to have known in time.
+  const more = asSend(data);
+  if (more) {
+    live.get(more.id)?.(more.body);
+    return;
+  }
+
   const call = asCall(data);
   if (!call) {
     // Unreadable, or from a build that does not speak this version. Dropping
@@ -112,16 +125,19 @@ async function serve(data: unknown, port: MessagePort, name: string): Promise<vo
   }
   const t0 = performance.now();
   try {
-    // Two shapes, one channel. Most operations are a question with an answer;
-    // a process has output while it runs, which arrives here as events keyed
-    // to this call's id and ends with the ordinary answer. The extension's
-    // callback never crosses the boundary — only the id does.
+    // Three shapes, one channel. Most operations are a question with an
+    // answer. A run has output while it runs, which arrives here as events
+    // keyed to this call's id and ends with the ordinary answer. A shell is
+    // the same and talks back. The extension's callbacks never cross the
+    // boundary — only the id does.
     const result =
       call.method === "run"
         ? await runOnHost(call.params as Record<string, unknown>, (line, stream) =>
             port.postMessage(event(call.id, stream === "out" ? { o: line } : { e: line }))
           )
-        : await callHost(call.method, call.params);
+        : call.method === "shell"
+          ? await serveShell(call.id, call.params as Record<string, unknown>, port, live)
+          : await callHost(call.method, call.params);
     port.postMessage(answer(call.id, result));
     record(call.method, true, t0);
   } catch (e) {
@@ -129,7 +145,28 @@ async function serve(data: unknown, port: MessagePort, name: string): Promise<vo
       e instanceof ShellCallError ? e : new ShellCallError("internal", e instanceof Error ? e.message : String(e));
     port.postMessage(refusal(call.id, { code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) }));
     record(call.method, false, t0);
+  } finally {
+    live.delete(call.id);
   }
+}
+
+/** One shell, for as long as it runs.
+ *
+ *  The call stays open the whole time: its answer is the exit code, and
+ *  everything before that — the shell starting, and every byte it printed —
+ *  is an event on the same id. `started` is its own event rather than the
+ *  answer because the answer is already spoken for; an extension's
+ *  `pewt.shell()` resolves on it. */
+async function serveShell(id: number, spec: Record<string, unknown>, port: MessagePort, live: Map<number, (body: unknown) => void>): Promise<{ exitCode: number | null }> {
+  const shell = await shellOnHost(spec, (chunk) => port.postMessage(event(id, { d: chunk })));
+  live.set(id, (body) => {
+    const asked = body as { d?: unknown; cols?: unknown; rows?: unknown; close?: unknown };
+    if (typeof asked.d === "string") shell.write(asked.d);
+    else if (typeof asked.cols === "number" && typeof asked.rows === "number") shell.resize(asked.cols, asked.rows);
+    else if (asked.close) shell.close();
+  });
+  port.postMessage(event(id, { started: true }));
+  return shell.exit;
 }
 
 function record(method: string, ok: boolean, t0: number): void {

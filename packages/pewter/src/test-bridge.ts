@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { apiFor, Channel, PewtError } from "./api.js";
-import { answer, asCall, event, refusal, WIRE_VERSION } from "./wire.js";
+import { shellSpec } from "./shell.js";
+import { answer, asCall, asSend, event, refusal, WIRE_VERSION } from "./wire.js";
 
 /** The shell, as these tests play it: answer every call with `reply`. */
 function shell(port: MessagePort, reply: (method: string, params: unknown) => unknown): string[] {
@@ -166,6 +167,90 @@ test("an event for a call that already ended is dropped", async () => {
   assert.deepEqual(seen, []);
   port1.close();
   port2.close();
+});
+
+test("--repo becomes a working directory, in one place", () => {
+  // The one translation both front ends share (shell.ts says why it is on
+  // this side rather than the host's). A `repo` that could climb out is
+  // passed through unchanged on purpose: the host refuses it, and a client
+  // that quietly rewrote it would open a shell somewhere else.
+  assert.deepEqual(shellSpec(), {});
+  assert.deepEqual(shellSpec({ repo: "site" }), { cwd: "repos/site" });
+  assert.deepEqual(shellSpec({ repo: "../..", cols: 100, rows: 30 }), { cwd: "repos/../..", cols: 100, rows: 30 });
+});
+
+test("a shell is live: it starts, takes what it is sent, and ends in a code", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const typed: string[] = [];
+  const sizes: unknown[] = [];
+  port2.onmessage = (e: MessageEvent) => {
+    // The shape the shell produces (pewter-shell/web/bridge.ts): the pty's
+    // bytes, `started`, and the exit code as the call's answer.
+    //
+    // The prompt is posted *before* `started` on purpose. That is the real
+    // order — the bridge registers `onData` before it announces the shell —
+    // and it is the one that would drop a prompt if the callback only became
+    // live when `pewt.shell()` resolved.
+    const call = asCall(e.data);
+    if (call) {
+      port2.postMessage(event(call.id, { d: "$ " }));
+      port2.postMessage(event(call.id, { started: true }));
+      return;
+    }
+    const more = asSend(e.data)!;
+    const body = more.body as { d?: string; cols?: number; rows?: number; close?: boolean };
+    if (typeof body.d === "string") {
+      typed.push(body.d);
+      // A pty echoes what it is typed, which is what makes a terminal look
+      // like it is working.
+      port2.postMessage(event(more.id, { d: body.d }));
+      if (body.d.startsWith("exit")) port2.postMessage(answer(more.id, { exitCode: 5 }));
+    } else if (body.cols !== undefined) sizes.push({ cols: body.cols, rows: body.rows });
+  };
+  port2.start();
+
+  const channel = new Channel();
+  channel.attach(port1);
+  let said = "";
+  try {
+    const shell = await apiFor(channel).shell({ repo: "site", onData: (chunk) => (said += chunk) });
+    assert.equal(said, "$ ", "bytes printed before the handle arrived were dropped");
+    shell.resize(120, 40);
+    shell.write("exit 5\n");
+    assert.equal(await shell.exit, 5);
+    assert.deepEqual(typed, ["exit 5\n"]);
+    assert.deepEqual(sizes, [{ cols: 120, rows: 40 }]);
+    // Nothing is sent to a call that has been answered — the typical one is a
+    // keystroke racing the exit.
+    shell.write("still here?\n");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(typed, ["exit 5\n"]);
+  } finally {
+    // An open port keeps node's event loop alive, so a failed assertion here
+    // would hang the run instead of reporting itself.
+    port1.close();
+    port2.close();
+  }
+});
+
+test("a shell that is refused rejects rather than handing back something dead", async () => {
+  const { port1, port2 } = new MessageChannel();
+  port2.onmessage = (e: MessageEvent) => {
+    const call = asCall(e.data)!;
+    port2.postMessage(refusal(call.id, { code: "no_repo", message: "no project named nope in this pewter" }));
+  };
+  port2.start();
+  const channel = new Channel();
+  channel.attach(port1);
+  try {
+    await assert.rejects(
+      () => apiFor(channel).shell({ repo: "nope" }),
+      (e: unknown) => e instanceof PewtError && e.code === "no_repo"
+    );
+  } finally {
+    port1.close();
+    port2.close();
+  }
 });
 
 test("a channel takes one port, once", () => {

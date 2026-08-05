@@ -274,6 +274,70 @@ export async function runOnHost(spec: Record<string, unknown>, onLine: (line: st
   }
 }
 
+/** A shell that is running, as the bridge holds one. */
+export interface ShellHandle {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  close(): void;
+  /** its exit code, once it has one. */
+  readonly exit: Promise<{ exitCode: number | null }>;
+}
+
+/** Open a shell on the host.
+ *
+ *  The third kind of session this page opens, and the first one that talks
+ *  back: a run listens, a shell converses. What rides the session is the
+ *  terminal's own bytes in both directions — no framing, no lines, nothing
+ *  this page interprets. Whatever renders it is an extension's business.
+ *
+ *  The exit arrives on the status rather than in the stream, unlike a run:
+ *  a pty's DATA frames are the terminal's bytes, so there is nowhere to put
+ *  an end marker that would not also be output. The grace period is what
+ *  keeps the last bytes from being cut off. */
+export async function shellOnHost(spec: Record<string, unknown>, onData: (chunk: string) => void): Promise<ShellHandle> {
+  if (!client) throw new ShellCallError("no_session", "the shell is not connected to a host", "start one in the pewter: npm start");
+  const session = client.createSession({ kind: "shell", client: "pewter-shell", ...spec }, { pollMs: 15 });
+
+  let settle: ((result: { exitCode: number | null }) => void) | null = null;
+  const exit = new Promise<{ exitCode: number | null }>((resolve) => {
+    settle = resolve;
+  });
+
+  // `stream: true`: a pty writes bytes, and a multi-byte character can land
+  // across two frames. Decoding each frame alone would put a replacement
+  // character in the middle of somebody's prompt.
+  const decoder = new TextDecoder();
+  session.on("data", (bytes) => onData(decoder.decode(bytes, { stream: true })));
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  session.on("status", (status) => {
+    if ((status.state !== "exited" && status.state !== "error") || grace) return;
+    grace = setTimeout(() => settle?.({ exitCode: status.exitCode ?? null }), 500);
+  });
+
+  try {
+    await session.ready;
+  } catch (e) {
+    await session.close().catch(() => {});
+    if (e instanceof RpcError) {
+      const data = (e.data ?? {}) as { code?: string; hint?: string };
+      throw new ShellCallError(data.code ?? "refused", e.message, data.hint);
+    }
+    throw new ShellCallError("transport", e instanceof Error ? e.message : String(e));
+  }
+
+  return {
+    write: (data) => session.sendData(data),
+    resize: (cols, rows) => session.notify("resize", { cols, rows }),
+    // Closing a live shell is also how it is stopped: the host kills what it
+    // started (D6 — the host owns cleanup).
+    close: () => {
+      void session.close().catch(() => {});
+      settle?.({ exitCode: null });
+    },
+    exit: exit.finally(() => void session.close().catch(() => {})),
+  };
+}
+
 /** Read a folder-relative path through the grant this page already holds.
  *
  *  This is how an extension's bundle reaches the shell: the host says where
