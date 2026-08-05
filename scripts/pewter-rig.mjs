@@ -1,0 +1,235 @@
+// The Pewter loop: build a pewter, serve it, drive the shell, read the verdict.
+//
+// Everything before "drive the page" is automated — a scratch pewter under
+// $HOME (never /tmp, F9), a real `pewt serve`, a vite preview of the built
+// shell, headed Chrome for Testing, and the CDP directory drop that mints a
+// real handle (F14). What is left for the human is one click on Chrome's own
+// permission prompt, which is unautomatable by design and is also the whole
+// security model (F15).
+//
+// It does not share startRig() with the workbench harness. That module is an
+// instrument the measurement labs depend on, wired to the workbench's host,
+// page and markup; parameterizing it to serve a second stack would put every
+// lab's trustworthiness behind a refactor nobody asked for. What is shared is
+// what is genuinely generic: readReport() and waitFor().
+//
+// Usage:  npm run pewter-rig
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { readReport, waitFor } from "./harness-rig.mjs";
+
+const repo = path.resolve(import.meta.dirname, "..");
+const PORT = 8769;
+const GRANT_TIMEOUT_MS = Number(process.env.FSIO_GRANT_TIMEOUT_MS ?? 180_000);
+const log = (...a) => console.log("[pewter-rig]", ...a);
+
+const banner = (s) => {
+  console.log(`\n${"=".repeat(64)}\n  ${s}\n${"=".repeat(64)}\n`);
+  if (process.platform === "darwin") {
+    spawn("osascript", ["-e", `display notification ${JSON.stringify(s)} with title "pewter rig" sound name "Glass"`], {
+      stdio: "ignore",
+    }).on("error", () => {});
+  }
+};
+
+// ---- a pewter to run on
+//
+// Built here rather than by `create-pewt` on purpose: that scaffolder is the
+// next slice, and a rig that depends on it could not run until it exists.
+// What this writes is the same shape — and when `create-pewt` lands, this
+// function is what it has to agree with.
+function makePewter() {
+  const runs = path.join(os.homedir(), ".pewter-rig");
+  fs.mkdirSync(runs, { recursive: true });
+  // Killed runs (grant timeouts, mid-run aborts) leave run-* dirs and their
+  // profiles behind; sweep dead ones so the directory does not grow forever
+  // and forensics stay findable. A day is enough.
+  for (const e of fs.readdirSync(runs)) {
+    const p = path.join(runs, e);
+    try {
+      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 3600 * 1000) fs.rmSync(p, { recursive: true, force: true });
+    } catch {}
+  }
+  const root = fs.mkdtempSync(path.join(runs, "run-"));
+
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "rig-pewter", private: true, type: "module", pewter: {} }, null, 2)
+  );
+  // `pewter` has to resolve from inside the pewter, because that is where
+  // esbuild resolves an extension's imports from. A link stands in for the
+  // dependency a real pewter installs.
+  const modules = path.join(root, "node_modules");
+  fs.mkdirSync(modules, { recursive: true });
+  fs.symlinkSync(path.join(repo, "packages/pewter"), path.join(modules, "pewter"), "dir");
+
+  fs.mkdirSync(path.join(root, "repos", "site", ".git"), { recursive: true });
+  fs.mkdirSync(path.join(root, "repos", "atlas"), { recursive: true });
+
+  const ext = path.join(root, "extensions", "repos");
+  fs.mkdirSync(ext, { recursive: true });
+  fs.writeFileSync(
+    path.join(ext, "index.html"),
+    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p></main>\n<script type="module" src="./main.ts"></script>\n`
+  );
+  // The extension under test: it imports the package, calls the API, and
+  // renders the answer. Nothing about it is special to the rig.
+  fs.writeFileSync(
+    path.join(ext, "main.ts"),
+    `import { pewt } from "pewter";
+
+const list = document.getElementById("list")!;
+const note = document.getElementById("note")!;
+
+const { repos } = await pewt.repos.list();
+for (const repo of repos) {
+  const row = document.createElement("li");
+  row.textContent = repo.git ? \`\${repo.name} (git)\` : repo.name;
+  list.append(row);
+}
+note.textContent = \`\${repos.length} projects, read through the folder\`;
+document.title = "projects";
+`
+  );
+  return root;
+}
+
+const children = [];
+function child(name, cmd, argv, cwd) {
+  const p = spawn(cmd, argv, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  const tail = [];
+  const sink = (d) => {
+    for (const line of String(d).split("\n")) if (line.trim()) tail.push(line);
+    if (tail.length > 40) tail.splice(0, tail.length - 40);
+  };
+  p.stdout.on("data", sink);
+  p.stderr.on("data", sink);
+  children.push({ name, p, tail });
+  return p;
+}
+
+let browser = null;
+async function teardown() {
+  await browser?.close().catch(() => {});
+  for (const { p } of children) p.kill("SIGTERM");
+}
+
+async function run() {
+  log("npm run build (the wireit graph is the ground truth)…");
+  if (spawnSync("npm", ["run", "build"], { cwd: repo, stdio: "inherit" }).status !== 0) process.exit(2);
+
+  const root = makePewter();
+  log(`pewter: ${root}`);
+
+  // The Chrome profile lives BESIDE the pewter, never inside it. Chrome will
+  // not mint a File System Access handle for a directory containing its own
+  // user-data-dir, and the way it declines is to leave
+  // `getAsFileSystemHandle()` pending forever — no rejection, no console
+  // error, just a drop that appears to do nothing. Measured here after the
+  // workbench harness, whose comment says the same thing, kept working
+  // against the identical page.
+  const profile = path.join(path.dirname(root), `${path.basename(root)}-profile`);
+  fs.mkdirSync(path.join(profile, "Default"), { recursive: true });
+  // Chrome for Testing ships without Google API keys, and its Safe Browsing
+  // after-write scan is not stable Chrome's (#37). Same pin the workbench
+  // harness uses, for the same reason.
+  fs.writeFileSync(
+    path.join(profile, "Default", "Preferences"),
+    JSON.stringify({ safebrowsing: { enabled: false, enhanced: false } })
+  );
+
+  child("pewt", process.execPath, [path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open"]);
+  child("shell", "npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], path.join(repo, "packages/pewter-shell"));
+  await waitFor(
+    `http://localhost:${PORT}/`,
+    () => fetch(`http://localhost:${PORT}/`).then((r) => r.ok).catch(() => false),
+    20_000
+  );
+  await waitFor("the host's .fsio", () => fs.existsSync(path.join(root, ".fsio")), 15_000);
+  log(`host + shell up (http://localhost:${PORT}/)`);
+
+  const { chromium } = await import("playwright");
+  if (!fs.existsSync(chromium.executablePath())) {
+    log("Chrome for Testing not installed — running `npx playwright install chromium`…");
+    if (spawnSync("npx", ["playwright", "install", "chromium"], { cwd: repo, stdio: "inherit" }).status !== 0) {
+      throw new Error("playwright install failed");
+    }
+  }
+  // Headed: headless auto-denies the write grant (F15).
+  browser = await chromium.launchPersistentContext(profile, { headless: false });
+  const page = browser.pages()[0] ?? (await browser.newPage());
+  await page.goto(`http://localhost:${PORT}/`);
+
+  // F14: a synthesized directory drop mints a real handle. A picker cannot
+  // be synthesized at all, which is why the shell takes a drop.
+  const cdp = await browser.newCDPSession(page);
+  const vp = page.viewportSize() ?? (await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })));
+  const drop = { x: Math.round(vp.width / 2), y: Math.round(vp.height / 2), data: { items: [], files: [root], dragOperationsMask: 1 } };
+  await cdp.send("Input.dispatchDragEvent", { type: "dragEnter", ...drop });
+  await cdp.send("Input.dispatchDragEvent", { type: "dragOver", ...drop });
+  await cdp.send("Input.dispatchDragEvent", { type: "drop", ...drop });
+  await page.waitForSelector('body[data-fsio-state="awaiting-grant"]', { timeout: 10_000 });
+  log("directory drop accepted; handle minted (F14)");
+
+  await page.click("#grant"); // a real user activation
+  banner('CLICK "Allow on every visit" IN THE BROWSER — the only click this run needs');
+  await page.waitForSelector('body[data-fsio-state="connected"]', { timeout: GRANT_TIMEOUT_MS });
+  log("write granted; connected — unattended from here");
+
+  // The verdict comes off the folder, not off the page: the shell writes
+  // .fsio/client/<id>/report.json and this reads it, which is the same loop
+  // every other page here is verified by (TESTING.md).
+  const report = await waitFor(
+    "the shell's report, with the extension open and a call served",
+    () => {
+      const r = readReport(root);
+      return r?.facts?.open && r.calls?.length ? r : null;
+    },
+    30_000
+  );
+
+  const bundle = path.join(root, ".pewter", "build", "repos.html");
+  const checks = [
+    ["the extension opened", !!report.facts.open, report.facts.open],
+    ["its frame has an origin of its own", report.facts.opaqueOrigin === true, report.facts.opaqueOrigin],
+    ["the bundle is on disk", fs.existsSync(bundle), bundle],
+    ["repos.list round-tripped through the API", report.calls.some((c) => c.method === "repos.list" && c.ok), report.calls],
+    [
+      "the extension rendered what the host answered",
+      (await page.title()) === "Projects" ||
+        (await page
+          .frameLocator("iframe")
+          .locator("#note")
+          .textContent()
+          .catch(() => "")) === "2 projects, read through the folder",
+      await page.frameLocator("iframe").locator("#note").textContent().catch((e) => String(e)),
+    ],
+  ];
+
+  console.log();
+  let failed = 0;
+  for (const [what, ok, detail] of checks) {
+    console.log(`  ${ok ? "✓" : "✗"} ${what}`);
+    if (!ok) {
+      failed++;
+      console.log(`      ${JSON.stringify(detail)}`);
+    }
+  }
+  console.log(`\n  report: ${path.join(root, ".fsio", "client")}\n  pewter: ${root}\n`);
+  return failed;
+}
+
+let code = 1;
+try {
+  code = (await run()) === 0 ? 0 : 1;
+} catch (e) {
+  console.error(`[pewter-rig] ${e instanceof Error ? e.message : String(e)}`);
+  for (const { name, tail } of children) {
+    if (tail.length) console.error(`\n--- ${name} ---\n${tail.join("\n")}`);
+  }
+} finally {
+  await teardown();
+}
+process.exit(code);

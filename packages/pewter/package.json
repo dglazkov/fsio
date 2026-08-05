@@ -1,0 +1,31 @@
+{
+  "name": "pewter",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The API an extension imports: pewt.* over the message channel the shell hands it",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted"
+    },
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-bridge.js",
+      "files": [],
+      "output": [],
+      "dependencies": ["build"]
+    }
+  }
+}

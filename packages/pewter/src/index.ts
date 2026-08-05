@@ -1,0 +1,48 @@
+// `pewter` — the package an extension imports.
+//
+//     import { pewt } from "pewter";
+//     for (const repo of (await pewt.repos.list()).repos) list.append(row(repo));
+//
+// It is an ordinary package in your pewter's node_modules, so an extension
+// imports it like anything else and your editor knows the types.
+//
+// The handshake is why there is nothing to call first. The shell loads an
+// extension into a sandboxed iframe and then posts it one message carrying a
+// MessagePort; this module listens for that message from the moment it
+// loads, so an extension that calls `pewt.repos.list()` on its first line
+// gets an answer rather than a race (the call waits in the channel until the
+// port lands).
+import { apiFor, Channel, type PewtApi } from "./api.js";
+import { isConnect } from "./wire.js";
+
+export { PewtError, METHODS, type PewtApi, type Project, type Bundle } from "./api.js";
+export { Channel, apiFor } from "./api.js";
+export * from "./wire.js";
+
+const channel = new Channel();
+
+/** Take the port the shell offers. Exported so the shell's own tests — and
+ *  anything driving an extension outside a browser — can hand one over
+ *  directly instead of staging a window message. */
+export function connectTo(port: MessagePort): void {
+  channel.attach(port);
+}
+
+// Registered at import, in a browser only: this package is also compiled and
+// tested in Node, where there is no window and nothing to listen to.
+if (typeof addEventListener === "function" && typeof window !== "undefined") {
+  addEventListener("message", (event: MessageEvent) => {
+    // The port is the capability, so there is no origin here worth checking:
+    // an extension's own origin is opaque, the shell's arrives as "null"
+    // through a sandboxed frame, and a party that never received a port
+    // cannot reach the shell whatever it claims to be. What is checked is
+    // that this is the message we are waiting for and that a port came with
+    // it (wire.ts).
+    if (!isConnect(event.data) || channel.attached) return;
+    const port = event.ports[0];
+    if (port) channel.attach(port);
+  });
+}
+
+/** The API. Everything an extension can ask for, and nothing else. */
+export const pewt: PewtApi = apiFor(channel);

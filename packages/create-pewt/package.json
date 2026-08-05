@@ -1,0 +1,28 @@
+{
+  "name": "create-pewt",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Make a pewter: the folder that is a git repository, an npm project, and the channel at once",
+  "type": "module",
+  "bin": {
+    "create-pewt": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "wireit",
+    "test": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted"
+    },
+    "test": {
+      "command": "node --test --test-concurrency=1 dist/test-scaffold.js",
+      "files": [],
+      "output": [],
+      "dependencies": ["build"]
+    }
+  }
+}
