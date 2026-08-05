@@ -5,7 +5,7 @@ import { byArgv, COMMAND_LIST } from "./ops.js";
 export type Parsed =
   | { kind: "help"; text: string }
   | { kind: "error"; message: string }
-  | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean }
+  | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean; allowShells: boolean }
   | { kind: "op"; dir: string | null; json: boolean; method: string; params: unknown }
   | { kind: "process"; dir: string | null; json: boolean; dryRun: boolean; method: string; spec: Record<string, unknown> };
 
@@ -29,14 +29,18 @@ Anywhere:
   --json         print the result as JSON instead of prose
   --help         this
 
-run:
+run, shell:
   --repo <name>  a project under repos/ (default: the pewter itself)
   --dry-run      print what would start, and start nothing
 
 serve:
   --url <base>   where the shell is served from
   --no-open      print the URL and open nothing
-  --allow-runs   answer yes to every spawn instead of asking on this terminal
+  --allow-runs   allow every \`run\` without asking on this terminal
+  --allow-shells allow every \`shell\` without asking on this terminal
+
+The two allow flags are separate because a shell is not a script: something
+that was told it could build is not thereby something that can do anything.
 
 Exit codes: 0 done · 1 refused · 2 usage · 3 no host is running.
 \`pewt run\` exits with the script's own code instead, the way \`npm run\` does —
@@ -51,6 +55,7 @@ export function parseArgs(argv: string[]): Parsed {
   let open = true;
   let dryRun = false;
   let allowRuns = false;
+  let allowShells = false;
   const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -60,6 +65,7 @@ export function parseArgs(argv: string[]): Parsed {
     else if (a === "--no-open") open = false;
     else if (a === "--dry-run") dryRun = true;
     else if (a === "--allow-runs") allowRuns = true;
+    else if (a === "--allow-shells") allowShells = true;
     else if (a === "--dir" || a === "--url" || a === "--repo") {
       const value = argv[++i];
       if (!value) return { kind: "error", message: `${a} needs a value` };
@@ -76,7 +82,7 @@ export function parseArgs(argv: string[]): Parsed {
   if (rest.length === 0) return { kind: "help", text: USAGE };
   if (rest[0] === "serve") {
     if (rest.length > 1) return { kind: "error", message: `serve takes no arguments (got ${rest.slice(1).join(" ")})` };
-    return { kind: "serve", dir, url, open, allowRuns };
+    return { kind: "serve", dir, url, open, allowRuns, allowShells };
   }
 
   const found = byArgv(rest);
@@ -90,7 +96,10 @@ export function parseArgs(argv: string[]): Parsed {
         json,
         dryRun,
         method: found.process.method,
-        spec: { ...found.process.fromArgv(found.rest), ...(repo !== null ? { repo } : {}) },
+        // Through `parse`, not around it: what the command line typed and
+        // what an extension passed become one spec in one place, and a
+        // front end that skipped it would be inventing a second wire format.
+        spec: found.process.parse({ ...found.process.fromArgv(found.rest), ...(repo !== null ? { repo } : {}) }),
       };
     }
     // A flag that means nothing here is a typo, not a preference: `pewt repos

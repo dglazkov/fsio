@@ -1,13 +1,15 @@
-// One run, from a terminal, over the folder.
+// A process, from a terminal, over the folder.
 //
 // `call.ts` is this file's twin: a call opens a session, asks one question and
-// closes. A run opens a session, reads lines until the run ends, and closes.
-// The difference is the shape of the answer, not the plumbing — same folder,
+// closes. A run opens a session, reads lines until the run ends, and closes. A
+// shell opens one and talks to it in both directions until it exits. The
+// difference is the shape of the conversation, not the plumbing — same folder,
 // same client, same host.
 //
-// It is a function rather than inline in cli.ts so the end-to-end test drives
-// exactly what ships.
+// They are functions rather than inline in cli.ts so the end-to-end tests
+// drive exactly what ships.
 import { RpcError, type FsDirectory } from "@fsio/client";
+import type { ShellSpec } from "pewter";
 import { CallError, connect } from "./call.js";
 import { asRunFrame } from "./run.js";
 
@@ -105,4 +107,106 @@ export async function runOnHost(dir: FsDirectory, method: string, spec: Record<s
     // — and for a run it is also what stops the child if we are leaving early.
     await session.close().catch(() => {});
   }
+}
+
+// ---- a shell: the same plumbing, talking back
+
+export interface ShellOutcome {
+  /** the shell's exit code, or null when it died on a signal or the host
+   *  went away while it was running. */
+  exitCode: number | null;
+  ended: "exit" | "host_gone";
+}
+
+/** A shell that is running, as a terminal holds one. The same three verbs an
+ *  extension gets (packages/pewter/src/shell.ts) — one operation, two front
+ *  ends, and this is the terminal's end of it. */
+export interface ShellAttachment {
+  /** keystrokes. Not lines: the pty decides where a line ends. */
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  /** stop it. The host kills what it started (D6). */
+  close(): Promise<void>;
+  readonly exit: Promise<ShellOutcome>;
+}
+
+export interface ShellOptions {
+  /** bytes the pty produced, exactly as it produced them. */
+  onData: (chunk: string) => void;
+  /** the host has not answered yet — it is asking a human on its own
+   *  terminal, and a command line that says nothing looks hung. */
+  onWaiting?: () => void;
+  /** what the host said it started. */
+  onStart?: (info: Record<string, unknown>) => void;
+  pollMs?: number;
+  answerMs?: number;
+}
+
+/** Open a shell on the host and hand back the live thing.
+ *
+ *  **Why the exit arrives on the status and not in the stream.** `run` puts
+ *  its exit code in a final DATA frame, because `status.json` and `out.log`
+ *  are separate files with no ordering between them and a client that
+ *  finished on the status could cut off the last lines. A pty cannot do that:
+ *  its DATA frames are the terminal's own bytes, and a JSON object among them
+ *  is output rather than protocol. So a shell ends on its status, and the
+ *  grace period below — belt-and-braces for a run — is load-bearing here. */
+export async function shellOnHost(dir: FsDirectory, spec: ShellSpec, opts: ShellOptions): Promise<ShellAttachment> {
+  const client = await connect(dir);
+  const session = client.createSession({ kind: "shell", client: "pewt-cli", ...spec }, { pollMs: opts.pollMs ?? 15, heartbeatMs: 0 });
+
+  let settle: ((outcome: ShellOutcome) => void) | null = null;
+  const exit = new Promise<ShellOutcome>((resolve) => {
+    settle = resolve;
+  });
+
+  const decoder = new TextDecoder();
+  // `stream: true` because a pty writes bytes, not characters: a multi-byte
+  // sequence can land across two frames, and decoding each frame alone would
+  // put a replacement character in the middle of somebody's prompt.
+  session.on("data", (bytes) => opts.onData(decoder.decode(bytes, { stream: true })));
+
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  session.on("status", (status) => {
+    if ((status.state !== "exited" && status.state !== "error") || grace) return;
+    const outcome: ShellOutcome =
+      status.state === "exited" ? { exitCode: status.exitCode ?? null, ended: "exit" } : { exitCode: null, ended: "host_gone" };
+    // Late on purpose: the pty's last bytes and the status file are written
+    // independently, so a status seen first means output is still on its way.
+    grace = setTimeout(() => settle?.(outcome), STATUS_GRACE_MS);
+    grace.unref();
+  });
+
+  const waiting = setTimeout(() => opts.onWaiting?.(), WAITING_MS);
+  try {
+    const started = await Promise.race([
+      session.ready,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new CallError("timeout", "the host never answered the request to open this shell")), opts.answerMs ?? 10 * 60_000).unref()
+      ),
+    ]);
+    opts.onStart?.(started as unknown as Record<string, unknown>);
+  } catch (e) {
+    await session.close().catch(() => {});
+    if (e instanceof CallError) throw e;
+    if (e instanceof RpcError) {
+      // Denied at the host's terminal, or refused by the policy (no such
+      // project). Both arrived, were understood, and the answer was no.
+      const data = (e.data ?? {}) as { code?: string; hint?: string };
+      throw new CallError("refused", e.message, data.code, data.hint);
+    }
+    throw new CallError("transport", e instanceof Error ? e.message : String(e));
+  } finally {
+    clearTimeout(waiting);
+  }
+
+  return {
+    write: (data) => session.sendData(data),
+    resize: (cols, rows) => session.notify("resize", { cols, rows }),
+    close: async () => {
+      await session.close().catch(() => {});
+      settle?.({ exitCode: null, ended: "exit" });
+    },
+    exit: exit.finally(() => void session.close().catch(() => {})),
+  };
 }

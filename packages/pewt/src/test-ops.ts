@@ -67,6 +67,21 @@ test("pewt run carries the script and the project the wire expects", () => {
   assert.deepEqual(bare.kind === "process" && bare.spec, { script: "build" });
 });
 
+test("pewt shell carries the working directory the wire expects", () => {
+  // The spelling is `--repo`, on both front ends. What travels is
+  // @fsio/host's own spec, because a shell is its session kind — so this is
+  // where the command line lands on the same translation an extension uses
+  // (packages/pewter/src/shell.ts).
+  const parsed = parseArgs(["shell", "--repo", "site"]);
+  assert.equal(parsed.kind, "process");
+  assert.equal(parsed.kind === "process" && parsed.method, "shell");
+  assert.deepEqual(parsed.kind === "process" && parsed.spec, { cwd: "repos/site" });
+  // No --repo means the pewter itself, which is an absent field rather than a
+  // working directory this side invented.
+  assert.deepEqual(parseArgs(["shell"]).kind === "process" && (parseArgs(["shell"]) as { spec: unknown }).spec, {});
+  assert.equal(parseArgs(["shell", "bash"]).kind, "error");
+});
+
 test("--repo and --dry-run are refused by commands that start nothing", () => {
   assert.equal(parseArgs(["repos", "--repo", "site"]).kind, "error");
   assert.equal(parseArgs(["repos", "--dry-run"]).kind, "error");
@@ -114,6 +129,13 @@ test("what arrives on the wire is checked, whichever front end sent it", () => {
   assert.deepEqual(run.parse({ script: "build", repo: "site" }), { script: "build", repo: "site" });
   for (const bad of [{}, { script: 1 }, { script: "" }, { script: "build", repo: "" }, { script: "build", repo: 7 }, null]) {
     assert.throws(() => run.parse(bad), (e: unknown) => e instanceof OpError && e.code === "bad_params");
+  }
+
+  const shell = processByMethod("shell")!;
+  assert.deepEqual(shell.parse({}), {});
+  assert.deepEqual(shell.parse({ repo: "site" }), { cwd: "repos/site" });
+  for (const bad of [{ repo: "" }, { repo: 7 }]) {
+    assert.throws(() => shell.parse(bad), (e: unknown) => e instanceof OpError && e.code === "bad_params");
   }
 });
 

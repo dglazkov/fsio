@@ -6,10 +6,18 @@
 // second host on the same folder fails, which @fsio/host already enforces
 // (#40) and this only has to report.
 //
-// This host launches one thing: a script a project declares (`run`). `shell`
-// and `agent` are the other two, and they are not built. So the spawn policy
-// below has exactly one judgment to make, and it does not make it — it asks
-// the human at this terminal (ask.ts) and reports the answer.
+// This host launches two things: a script a project declares (`run`) and a
+// shell (`shell`). `agent` is the third and it is not built. The spawn policy
+// below makes neither judgment itself — it asks the human at this terminal
+// (ask.ts) and reports the answer.
+//
+// Nothing confines what it starts. The whole control is that question, which
+// is what NARRATIVE.md describes: settled with the owner on 2026-08-05, and
+// written into the narrative's "Looking into the Future" rather than left as
+// an omission a reader has to notice. `terminal-demo` confines its shells to
+// the shared folder with @fsio/confine; that wall is macOS-only, and
+// inheriting it here would have made a pewter's shells silently
+// platform-shaped and broken every one that needs ~/.ssh or ~/.npm.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +43,9 @@ export interface ServeOptions {
    *  no terminal in front of it — all of which would otherwise be denied,
    *  because a question nobody can answer is a denial. */
   allowRuns?: boolean;
+  /** allow every shell without asking. Separate from `allowRuns` on purpose
+   *  (P3): a rig told it could build has not been told it can do anything. */
+  allowShells?: boolean;
   log?: HostLogger;
   /** where the question goes. The default is this process's terminal; tests
    *  pass their own. */
@@ -68,9 +79,15 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
   const server = new HostServer({
     root: p.root,
     fresh: true,
-    onSpawnRequest: spawnGate(p, { asker, ...(opts.allowRuns !== undefined ? { allowRuns: opts.allowRuns } : {}) }, log),
-    // No shells here yet, so a missing node-pty is not worth a word about.
-    pty: false,
+    onSpawnRequest: spawnGate(
+      p,
+      {
+        asker,
+        ...(opts.allowRuns !== undefined ? { allowRuns: opts.allowRuns } : {}),
+        ...(opts.allowShells !== undefined ? { allowShells: opts.allowShells } : {}),
+      },
+      log
+    ),
     logger: log,
   });
   server.registerKind("pewt", pewtKind(p, log));
@@ -105,12 +122,24 @@ pewter · ${p.root}
   return server;
 }
 
-/** What happens when something asks to run a script, said at startup rather
- *  than discovered at the first prompt — or, worse, at the first denial. */
+/** What happens when something asks to start a process, said at startup
+ *  rather than discovered at the first prompt — or, worse, at the first
+ *  denial. Two flags, so up to two sentences: they are separate capabilities
+ *  and a host can have been told about one and not the other. */
 function runPolicy(opts: ServeOptions, asker: Asker): string {
-  if (opts.allowRuns) return "--allow-runs: every `pewt run` starts without asking. Nothing here will stop one.";
-  if (!asker.ask) return "this host has no terminal to ask in, so it will deny every run. Restart it with --allow-runs to allow them.";
-  return "a `pewt run` asks here first, every time, and starts nothing until you answer.";
+  if (!asker.ask) {
+    const told = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null].filter(Boolean).join(" and ");
+    return told
+      ? `this host has no terminal to ask in. It allows ${told} because it was told to in advance, and denies everything else.`
+      : "this host has no terminal to ask in, so it denies every run and every shell. Restart it with --allow-runs or --allow-shells to allow them.";
+  }
+  // Each sentence stands alone: a host can have been told about runs and not
+  // shells, and a shared clause would then be wrong about one of them.
+  const runs = opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : "a `pewt run` asks here first, and starts nothing until you answer.";
+  const shells = opts.allowShells
+    ? "--allow-shells: every `pewt shell` starts without asking."
+    : "a `pewt shell` asks here too, and what it starts is unconfined.";
+  return `${runs}\n  ${shells}`;
 }
 
 /** What this pewter can show, said once at startup. A pewter with no

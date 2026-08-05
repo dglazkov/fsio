@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -50,6 +50,11 @@ fs.writeFileSync(
 // arrives while it is still running. The callback stays in this frame — only
 // its call's id crosses the channel — so this is where that survives a real
 // sandbox rather than a MessageChannel in Node.
+//
+// The shell is the third, and it is the first thing that talks *back* across
+// the sandbox: keystrokes and a window size leave the frame after the call
+// that carried them was made. Everything before it could be done with one
+// message in each direction.
 fs.writeFileSync(
   path.join(ext, "main.ts"),
   `import { pewt } from "pewter";
@@ -62,6 +67,12 @@ const { exitCode } = await pewt.run("build", {
   onOutput: (line, stream) => log.append(\`\${stream}: \${line}\\n\`),
 });
 document.getElementById("code")!.textContent = \`exit \${exitCode}\`;
+
+const term = document.getElementById("term")!;
+const shell = await pewt.shell({ repo: "site", onData: (chunk) => term.append(chunk) });
+shell.resize(100, 30);
+shell.write("exit 0\\n");
+document.getElementById("left")!.textContent = \`left \${await shell.exit}\`;
 document.title = "answered";
 `
 );
@@ -78,7 +89,7 @@ const PARENT = `<!doctype html>
 <body>
 <script type="module">
   const html = ${JSON.stringify(html).replace(/</g, "\\u003c")};
-  window.__result = { hello: false, calls: [], opaque: null, wire: null };
+  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null };
 
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts");
@@ -92,9 +103,30 @@ const PARENT = `<!doctype html>
     const channel = new MessageChannel();
     channel.port1.onmessage = (e) => {
       const call = e.data;
+      const post = (msg) => channel.port1.postMessage({ v: call.v, id: call.id, ...msg });
+      // More for a call already running: this stand-in plays the pty, which
+      // means echoing what it is typed and leaving when told to.
+      if (call.type === "pewt:send") {
+        if (typeof call.body.d === "string") {
+          window.__result.typed.push(call.body.d);
+          post({ type: "pewt:event", event: { d: call.body.d } });
+          if (call.body.d.startsWith("exit")) post({ ok: true, result: { exitCode: 0 } });
+        } else if (typeof call.body.cols === "number") {
+          window.__result.sized = { cols: call.body.cols, rows: call.body.rows };
+        }
+        return;
+      }
       window.__result.calls.push(call.method);
       window.__result.wire = call.v;
-      const post = (msg) => channel.port1.postMessage({ v: call.v, id: call.id, ...msg });
+      if (call.method === "shell") {
+        // The prompt before the started event, which is the order the real
+        // bridge produces: it registers the data callback and then announces
+        // the shell, so bytes can arrive before pewt.shell() has resolved.
+        // (No backticks in here — this comment is inside a template literal.)
+        post({ type: "pewt:event", event: { d: "$ " } });
+        post({ type: "pewt:event", event: { started: true } });
+        return;
+      }
       if (call.method === "run") {
         // What the shell does with a process: events keyed to the call while
         // it runs, then the ordinary answer. The host's own frame shapes,
@@ -137,21 +169,29 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
 await page.goto(url);
 
-const empty = { hello: false, calls: [], opaque: null, wire: null };
+const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null };
 let result = empty;
 let rendered = "";
 let streamed = "";
 let code = "";
+let terminal = "";
+let left = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
   // machine. Five seconds is many orders of magnitude over the real path.
-  await page.waitForFunction(() => window.__result?.calls.includes("run"), null, { timeout: 5000 });
+  // The extension's own title, in the extension's own frame — it is set on
+  // the last line of main.ts, so it means every call above it came back. The
+  // parent's title would be a different document's and always wrong.
+  const extension = page.frames().find((f) => f !== page.mainFrame());
+  await extension.waitForFunction(() => document.title === "answered", null, { timeout: 5000 });
   result = await page.evaluate(() => window.__result);
   const frame = page.frameLocator("iframe");
   rendered = await frame.locator("#out").textContent();
   streamed = await frame.locator("#log").textContent();
   code = await frame.locator("#code").textContent();
+  terminal = await frame.locator("#term").textContent();
+  left = await frame.locator("#left").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -165,6 +205,10 @@ const checks = [
   ["it speaks this build's wire version", result.wire === WIRE_VERSION],
   ["a run's output reached the extension while the run was still going", streamed === "out: compiling site\nerr: one warning\n"],
   ["and its exit code arrived as the call's answer", code === "exit 0"],
+  ["an extension held a live shell, and what it printed first was not lost", terminal.startsWith("$ ")],
+  ["keystrokes left the sandbox after the call was made", JSON.stringify(result.typed) === JSON.stringify(["exit 0\n"])],
+  ["so did a window size", JSON.stringify(result.sized) === JSON.stringify({ cols: 100, rows: 30 })],
+  ["and the shell's exit code came back as its call's answer", left === "left 0"],
   ["nothing threw in the page", errors.length === 0],
 ];
 
@@ -176,7 +220,7 @@ for (const [what, ok] of checks) {
 }
 if (failed)
   console.log(
-    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  errors: ${errors.join(" · ")}`
+    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  errors: ${errors.join(" · ")}`
   );
 console.log();
 

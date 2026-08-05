@@ -86,7 +86,7 @@ function makePewter() {
   fs.mkdirSync(ext, { recursive: true });
   fs.writeFileSync(
     path.join(ext, "index.html"),
-    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
+    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
   );
   // The extension under test: it imports the package, calls the API, and
   // renders the answer. Nothing about it is special to the rig.
@@ -114,6 +114,22 @@ document.getElementById("ran")!.textContent = lines.includes("hello from the rig
   ? \`exit \${exitCode} · the script's line arrived\`
   : \`exit \${exitCode} · nothing the script printed arrived\`;
 
+// A shell, from inside the same sandbox: a real pty on the machine, typed
+// into from a frame with no origin of its own. This is the half no headless
+// probe covers, because it is the real grant that carries it.
+const term: string[] = [];
+const shell = await pewt.shell({ onData: (chunk) => term.push(chunk) });
+shell.resize(100, 30);
+shell.write("echo the-shell-is-live\\n");
+for (let i = 0; i < 200 && !term.join("").includes("the-shell-is-live"); i++) {
+  await new Promise((r) => setTimeout(r, 25));
+}
+shell.write("exit 0\\n");
+const left = await shell.exit;
+document.getElementById("shelled")!.textContent = term.join("").includes("the-shell-is-live")
+  ? \`exit \${left} · the shell answered\`
+  : \`exit \${left} · nothing came back from the shell\`;
+
 document.title = "projects";
 `
   );
@@ -122,6 +138,11 @@ document.title = "projects";
 
 /** Has the shell reported the two things a verdict needs?
  *
+ *  The `shell` call is the last one the extension makes, so waiting for it
+ *  waits for all of them. A call is recorded when it is answered, and a
+ *  shell's answer is its exit code — so this is also the point at which the
+ *  pty has already gone.
+ *
  *  The reporter spreads its `facts` into the top level of report.json rather
  *  than nesting them under a `facts` key (@fsio/ui/reporter.ts), and the
  *  summary lands under whatever `summaryKey` the page chose — `calls` here.
@@ -129,10 +150,10 @@ document.title = "projects";
  *  undefined, so a run in which everything worked timed out waiting for
  *  itself. Exported and pure so it can be checked against a report from a
  *  real run without spending another human click on it. */
-export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "run") ? report : null);
+export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "shell") ? report : null);
 
 /** The verdict, as a list of [what, ok, detail]. Pure for the same reason. */
-export function verdict({ report, bundleExists, rendered, ran }) {
+export function verdict({ report, bundleExists, rendered, ran, shelled }) {
   return [
     ["the extension opened", !!report.open, report.open],
     ["its frame has an origin of its own", report.opaqueOrigin === true, report.opaqueOrigin],
@@ -141,6 +162,8 @@ export function verdict({ report, bundleExists, rendered, ran }) {
     ["the extension rendered what the host answered", rendered === "2 projects, read through the folder", rendered],
     ["a run the extension asked for started on the machine", report.calls.some((c) => c.method === "run" && c.ok), report.calls],
     ["its output reached the extension, and so did its exit code", ran === "exit 0 · the script's line arrived", ran],
+    ["a shell the extension asked for opened on the machine", report.calls.some((c) => c.method === "shell" && c.ok), report.calls],
+    ["it took what the extension typed, and answered with its exit code", shelled === "exit 0 · the shell answered", shelled],
   ];
 }
 
@@ -188,11 +211,15 @@ async function run() {
     JSON.stringify({ safebrowsing: { enabled: false, enhanced: false } })
   );
 
-  // `--allow-runs` because this host has no terminal: it is a background
-  // child of this script, so the question it would otherwise ask before
-  // starting a process is one nobody could answer, and the answer to a
-  // question nobody can answer is no. The flag is exactly for this caller.
-  child("pewt", process.execPath, [path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open", "--allow-runs"]);
+  // `--allow-runs` and `--allow-shells` because this host has no terminal: it
+  // is a background child of this script, so the question it would otherwise
+  // ask before starting a process is one nobody could answer, and the answer
+  // to a question nobody can answer is no. Two flags, not one, because they
+  // are two capabilities (P3) — and a rig that had to be told about the shell
+  // separately is the point of the split rather than a nuisance.
+  child("pewt", process.execPath, [
+    path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open", "--allow-runs", "--allow-shells",
+  ]);
   child("shell", "npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], path.join(repo, "packages/pewter-shell"));
   await waitFor(
     `http://localhost:${PORT}/`,
@@ -234,7 +261,7 @@ async function run() {
   // .fsio/client/<id>/report.json and this reads it, which is the same loop
   // every other page here is verified by (TESTING.md).
   const report = await waitFor(
-    "the shell's report, with the extension open and a call served",
+    "the shell's report, with the extension open and its shell finished",
     () => ready(readReport(root)),
     30_000
   );
@@ -251,9 +278,10 @@ async function run() {
       .catch((e) => `unreadable: ${e instanceof Error ? e.message : String(e)}`);
   const rendered = await read("#note");
   const ran = await read("#ran");
+  const shelled = await read("#shelled");
 
   const bundle = path.join(root, ".pewter", "build", "repos.html");
-  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered, ran });
+  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered, ran, shelled });
 
   console.log();
   let failed = 0;
