@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    // An extension runs in a browser and this package is bundled into it, so
+    // nothing here may reach for Node. The DOM lib is the whole platform.
+    // `dom.iterable` is deliberately absent: this package touches one
+    // MessagePort and one window listener, and nothing else.
+    "lib": ["ES2022", "DOM"],
+    // Node only for `node:test` in test-bridge.ts, following @fsio/ui's
+    // precedent. Nothing that ships from here imports a Node module: this
+    // package is bundled into an extension, where there is no Node to import.
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

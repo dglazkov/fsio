@@ -119,12 +119,41 @@ export async function bundleExtension(p: Pewter, name: string): Promise<Bundle> 
 
   const js = result.outputFiles.filter((f) => f.path.endsWith(".js")).map((f) => f.text).join("\n");
   const css = result.outputFiles.filter((f) => f.path.endsWith(".css")).map((f) => f.text).join("\n");
-  const page = inline(await fs.readFile(html, "utf8"), js, css);
+  const page = inline(await inlineLinks(await fs.readFile(html, "utf8"), src), js, css);
 
   ensureState(p);
   const bytes = Buffer.from(page, "utf8");
   await fs.writeFile(out, bytes);
   return { name, path: rel, bytes: bytes.length, hash: digest(bytes), rebuilt: true, ms: Date.now() - t0 };
+}
+
+/** Replace `<link rel="stylesheet" href="./x.css">` with the file's contents.
+ *
+ *  An extension is one file, and it has to be: it renders in a sandboxed
+ *  iframe from `srcdoc`, at an opaque origin with no base URL, so a relative
+ *  href resolves to nothing and the stylesheet silently never arrives. A
+ *  `<link>` is the natural way to write a stylesheet, the scaffolded
+ *  extension wrote one, and the failure is invisible — an unstyled page that
+ *  logs nothing.
+ *
+ *  Only same-directory relative hrefs are inlined. An absolute or remote one
+ *  is left alone: it is a network request, which an extension is allowed to
+ *  make, and rewriting it would be this bundler deciding otherwise. */
+async function inlineLinks(html: string, dir: string): Promise<string> {
+  const links = [...html.matchAll(/<link\b[^>]*\brel=["']stylesheet["'][^>]*>/gi)];
+  let out = html;
+  for (const [tag] of links) {
+    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1];
+    if (!href || /^[a-z]+:|^\/\//i.test(href)) continue;
+    const rel = href.replace(/^\.\//, "");
+    // Same rule the extension name follows: a path out of the extension's
+    // own directory is not a stylesheet this bundler will go and get.
+    if (rel.startsWith("/") || rel.split("/").includes("..")) continue;
+    const text = await fs.readFile(path.join(dir, rel), "utf8").catch(() => null);
+    if (text === null) continue; // missing: esbuild-style silence is worse, but a build failure over a stylesheet is worse still
+    out = out.replace(tag, `<style>\n${text}\n</style>`);
+  }
+  return out;
 }
 
 /** Put the compiled JavaScript and CSS into the extension's own HTML.

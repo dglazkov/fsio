@@ -62,6 +62,37 @@ test("saving a source file is the whole build step", async () => {
   assert.match(fs.readFileSync(path.join(p.root, second.path), "utf8"), /changed/);
 });
 
+test("a stylesheet link becomes a style block — an extension is one file", async () => {
+  const p = pewter();
+  extension(p, "styled");
+  const dir = path.join(p.extensions, "styled");
+  fs.writeFileSync(path.join(dir, "style.css"), "body { color: rebeccapurple }\n");
+  fs.writeFileSync(
+    path.join(dir, "index.html"),
+    `<link rel="stylesheet" href="./style.css" />\n<link rel="stylesheet" href="https://example.com/x.css" />\n<body><script type="module" src="./main.ts"></script></body>\n`
+  );
+  const html = fs.readFileSync(path.join(p.root, (await bundleExtension(p, "styled")).path), "utf8");
+  // The local one is in the file. A frame at an opaque origin has no base
+  // URL to resolve it against, so a link left behind never loads at all.
+  assert.match(html, /<style>\s*body \{ color: rebeccapurple \}/);
+  assert.doesNotMatch(html, /href=["']\.\/style\.css["']/);
+  // The remote one is left alone: that is a network request an extension is
+  // allowed to make, and rewriting it would be this bundler deciding not to.
+  assert.match(html, /https:\/\/example\.com\/x\.css/);
+});
+
+test("a stylesheet link that climbs out of the extension is not followed", async () => {
+  const p = pewter();
+  extension(p, "nosy");
+  fs.writeFileSync(path.join(p.root, "secrets.css"), "body { content: 'private' }");
+  fs.writeFileSync(
+    path.join(p.extensions, "nosy", "index.html"),
+    `<link rel="stylesheet" href="../../secrets.css" />\n<body><script type="module" src="./main.ts"></script></body>\n`
+  );
+  const html = fs.readFileSync(path.join(p.root, (await bundleExtension(p, "nosy")).path), "utf8");
+  assert.doesNotMatch(html, /private/);
+});
+
 test("a name that is not an extension name is refused before anything is resolved", async () => {
   const p = pewter();
   for (const name of ["../secrets", "a/b", ".", "Repos", ""]) {
