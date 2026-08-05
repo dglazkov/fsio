@@ -61,9 +61,11 @@ export function scaffold(opts: ScaffoldOptions): string[] {
         // working directory looking for it, which is how a command typed
         // inside a project still knows which pewter it is in.
         pewter: { version: 1 },
+        // `check` is deliberately absent until `pewt check` exists. A
+        // scaffold that writes a script for an unbuilt command hands
+        // everyone who runs it a usage error as their second experience.
         scripts: {
           start: "pewt serve",
-          check: "pewt check",
         },
       },
       null,
@@ -124,19 +126,21 @@ the channel between this machine and the Pewter page at once.
 - Screens live in \`extensions/\`. One is a directory with an \`index.html\`
   and a \`main.ts\`; it imports \`pewter\` for the API and is bundled into a
   single file when a tab opens it. There is no plugin API to learn.
-- \`pewt check\` compiles \`extensions/\` and reports what is wrong. Run it
-  before saying a screen works — rendering it needs a human and a browser,
-  and this does not.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here.
 
-## One thing that is not finished
+## Two things that are not finished
 
 \`pewt\` and \`pewter\` are linked into \`node_modules\` from an fsio checkout
 rather than installed from a registry, because neither has published yet.
 That means this pewter does not restore with \`git clone && npm i\` the way
 the documentation describes — it needs the checkout too. When those packages
 publish, \`npm i pewt pewter\` replaces the links and nothing else changes.
+
+\`pewt check\` — which compiles \`extensions/\` and reports what is wrong before
+anything reaches a screen — does not exist yet. It is the feedback signal an
+agent writing an extension can run alone, so until it lands the only way to
+know a screen works is to open it and look.
 
 ## What is worth committing
 

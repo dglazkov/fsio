@@ -26,6 +26,10 @@ test("a new pewter is a pewter — the host can find it", () => {
   assert.ok(pkg.pewter);
   assert.equal(pkg.name, "tinkering");
   assert.equal(pkg.scripts.start, "pewt serve");
+  // No script for a command that does not exist: `pewt check` is unbuilt,
+  // and `npm run check` failing with a usage error would be somebody's
+  // second experience of a new pewter.
+  assert.equal(pkg.scripts.check, undefined);
   // No dependencies yet, and that is deliberate: `pewt` and `pewter` are
   // linked into node_modules until they publish, because a dependency npm
   // cannot install would be worse than none in a file somebody commits.
