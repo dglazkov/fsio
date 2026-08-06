@@ -1,0 +1,24 @@
+{
+  "name": "pewt",
+  "version": "0.0.0-d125307d261c",
+  "description": "Pewter's host and command line. Installed in a pewter, never globally: `npm start` finds it in node_modules/.bin, and a machine without a pewter has no pewt on it.",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "bin": {
+    "pewt": "./cli.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.mjs"
+  },
+  "dependencies": {
+    "esbuild": "^0.27.2",
+    "pewter": "github:dglazkov/fsio#pewter"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  }
+}
