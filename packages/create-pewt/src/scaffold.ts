@@ -7,24 +7,61 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/** Where a pewter gets `pewt` and `pewter` from.
+ *
+ *  Both spellings are **declared dependencies**, which is the entire point.
+ *  These two used to be bare symlinks that `package.json` deliberately did
+ *  not mention, and npm prunes anything in `node_modules` that no dependency
+ *  declares — so the first `npm install` of any kind deleted them and the
+ *  pewter stopped working with no explanation
+ *  (https://github.com/dglazkov/fsio/issues/181). npm has no reason to prune
+ *  either of these. */
+export type Source =
+  /** the artifact branches CI builds on every push to main. The default, and
+   *  what makes `git clone && npm i` on another machine restore a whole
+   *  pewter: the lockfile pins a commit, and the `artifact` job keeps those
+   *  commits reachable forever rather than orphaning them. */
+  | { kind: "git" }
+  /** an fsio checkout, as relative `file:` paths — for working on fsio
+   *  itself. npm installs these as symlinks, so an edit in the checkout is
+   *  live in the pewter with no reinstall, which is the property the old
+   *  arrangement was reaching for and the reason this flag still exists.
+   *
+   *  Relative rather than absolute: a `file:` dependency is written into a
+   *  `package.json` that is in a git repository, and an absolute one would
+   *  carry a path to somebody's home directory. Relative costs nothing extra
+   *  — it works while the checkout stays where the pewter expects it, which
+   *  is exactly as long as a development arrangement is worth anything. */
+  | { kind: "checkout"; path: string };
+
 export interface ScaffoldOptions {
   /** where the pewter goes. Created if missing; must be empty if it exists. */
   root: string;
-  /** the fsio checkout `pewt` and `pewter` are linked from.
-   *
-   *  A pewter is supposed to depend on two ordinary packages, and one day it
-   *  will: `npm i pewt pewter`, pinned in the lockfile, restored by `git
-   *  clone && npm i` on another machine. Neither is published yet, and a
-   *  `file:` dependency on a workspace package does not work either — npm
-   *  would go looking for that package's own `@fsio/*` siblings, which are
-   *  private and unpublished too.
-   *
-   *  So `link()` below puts them in `node_modules` directly. That is a
-   *  development arrangement, it is stated in the pewter's own AGENTS.md,
-   *  and it is deliberately not written into `package.json`: a dependency
-   *  npm cannot install is worse than no dependency, and this file is in
-   *  somebody's git history. */
-  link: string;
+  /** where `pewt` and `pewter` come from. Default: the artifact branches. */
+  source?: Source;
+}
+
+const REPO = "github:dglazkov/fsio";
+
+/** The two dependency specs, spelled for this source.
+ *
+ *  The branch name IS the package directory name — `#pewt`, `#pewter` — which
+ *  is the same convention `ci.yml`'s artifact job is built on. Note the key
+ *  names the directory in `node_modules`, not the package: the artifact on
+ *  `#pewt` may call itself anything and it still lands at
+ *  `node_modules/pewt`, which is why an extension's `import … from "pewter"`
+ *  keeps working with no registry name involved. */
+export function dependencies(root: string, source: Source): Record<string, string> {
+  if (source.kind === "git") {
+    return { pewt: `${REPO}#pewt`, pewter: `${REPO}#pewter` };
+  }
+  const spec = (name: string): string => {
+    const rel = path.relative(root, path.join(source.path, "packages", name));
+    // npm wants a posix path in a spec even on Windows, and `path.relative`
+    // hands back the platform separator.
+    return `file:${rel.split(path.sep).join("/")}`;
+  };
+  return { pewt: spec("pewt"), pewter: spec("pewter") };
 }
 
 export class NotEmpty extends Error {
@@ -37,7 +74,7 @@ export class NotEmpty extends Error {
 /** Write a pewter. Returns the paths written, in the order a reader should
  *  meet them. */
 export function scaffold(opts: ScaffoldOptions): string[] {
-  const { root } = opts;
+  const { root, source = { kind: "git" } } = opts;
   if (fs.existsSync(root) && fs.readdirSync(root).length > 0) throw new NotEmpty(root);
 
   const written: string[] = [];
@@ -67,6 +104,12 @@ export function scaffold(opts: ScaffoldOptions): string[] {
         scripts: {
           start: "pewt serve",
         },
+        // The two packages a pewter is made of, declared like anything else.
+        // `pewt` puts the command line on `node_modules/.bin`, which is what
+        // `npm start` above finds; `pewter` is what an extension imports and
+        // what typechecks it. Being declared is what makes them survive
+        // `npm install` — see `Source` for the whole of that story.
+        dependencies: dependencies(root, source),
       },
       null,
       2
@@ -131,13 +174,7 @@ the channel between this machine and the Pewter page at once.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here.
 
-## Two things that are not finished
-
-\`pewt\` and \`pewter\` are linked into \`node_modules\` from an fsio checkout
-rather than installed from a registry, because neither has published yet.
-That means this pewter does not restore with \`git clone && npm i\` the way
-the documentation describes — it needs the checkout too. When those packages
-publish, \`npm i pewt pewter\` replaces the links and nothing else changes.
+## One thing that is not finished
 
 \`pewt check\` — which compiles \`extensions/\` and reports what is wrong before
 anything reaches a screen — does not exist yet. It is the feedback signal an
@@ -236,39 +273,11 @@ if (repos.length === 0) {
   return written;
 }
 
-/** Put `pewt` and `pewter` where a pewter expects to find them.
- *
- *  Symlinks rather than copies, so editing the checkout changes the pewter
- *  immediately — which is the point of a development arrangement. Node
- *  resolves a module's own imports from its real path, so `pewt` finds its
- *  `@fsio/*` siblings in the checkout's `node_modules` exactly as it does
- *  when run from there.
- *
- *  Returns what it linked, or throws if the checkout has not been built:
- *  linking a `dist/` that does not exist yet produces a pewter whose
- *  `npm start` fails with a module-not-found, which is a confusing first
- *  five minutes. */
-export function link(root: string, checkout: string): string[] {
-  const modules = path.join(root, "node_modules");
-  const bin = path.join(modules, ".bin");
-  fs.mkdirSync(bin, { recursive: true });
-
-  const cli = path.join(checkout, "packages/pewt/dist/cli.js");
-  if (!fs.existsSync(cli)) {
-    throw new Error(`${checkout} has not been built (no packages/pewt/dist) — run \`npm run build\` there first`);
-  }
-
-  const linked: string[] = [];
-  for (const name of ["pewt", "pewter"]) {
-    const at = path.join(modules, name);
-    fs.rmSync(at, { recursive: true, force: true });
-    fs.symlinkSync(path.join(checkout, "packages", name), at, "dir");
-    linked.push(`node_modules/${name}`);
-  }
-  const shim = path.join(bin, "pewt");
-  fs.rmSync(shim, { force: true });
-  fs.symlinkSync(path.join("..", "pewt", "dist", "cli.js"), shim);
-  fs.chmodSync(cli, 0o755);
-  linked.push("node_modules/.bin/pewt");
-  return linked;
-}
+// `link()` used to live here: it made `node_modules/{pewt,pewter}` and a
+// `.bin/pewt` shim by hand, because neither package had published and the
+// comment above `ScaffoldOptions` argued a `file:` dependency could not work.
+// That argument was wrong — measured in #181 — and the hand-made symlinks
+// were the bug: npm prunes what nothing declares, so any `npm install` in a
+// pewter deleted both and left no trace of why. Both spellings are ordinary
+// declared dependencies now, npm makes the same symlinks for `file:` itself,
+// and there is nothing here to keep.

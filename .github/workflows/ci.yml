@@ -31,13 +31,14 @@ jobs:
       - run: npm test
 
   # The npx-installable helpers (#16 S5, #106). Every push to main rebuilds
-  # each demo's bundle and force-pushes it (one orphan commit, no history) to
-  # a branch named after the demo, which is what that demo page's one-liner
-  # installs: npx github:dglazkov/fsio#terminal-demo, …#acp-demo.
+  # each package's bundle and commits it to a branch named after the package,
+  # which is what that demo page's one-liner installs — npx
+  # github:dglazkov/fsio#terminal-demo, …#acp-demo — and what a pewter
+  # declares as a dependency: github:dglazkov/fsio#pewt (#181).
   #
   # The branch name IS the package directory name, which is what lets one job
-  # serve both: the pair (workspace, branch) is a single matrix entry and
-  # nothing below is spelled twice.
+  # serve every entry: the pair (workspace, branch) is a single matrix entry
+  # and nothing below is spelled twice.
   artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
@@ -47,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        demo: [terminal-demo, acp-demo]
+        pkg: [terminal-demo, acp-demo, pewt, pewter, create-pewt]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -57,14 +58,44 @@ jobs:
       - run: npm i -g npm@11.6.1
       - uses: google/wireit@setup-github-actions-caching/v2
       - run: npm ci
-      - run: npm run -w @fsio/${{ matrix.demo }} bundle
+      # By path, not by workspace name. The two demos and pewt are @fsio/*,
+      # but `pewter` and `create-pewt` are unscoped — so the package's *name*
+      # is not derivable from its directory, while `-w <path>` needs nothing
+      # but the directory, which is already the matrix entry.
+      - run: npm run -w packages/${{ matrix.pkg }} bundle
       - name: push artifact branch
+        # Commit onto the branch rather than replacing it. This used to be
+        # `git init` + `push --force` — one orphan commit per push, no history
+        # — which is right for `npx …#acp-demo` because that always takes the
+        # tip. It is wrong for a dependency: a pewter's lockfile pins one of
+        # these commits by sha, and orphan-per-push leaves every earlier one
+        # unreachable. Measured (#181): GitHub does serve unreachable objects
+        # by sha, so a pin resolves today — on a GC schedule GitHub does not
+        # document or guarantee, which is not something a restore should rest
+        # on. Keeping history costs one fetch and makes every pin permanent.
+        #
+        # The fetch fails on a branch that does not exist yet, which is the
+        # first push for a given package and not an error. A *mixed* reset is
+        # what makes the rest work: it points HEAD at the existing tip and
+        # seeds the index from it without touching artifact-dist/, so `add -A`
+        # stages this build as a real diff against the last one — including
+        # files this build stopped producing.
         run: |
-          cd packages/${DEMO}/artifact-dist
-          git init -q -b "${DEMO}"
-          git -c user.name=ci -c user.email=ci@fsio add -A
-          git -c user.name=ci -c user.email=ci@fsio commit -qm "${DEMO} artifact from ${GITHUB_SHA}"
-          git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}" "${DEMO}"
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+          cd packages/${PKG}/artifact-dist
+          git init -q -b "${PKG}"
+          if git fetch -q "${REMOTE}" "${PKG}"; then
+            git reset -q FETCH_HEAD
+          else
+            echo "no ${PKG} branch yet — this is its first commit"
+          fi
+          git add -A
+          if git diff --cached --quiet; then
+            echo "${PKG} artifact is unchanged; nothing to push"
+            exit 0
+          fi
+          git -c user.name=ci -c user.email=ci@fsio commit -qm "${PKG} artifact from ${GITHUB_SHA}"
+          git push -q "${REMOTE}" "HEAD:${PKG}"
         env:
-          DEMO: ${{ matrix.demo }}
+          PKG: ${{ matrix.pkg }}
           GITHUB_TOKEN: ${{ github.token }}
