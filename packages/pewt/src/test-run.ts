@@ -17,6 +17,7 @@ import { HostServer } from "@fsio/host";
 import { spawnGate, type Asker } from "./ask.js";
 import { CallError } from "./call.js";
 import { pewtKind } from "./kind.js";
+import { Router } from "./router.js";
 import { NodeDirectory } from "./node-fs.js";
 import { pewterAt, type Pewter } from "./pewter.js";
 import { planRun, RunError, runKind } from "./run.js";
@@ -51,7 +52,7 @@ async function withHost(
     timings: { heartbeatMs: 100, safetyPollMs: 25 },
     onSpawnRequest: spawnGate(p, { asker: opts.asker ?? answers("y"), ...(opts.allowRuns ? { allowRuns: true } : {}) }, silent),
   });
-  host.registerKind("pewt", pewtKind(p, silent));
+  host.registerKind("pewt", pewtKind(p, new Router(), silent));
   host.registerKind("run", runKind(p, silent));
   await host.start();
   try {

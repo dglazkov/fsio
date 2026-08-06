@@ -330,6 +330,42 @@ plus `pewt` on its `PATH` so it can call back in. Nothing confines it, and
 this is not confinement; it is the difference between a wall and not handing
 over your ssh-agent socket to something nobody is sitting at.
 
+## Tabs
+
+A tab holds an extension. The shell holds the tabs, and that is nearly all
+the shell is:
+
+```sh
+pewt tabs                       # what the page has open
+pewt tabs add dashboard         # open an extension in a new tab
+pewt tabs update tab-9f2c "Build log"
+pewt tabs focus tab-9f2c
+pewt tabs close tab-9f2c
+```
+
+```ts
+const { id } = await pewt.tabs.add({ name: "dashboard" });
+```
+
+These are the first commands the **page** answers rather than the host.
+Everything else in `pewt` is a question about your machine, and the machine
+is where the answer is. A tab is not on disk anywhere: it exists because a
+browser is open, it is gone when that tab closes, and nothing in the folder
+remembers it. So the host cannot answer these — it forwards them down the
+session the page already has open and hands you back what the page said.
+
+Two things follow, and both are visible from a terminal:
+
+- **They need a page.** `pewt tabs` exits 4 when none is open, which is a
+  different fix from exit 3: start the host, or open the shell and hand it
+  the folder.
+- **Nothing asks you.** The host's question is for things it starts on your
+  machine, and opening a screen your folder already contains starts nothing.
+
+Adding a tab builds the extension first, so `pewt tabs add dashboard` on
+something that does not compile is refused with the compile error rather
+than opening a tab with nothing in it.
+
 ## Sending a file to the page
 
 An extension is code that runs. A file is a snapshot of content. Three
@@ -356,7 +392,7 @@ there is nothing to run.
 PEWTER      serve · check · doctor · api
 PROJECTS    repos {new, clone, link, rm} · template {new, apply}
 RUNNING     run · shell · agent · agents
-THE PAGE    tabs {add, update, close, focus} · open · fling
+THE PAGE    tabs {list, add, update, close, focus} · open · fling
 EXTENDING   ext {new, rm, bundle}
 THE RECORD  sessions {log, replay} · grants {revoke}
 SHARING     publish · share · join · workspaces   (not built)
@@ -385,12 +421,17 @@ operations. Neither is the real one:
 | `pewt shell --repo site` | `await pewt.shell({ repo: "site" })` |
 | `pewt agents` | `await pewt.agents.list()` |
 | `pewt agent --repo site` | `await pewt.agent({ repo: "site" })` |
+| `pewt tabs add chat` | `await pewt.tabs.add({ name: "chat" })` |
 | `pewt fling report.html` | `await pewt.fling("report.html")` |
 
 The spellings differ where each side has its own conventions. The
 operations do not. Adding one adds both, so there is no second surface to
 keep in sync, and nothing that ships in a new pewter has access your own
 code lacks.
+
+Where an operation is *answered* is not part of the deal either. `repos` is
+answered on your machine and `tabs` in the browser; both are one call in
+either spelling, and neither front end is told which it got.
 
 This is what makes the agent level work. An agent gets no private API; it
 runs the same commands you run. Three things follow:

@@ -48,7 +48,13 @@ anything, or something that can run a coding agent on your projects.
 stdin, the agent's own messages out on stdout. Whatever is on the other end
 is the ACP client — a tab is the one Pewter ships toward.
 
-Exit codes: 0 done · 1 refused · 2 usage · 3 no host is running.
+\`pewt tabs\` and the commands under it are answered by the page rather than by
+the host: a tab is not on disk anywhere, so the host forwards these down the
+session the shell holds. They need a page open, which is what exit 4 says.
+
+Exit codes: 0 done · 1 refused · 2 usage · 3 no host is running · 4 no page is
+open. The last two are separate because they are separate things to do: start
+the host, or open the shell and hand it this folder.
 \`pewt run\` exits with the script's own code instead, the way \`npm run\` does —
 so a script that exits 3 and a pewter with no host look alike, and the message
 on stderr is what tells them apart.`;

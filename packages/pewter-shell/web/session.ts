@@ -12,7 +12,9 @@
 // signal than two, but answering it from inside a skeleton would settle a
 // library's shape as a side effect of building something else.
 import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
+import { asCommand, encodeControl, receipt, receiptError } from "pewter";
 import { folder, gate, host, pending, phase, pickError } from "./state";
+import { answer } from "./tabs";
 import { log, reporter, step } from "./reporter";
 
 let client: FsioClient | null = null;
@@ -157,12 +159,18 @@ async function refreshHost(): Promise<void> {
   }
 }
 
-/** One session, opened once the host answers. Its whole job is to be the
- *  thing the API is called on. */
+/** One session, opened once the host answers. It carries both directions:
+ *  every call this page makes goes down it, and every command for the page
+ *  comes back up it.
+ *
+ *  `page: true` in the spec is what makes this session the one commands are
+ *  delivered to. A terminal opens the same kind without it and gets the same
+ *  methods — the difference is not what a client may ask for, it is which
+ *  client can be asked (packages/pewt/src/kind.ts). */
 async function openSession(): Promise<void> {
   if (!client || session) return;
   step("opening a session");
-  const s = client.createSession({ kind: "pewt", client: "pewter-shell" }, { pollMs: 15 });
+  const s = client.createSession({ kind: "pewt", client: "pewter-shell", page: true }, { pollMs: 15 });
   session = s;
   s.on("status", (status) => {
     if (status.state !== "running" && session === s) {
@@ -171,6 +179,11 @@ async function openSession(): Promise<void> {
     }
   });
   s.on("error", (e) => log("session error:", e));
+  // A command from the machine: `pewt tabs add dashboard`, typed in a terminal
+  // that cannot reach a browser, forwarded by the host to the one client that
+  // can answer it. Listeners are registered before `ready` is awaited so
+  // nothing can arrive unheard (D11).
+  s.on("data", (bytes) => void serveCommand(s, bytes));
   try {
     const info = await s.ready;
     reporter.event("session", { id: s.id, operations: info["operations"] ?? null });
@@ -180,6 +193,32 @@ async function openSession(): Promise<void> {
   } catch (e) {
     session = null;
     pickError.set(`The host refused the session: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** Answer one command from the host, and send the receipt back.
+ *
+ *  Every failure ends as a receipt rather than as silence. A terminal on the
+ *  other end is waiting, and a page that quietly declines to answer looks
+ *  exactly like a page that is not there — which is the expensive kind of
+ *  wrong, because the two have different fixes. */
+async function serveCommand(s: FsioSession, bytes: Uint8Array): Promise<void> {
+  const command = asCommand(bytes);
+  if (!command) return void log("dropped an unreadable command from the host");
+  try {
+    s.sendData(encodeControl(receipt(command.id, await answer(command.method, command.params))));
+  } catch (e) {
+    const err = e as { code?: string; message?: string; hint?: string };
+    s.sendData(
+      encodeControl(
+        receiptError(command.id, {
+          code: err.code ?? "internal",
+          message: err.message ?? String(e),
+          ...(err.hint ? { hint: err.hint } : {}),
+        })
+      )
+    );
+    log(`${command.method} → ${err.code ?? "failed"}: ${err.message ?? String(e)}`);
   }
 }
 

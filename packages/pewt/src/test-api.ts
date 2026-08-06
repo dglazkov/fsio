@@ -12,9 +12,9 @@
 // field added on one side and not the other stops the build.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { METHODS, type Bundle as ApiBundle, type Project as ApiProject } from "pewter";
+import { METHODS, PAGE_METHODS, type Bundle as ApiBundle, type Project as ApiProject } from "pewter";
 import type { Bundle } from "./bundle.js";
-import { OPERATIONS, PROCESSES } from "./ops.js";
+import { hostAnswers, OPERATIONS, PROCESSES } from "./ops.js";
 import type { Project } from "./repos.js";
 
 // Compile-time, both directions: either side gaining a field the other lacks
@@ -33,4 +33,18 @@ test("the API package spells exactly the operations the host serves", () => {
   // it calls any other, and one missing from either side is the drift this
   // file exists to stop.
   assert.deepEqual([...METHODS].sort(), [...OPERATIONS.map((o) => o.method), ...PROCESSES.map((o) => o.method)].sort());
+});
+
+test("the page's own list is exactly the operations the host does not answer", () => {
+  // The shell reads `PAGE_METHODS` to decide which calls stop at the page
+  // rather than travelling to the host (pewter-shell/web/bridge.ts), and the
+  // host reads its table to decide which questions it forwards to the page. A
+  // method in one list and not the other would make a tab operation take the
+  // long way round the folder to reach the party that was already holding it.
+  assert.deepEqual(
+    [...PAGE_METHODS].sort(),
+    OPERATIONS.filter((o) => !hostAnswers(o))
+      .map((o) => o.method)
+      .sort()
+  );
 });

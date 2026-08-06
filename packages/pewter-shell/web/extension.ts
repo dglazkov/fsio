@@ -1,4 +1,4 @@
-// Opening an extension: ask the host for it, read the bytes, mount the frame.
+// Getting an extension: ask the host for it, read the bytes.
 //
 // The two halves travel differently and deliberately so. The *request* rides
 // the session — it is a question, and the host is the only thing that can
@@ -10,10 +10,12 @@
 // opening a tab costs no frames, and re-opening one costs no build: the host
 // rebuilds only when a source file is newer than the bundle, so the answer
 // to "open this again" is usually a path and a hash.
-import { mount } from "./bridge";
+//
+// Where those bytes then go is tabs.ts's business. This stops at "here is the
+// document", so that the thing which fails — a compile error, a bundle the
+// page cannot read — fails before any tab exists to show it.
 import { callHost, readAt, ShellCallError } from "./session";
-import { extError, open } from "./state";
-import { log, reporter, step } from "./reporter";
+import { step } from "./reporter";
 
 export interface Bundle {
   name: string;
@@ -24,41 +26,25 @@ export interface Bundle {
   ms?: number;
 }
 
-/** Open one extension into the given container, replacing whatever was in
- *  it. Returns false when the extension could not be opened, having already
- *  said why on screen. */
-export async function openExtension(name: string, into: HTMLElement): Promise<boolean> {
-  extError.set("");
+/** A built extension, and the document to put in a frame.
+ *
+ *  Throws ShellCallError. A compile error carries esbuild's own words — it is
+ *  the extension author's to fix, and summarizing it into "could not open"
+ *  would throw away the line number — and a bundle the page cannot read
+ *  carries the path, because those are two different things to go and fix. */
+export async function buildExtension(name: string): Promise<Bundle & { html: string }> {
   step(`opening ${name}`);
-
-  let bundle: Bundle;
-  try {
-    bundle = (await callHost("ext.bundle", { name })) as Bundle;
-  } catch (e) {
-    const err = e instanceof ShellCallError ? e : null;
-    // A compile error is the common case here and it is the extension
-    // author's to fix, so it is shown as it came — esbuild's own words,
-    // including which line — rather than summarized into "could not open".
-    extError.set(err ? `${err.message}${err.hint ? `\n${err.hint}` : ""}` : String(e));
-    reporter.event("ext-failed", { name, code: err?.code ?? "internal" });
-    log(`${name} → ${err?.code ?? "failed"}: ${err?.message ?? String(e)}`);
-    return false;
-  }
-
+  const bundle = (await callHost("ext.bundle", { name })) as Bundle;
   const html = await readAt(bundle.path);
   if (html === null) {
     // The host said it wrote a file and the page cannot read it. That is not
     // a compile error and not a refusal: something disagrees about the
     // folder, and saying which file is missing is the only useful thing to
     // say about it.
-    extError.set(`The host built ${name} but this page cannot read ${bundle.path} in the folder you granted.`);
-    reporter.event("ext-unreadable", { name, path: bundle.path });
-    return false;
+    throw new ShellCallError(
+      "unreadable",
+      `The host built ${name} but this page cannot read ${bundle.path} in the folder you granted.`
+    );
   }
-
-  into.replaceChildren(mount(html, name));
-  open.set({ name, hash: bundle.hash, bytes: bundle.bytes, rebuilt: bundle.rebuilt });
-  reporter.event("ext-open", { name, hash: bundle.hash, bytes: bundle.bytes, rebuilt: bundle.rebuilt });
-  log(`${name} → ${bundle.path} (${bundle.bytes} B, ${bundle.hash})${bundle.rebuilt ? ` rebuilt in ${bundle.ms} ms` : ""}`);
-  return true;
+  return { ...bundle, html };
 }
