@@ -377,11 +377,36 @@ commands send one, differing in who ends up holding the bytes:
 | `pewt fling <path>` | A copy in the browser's storage | The tab keeps working |
 | `pewt publish <path>` | A copy other people can open (not built) | The tab keeps working |
 
+```sh
+pewt open repos/site/README.md
+pewt fling repos/site/dist/report.html
+pewt files                      # the copies the page has custody of
+pewt files show file-9f2c
+pewt files drop file-9f2c
+```
+
+**The path is inside the pewter, and nothing else is.** Both commands hand
+the page a path and the page opens the file itself, through the same one
+grant that carries the transport — so no bytes ride the wire in either
+direction, `fling` has no size limit of ours, and a path that climbs out of
+the folder is refused rather than resolved. Sending a file from elsewhere on
+your machine is a thing neither command does.
+
+From a terminal the path is resolved the way your shell meant it, so
+tab-completion inside a project works; from an extension it is always
+relative to the pewter, because an extension has no working directory.
+
 `fling` is how a build output outlives its build directory. Delete
 `dist/`, stop `pewt serve`, revoke the folder: the tab still works,
 because the page holds the bytes. An extension does not work that way. The
 shell may still have its code cached, but an extension with no host cannot
 call anything, so it renders and then sits there.
+
+A copy outlives more than the file. Tabs die with the page — a tab exists
+because a browser is open — and a copy does not, so a reload leaves you
+holding bytes with nothing showing them. That is what `pewt files` is: the
+catalog of what this page owns, and `pewt files show` puts one back in a tab.
+`pewt files drop` is how you take it back, and it closes the tabs onto it.
 
 ## The pewt command line
 
@@ -393,6 +418,7 @@ PEWTER      serve · check · doctor · api
 PROJECTS    repos {new, clone, link, rm} · template {new, apply}
 RUNNING     run · shell · agent · agents
 THE PAGE    tabs {list, add, update, close, focus} · open · fling
+            files {list, show, drop}
 EXTENDING   ext {new, rm, bundle}
 THE RECORD  sessions {log, replay} · grants {revoke}
 SHARING     publish · share · join · workspaces   (not built)
@@ -422,7 +448,9 @@ operations. Neither is the real one:
 | `pewt agents` | `await pewt.agents.list()` |
 | `pewt agent --repo site` | `await pewt.agent({ repo: "site" })` |
 | `pewt tabs add chat` | `await pewt.tabs.add({ name: "chat" })` |
+| `pewt open notes.md` | `await pewt.open("notes.md")` |
 | `pewt fling report.html` | `await pewt.fling("report.html")` |
+| `pewt files` | `await pewt.files.list()` |
 
 The spellings differ where each side has its own conventions. The
 operations do not. Adding one adds both, so there is no second surface to
@@ -430,8 +458,9 @@ keep in sync, and nothing that ships in a new pewter has access your own
 code lacks.
 
 Where an operation is *answered* is not part of the deal either. `repos` is
-answered on your machine and `tabs` in the browser; both are one call in
-either spelling, and neither front end is told which it got.
+answered on your machine and `tabs`, `open`, `fling` and `files` in the
+browser; both are one call in either spelling, and neither front end is told
+which it got.
 
 This is what makes the agent level work. An agent gets no private API; it
 runs the same commands you run. Three things follow:

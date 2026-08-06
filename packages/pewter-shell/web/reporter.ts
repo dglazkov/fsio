@@ -7,13 +7,14 @@
 // origin of their own, and every call it made.
 import { hasObserver } from "@fsio/client";
 import { createReporter } from "@fsio/ui";
-import { opaque, opened, served, tabs } from "./state";
+import { bodyLabel } from "pewter";
+import { content, opaque, opened, served, tabs } from "./state";
 
 export const { reporter, logText, log, step } = createReporter({
   page: "pewter-shell",
   summaryKey: "calls",
   facts: () => {
-    const { tabs: list, activeId } = tabs.get();
+    const { tabs: list, activeId, held } = tabs.get();
     return {
       hasObserver,
       // What is on screen, in the shape a rig has read since the skeleton:
@@ -21,7 +22,14 @@ export const { reporter, logText, log, step } = createReporter({
       open: (activeId ? opened.get()[activeId] : null) ?? null,
       // The whole strip. The tabs are the page's own state, so a run driving
       // them from a terminal has no other way to see what landed.
-      tabs: list.map((t) => ({ id: t.id, title: t.title, name: t.body.name, active: t.id === activeId })),
+      tabs: list.map((t) => ({ id: t.id, title: t.title, kind: t.body.kind, name: bodyLabel(t.body), active: t.id === activeId })),
+      // The catalog, which outlives the tabs — and the only way a native side
+      // can see that a copy really is the page's rather than a second read.
+      held: held.map((f) => ({ id: f.id, name: f.name, from: f.from, size: f.size, type: f.type })),
+      // What each file tab is actually showing. `missing` is the fact the
+      // whole `open`/`fling` split turns on: delete the file, and a window
+      // says so while a copy carries on.
+      views: [...content.get().values()].map((v) => ({ key: v.key, viewer: v.viewer, size: v.size, missing: v.missing })),
       // The claim the sandbox exists to make, as a fact a script can fail on.
       // null means no frame has loaded yet, which is not the same as false.
       opaqueOrigin: opaque.get(),

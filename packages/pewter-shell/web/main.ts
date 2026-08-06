@@ -9,6 +9,7 @@
 import "@fsio/ui/boot"; // must stay first — see that module
 import "@fsio/ui"; // registers the shared chrome's custom elements
 import "./components/app-shell";
+import "./components/file-view"; // the one screen the shell draws itself
 import { step } from "./reporter";
 import { acceptDrop, checkGates, closeOnPagehide } from "./session";
 

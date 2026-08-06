@@ -48,9 +48,17 @@ anything, or something that can run a coding agent on your projects.
 stdin, the agent's own messages out on stdout. Whatever is on the other end
 is the ACP client — a tab is the one Pewter ships toward.
 
-\`pewt tabs\` and the commands under it are answered by the page rather than by
-the host: a tab is not on disk anywhere, so the host forwards these down the
-session the shell holds. They need a page open, which is what exit 4 says.
+\`pewt tabs\`, \`pewt files\`, \`open\` and \`fling\` are answered by the page rather
+than by the host: a tab is not on disk anywhere and a flung copy is in the
+browser's storage, so the host forwards these down the session the shell holds.
+They need a page open, which is what exit 4 says.
+
+open, fling:
+  <path> is relative to the pewter, and inside it. The page reads it through
+  the grant it already holds, so nothing rides the wire and there is no size
+  limit — the browser's storage quota is the only one. \`open\` is a window on
+  the file and follows it; \`fling\` is a copy the page owns and keeps working
+  when the file, the host and the grant are all gone.
 
 Exit codes: 0 done · 1 refused · 2 usage · 3 no host is running · 4 no page is
 open. The last two are separate because they are separate things to do: start

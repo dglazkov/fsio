@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -88,6 +88,14 @@ await agent.exit;
 const { id } = await pewt.tabs.add({ name: "chat" });
 const { tabs } = await pewt.tabs.list();
 document.getElementById("tabbed")!.textContent = \`\${id} · \${tabs.length} open\`;
+
+// A file, from the same sandbox. \`open\` is a path and nothing else — the page
+// reads the bytes through the grant it holds, which an extension has no part
+// of and cannot see. What this checks is that the two spellings reach the
+// shell; what they do once there is the rig's, because it needs a real folder.
+const view = await pewt.open("notes.md");
+const { files } = await pewt.files.list();
+document.getElementById("filed")!.textContent = \`\${view.path} → \${view.id} · \${files.length} held\`;
 
 document.title = "answered";
 `
@@ -149,6 +157,19 @@ const PARENT = `<!doctype html>
       }
       if (call.method === "tabs.list") {
         post({ ok: true, result: { tabs: window.__result.tabs, activeId: window.__result.tabs.at(-1)?.id ?? null } });
+        return;
+      }
+      if (call.method === "files.open") {
+        // Only a path crossed the sandbox, which is the claim: the bytes never
+        // leave the page, and this stand-in has no folder to read them from
+        // anyway. What a real shell does with the path is the rig's to judge.
+        const tab = { id: "tab-" + (window.__result.tabs.length + 1), title: call.params.path, body: { kind: "file", path: call.params.path } };
+        window.__result.tabs.push(tab);
+        post({ ok: true, result: { id: tab.id, path: call.params.path, title: tab.title, active: true, reused: false } });
+        return;
+      }
+      if (call.method === "files.list") {
+        post({ ok: true, result: { files: [] } });
         return;
       }
       if (call.method === "agent") {
@@ -215,6 +236,7 @@ let terminal = "";
 let left = "";
 let acp = "";
 let tabbed = "";
+let filed = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -233,6 +255,7 @@ try {
   left = await frame.locator("#left").textContent();
   acp = await frame.locator("#acp").textContent();
   tabbed = await frame.locator("#tabbed").textContent();
+  filed = await frame.locator("#filed").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -254,6 +277,8 @@ const checks = [
   ["and read the agent's answer back whole", acp.trim() === JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } })],
   ["an extension asked the page for a tab over the same channel", result.calls.includes("tabs.add") && result.calls.includes("tabs.list")],
   ["and read back a strip holding it", tabbed === "tab-1 · 1 open"],
+  ["an extension asked for a file by path, and only the path crossed", result.calls.includes("files.open") && result.calls.includes("files.list")],
+  ["and the tab it got back names the file", filed === "notes.md → tab-2 · 0 held"],
   ["nothing threw in the page", errors.length === 0],
 ];
 
@@ -265,7 +290,7 @@ for (const [what, ok] of checks) {
 }
 if (failed)
   console.log(
-    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  tabbed: ${JSON.stringify(tabbed)}\n  errors: ${errors.join(" · ")}`
+    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  tabbed: ${JSON.stringify(tabbed)}\n  filed: ${JSON.stringify(filed)}\n  errors: ${errors.join(" · ")}`
   );
 console.log();
 

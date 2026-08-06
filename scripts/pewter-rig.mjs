@@ -25,6 +25,11 @@ import { readReport, waitFor } from "./harness-rig.mjs";
 const repo = path.resolve(import.meta.dirname, "..");
 const PORT = 8769;
 const GRANT_TIMEOUT_MS = Number(process.env.FSIO_GRANT_TIMEOUT_MS ?? 180_000);
+/** The file the run opens, flings, and then deletes. Its length is what the
+ *  catalog is checked against: the page reported a size it could only have
+ *  learned by opening the file itself. */
+const NOTES = "notes.md";
+const NOTES_TEXT = "the file this run opens and flings\n";
 const log = (...a) => console.log("[pewter-rig]", ...a);
 
 const banner = (s) => {
@@ -115,6 +120,12 @@ process.stdin.on("data", (c) => {
   fs.mkdirSync(path.join(root, "repos", "site", ".git"), { recursive: true });
   fs.mkdirSync(path.join(root, "repos", "atlas"), { recursive: true });
 
+  // A file for `pewt open` and `pewt fling` to be about. It is deleted partway
+  // through the run, which is the one moment a window and a copy stop looking
+  // alike — and the only way to measure the difference the two commands exist
+  // to make.
+  fs.writeFileSync(path.join(root, NOTES), NOTES_TEXT);
+
   // A second extension, so that "open a tab" has something to open that is
   // not the one already on screen. Trivial on purpose: what is under test is
   // that a tab appears, not what is in it.
@@ -127,7 +138,7 @@ process.stdin.on("data", (c) => {
   fs.mkdirSync(ext, { recursive: true });
   fs.writeFileSync(
     path.join(ext, "index.html"),
-    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p><p id="talked">no agent yet</p><p id="tabbed">no tab yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
+    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p><p id="talked">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
   );
   // The extension under test: it imports the package, calls the API, and
   // renders the answer. Nothing about it is special to the rig.
@@ -191,6 +202,14 @@ const { id } = await pewt.tabs.add({ name: "chat", activate: false });
 const { tabs } = await pewt.tabs.list();
 document.getElementById("tabbed")!.textContent = \`\${id} · \${tabs.length} open\`;
 
+// A file, asked for from inside the sandbox. What crosses is a path: this
+// frame has an origin of its own and no folder grant at all, so the shell is
+// the party that opens the file — which is the whole reason \`open\` costs no
+// frames and \`fling\` has no size limit.
+const view = await pewt.open("${NOTES}", { activate: false });
+const { files } = await pewt.files.list();
+document.getElementById("filed")!.textContent = \`\${view.path} → \${view.id} · \${files.length} held\`;
+
 document.title = "projects";
 `
   );
@@ -199,7 +218,7 @@ document.title = "projects";
 
 /** Has the shell reported the two things a verdict needs?
  *
- *  The `tabs.add` call is the last one the extension makes, so waiting for it
+ *  The `files.list` call is the last one the extension makes, so waiting for it
  *  waits for all of them. A call is recorded when it is answered, and a
  *  shell's answer is its exit code — so by then the pty has already gone.
  *
@@ -210,10 +229,35 @@ document.title = "projects";
  *  undefined, so a run in which everything worked timed out waiting for
  *  itself. Exported and pure so it can be checked against a report from a
  *  real run without spending another human click on it. */
-export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "tabs.add") ? report : null);
+export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "files.list") ? report : null);
+
+/** A report's view of one reference, by key (pewter-shell/web/files.ts). */
+const view = (report, key) => report?.views?.find((v) => v.key === key);
 
 /** The verdict, as a list of [what, ok, detail]. Pure for the same reason. */
-export function verdict({ report, bundleExists, rendered, ran, shelled, talked, tabbed, noPage, listed, added, afterAdd, closed, afterClose }) {
+export function verdict({
+  report,
+  bundleExists,
+  rendered,
+  ran,
+  shelled,
+  talked,
+  tabbed,
+  filed,
+  noPage,
+  listed,
+  added,
+  afterAdd,
+  closed,
+  afterClose,
+  outside,
+  flung,
+  afterFling,
+  afterDelete,
+  files,
+  dropped,
+  afterDrop,
+}) {
   return [
     ["the extension opened", !!report.open, report.open],
     ["its frame has an origin of its own", report.opaqueOrigin === true, report.opaqueOrigin],
@@ -233,11 +277,27 @@ export function verdict({ report, bundleExists, rendered, ran, shelled, talked, 
     // rather than a value. A rig that expected `tab-2` would be asserting
     // that ids are sequential, which is a claim nothing makes.
     ["an extension opened a tab through the shell rather than the host", /^tab-[0-9a-f]+ · 2 open$/.test(tabbed ?? ""), tabbed],
+    // A file, and the read that produced it. The extension sent a path; the
+    // page opened the file through the grant, which nothing in the frame has.
+    ["an extension put a file in a tab by naming it", new RegExp(`^${NOTES} → tab-[0-9a-f]+ · 0 held$`).test(filed ?? ""), filed],
+    ["and the page read it through the grant, not through a session", view(report, `file:${NOTES}`)?.missing === false, report.views],
     ["`pewt tabs` with no page open is exit 4, not exit 3", noPage?.status === 4 && /no page is open/.test(noPage.stderr ?? ""), noPage],
     ["`pewt tabs` in a terminal lists what the browser is holding", listed?.status === 0 && /repos/.test(listed.stdout ?? "") && /chat/.test(listed.stdout ?? ""), listed],
-    ["`pewt tabs add` in a terminal put a third tab in the page", added?.status === 0 && afterAdd?.tabs?.length === 3, added],
+    ["`pewt tabs add` in a terminal put a fourth tab in the page", added?.status === 0 && afterAdd?.tabs?.length === 4, added],
     ["and the page brought it forward, which is what the receipt said", afterAdd?.tabs?.at(-1)?.active === true, afterAdd?.tabs],
-    ["`pewt tabs close` in a terminal took it back out", closed?.status === 0 && afterClose?.tabs?.length === 2, closed],
+    ["`pewt tabs close` in a terminal took it back out", closed?.status === 0 && afterClose?.tabs?.length === 3, closed],
+    // The file half, from a terminal. Everything above about tabs is state the
+    // page invented; this is state the page read off the machine's disk with
+    // its own hands, on the strength of a path somebody typed.
+    ["`pewt open` on a path outside the pewter is refused before it travels", outside?.status === 2 && /outside/.test(outside.stderr ?? ""), outside],
+    ["`pewt fling` in a terminal gave the page custody of a copy", flung?.status === 0 && afterFling?.held?.length === 1, flung],
+    ["and the copy's bytes are the file's, read through the grant", afterFling?.held?.[0]?.size === NOTES_TEXT.length, afterFling?.held],
+    // The claim both commands exist to make, and the only moment it is
+    // visible: one file deleted, two tabs, two different answers.
+    ["with the file deleted, the window says it is gone", view(afterDelete, `file:${NOTES}`)?.missing === true, afterDelete?.views],
+    ["and the copy carries on, because the page holds those bytes", view(afterDelete, `held:${afterFling?.held?.[0]?.id}`)?.missing === false, afterDelete?.views],
+    ["`pewt files` in a terminal lists what the page has custody of", files?.status === 0 && new RegExp(NOTES).test(files.stdout ?? ""), files],
+    ["`pewt files drop` freed it and closed the tab showing it", dropped?.status === 0 && afterDrop?.held?.length === 0 && afterDrop?.tabs?.length === 3, dropped],
   ];
 }
 
@@ -374,6 +434,7 @@ async function run() {
   const shelled = await read("#shelled");
   const talked = await read("#talked");
   const tabbed = await read("#tabbed");
+  const filed = await read("#filed");
 
   // The terminal half of the round trip, and the only place it can be
   // measured: a command typed on this machine, forwarded by the host down the
@@ -388,10 +449,43 @@ async function run() {
   const settle = (what, ok) =>
     waitFor(what, () => (ok(readReport(root)) ? readReport(root) : null), 15_000).catch(() => readReport(root));
 
-  const afterAdd = await settle("the page to report three tabs", (r) => r?.tabs?.length === 3);
+  const afterAdd = await settle("the page to report four tabs", (r) => r?.tabs?.length === 4);
   const id = JSON.parse(added.stdout || "{}").id;
   const closed = pewt(root, ["tabs", "close", String(id)]);
-  const afterClose = await settle("the page to report the tab gone", (r) => r?.tabs?.length === 2 && !r.tabs.some((t) => t.id === id));
+  const afterClose = await settle("the page to report the tab gone", (r) => r?.tabs?.length === 3 && !r.tabs.some((t) => t.id === id));
+
+  // ---- the file half
+  //
+  // A path outside the pewter never travels: the command line resolves what
+  // was typed against the folder and refuses what lands outside it, so this
+  // exits 2 without a host or a page being involved at all.
+  const outside = pewt(root, ["open", "../escaped.md"]);
+  log(`pewt open ../escaped.md: exit ${outside.status}`);
+
+  const flung = pewt(root, ["fling", NOTES, "--json"]);
+  log(`pewt fling ${NOTES}: exit ${flung.status} ${flung.stdout?.trim()}`);
+  const afterFling = await settle("the page to report a copy in its catalog", (r) => r?.held?.length === 1);
+  const fileId = afterFling?.held?.[0]?.id;
+
+  // The one moment a window and a copy stop looking alike. The window polls
+  // its file every 2 s, so this waits for the poll rather than for a command.
+  fs.rmSync(path.join(root, NOTES));
+  log(`deleted ${NOTES} — waiting for the window onto it to notice`);
+  const afterDelete = await waitFor(
+    "the window to report its file gone, with the copy still there",
+    () => {
+      const r = readReport(root);
+      const window = r?.views?.find((v) => v.key === `file:${NOTES}`);
+      const copy = r?.views?.find((v) => v.key === `held:${fileId}`);
+      return window?.missing === true && copy?.missing === false ? r : null;
+    },
+    20_000
+  ).catch(() => readReport(root));
+
+  const files = pewt(root, ["files"]);
+  const dropped = pewt(root, ["files", "drop", String(fileId)]);
+  log(`pewt files drop ${fileId}: exit ${dropped.status}`);
+  const afterDrop = await settle("the page to report the copy gone", (r) => r?.held?.length === 0 && r?.tabs?.length === 3);
 
   // What a report cannot say: whether the strip looks like a strip. Written
   // beside the pewter rather than inside it, for the same reason the Chrome
@@ -408,12 +502,20 @@ async function run() {
     shelled,
     talked,
     tabbed,
+    filed,
     noPage,
     listed,
     added,
     afterAdd,
     closed,
     afterClose,
+    outside,
+    flung,
+    afterFling,
+    afterDelete,
+    files,
+    dropped,
+    afterDrop,
   });
 
   console.log();
