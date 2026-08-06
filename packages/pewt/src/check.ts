@@ -117,18 +117,10 @@ export async function check(p: Pewter): Promise<CheckResult> {
     throw new CheckError(
       "no_compiler",
       "this pewter has no typescript installed, so there is nothing to check with",
-      // Two facts, and the second is why this is three lines rather than one:
-      // the obvious fix currently costs you the pewter, so offering it alone
-      // would be handing somebody a trap. `npm create pewt` installs the
-      // compiler before it links, which is why a scaffolded pewter never
-      // reaches this message (https://github.com/dglazkov/fsio/issues/181).
-      [
-        "it runs your pewter's own compiler, the same one your editor uses:",
-        "  npm i -D typescript",
-        "Careful: any `npm install` here also deletes the pewt and pewter links,",
-        "because they are linked rather than declared. Re-link them afterwards,",
-        "or see https://github.com/dglazkov/fsio/issues/181.",
-      ].join("\n  ")
+      // `npm create pewt` installs the compiler, so the folders that reach
+      // this are the hand-made ones — the rig writes its own pewter, and so
+      // does every test here. One sentence is the right size for that.
+      "it runs your pewter's own compiler, the same one your editor uses: npm i -D typescript"
     );
   }
 
