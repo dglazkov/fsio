@@ -1,0 +1,14 @@
+{
+  "name": "create-pewt",
+  "version": "0.0.0-d125307d261c",
+  "description": "Make a pewter: the folder that is a git repository, an npm project, and the channel at once",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "bin": {
+    "create-pewt": "./cli.js"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
