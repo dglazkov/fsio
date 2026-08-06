@@ -26,10 +26,11 @@ test("a new pewter is a pewter — the host can find it", () => {
   assert.ok(pkg.pewter);
   assert.equal(pkg.name, "tinkering");
   assert.equal(pkg.scripts.start, "pewt serve");
-  // No script for a command that does not exist: `pewt check` is unbuilt,
-  // and `npm run check` failing with a usage error would be somebody's
-  // second experience of a new pewter.
-  assert.equal(pkg.scripts.check, undefined);
+  assert.equal(pkg.scripts.check, "pewt check");
+  // The compiler `pewt check` runs, declared rather than carried by `pewt`,
+  // so `git clone && npm i` restores the checker with everything else and
+  // your editor and the command agree about which one is in use.
+  assert.equal(pkg.devDependencies.typescript, "^7.0.2");
 });
 
 // The regression this file exists for now (#181). These two were bare
