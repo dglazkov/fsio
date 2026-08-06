@@ -22,7 +22,7 @@
       "clean": "if-file-deleted"
     },
     "test": {
-      "command": "node --test --test-concurrency=1 dist/test-bridge.js",
+      "command": "node --test --test-concurrency=1 dist/test-bridge.js dist/test-tabs.js",
       "files": [],
       "output": [],
       "dependencies": ["build"]

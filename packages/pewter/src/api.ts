@@ -10,6 +10,7 @@
 // a refusal arrives as a thrown error carrying the operation's own code.
 import { agentSpec, type Agent, type AgentEntry, type AgentOptions } from "./agent.js";
 import { shellSpec, type Shell, type ShellOptions, type ShellResult } from "./shell.js";
+import { PAGE_METHODS, type Tab, type TabsState } from "./tabs.js";
 import { asAnswer, asEvent, send, WIRE_VERSION, type ApiError, type Call } from "./wire.js";
 
 /** A project in this pewter — a directory under `repos/`. */
@@ -118,11 +119,40 @@ export interface PewtApi {
    *  permission question a screen somebody designed rather than a redraw in
    *  a terminal nobody can style. */
   agent(options?: AgentOptions): Promise<Agent>;
+  /** The tabs this page is holding.
+   *
+   *  The first operations the *page* answers rather than the host. Everything
+   *  above is a question about your machine and travels to the host; a tab is
+   *  not on disk anywhere, so these are answered where they live — which for
+   *  an extension is one frame away rather than a folder away, and for a
+   *  terminal is a command the host forwards down the page's session.
+   *
+   *  Nothing here asks a human. The host's question is for things it starts
+   *  on your machine, and opening a screen the folder already contains starts
+   *  nothing. */
+  tabs: {
+    /** Every tab, in strip order, and which one is on screen. */
+    list(): Promise<TabsState>;
+    /** Open an extension in a new tab. Refused if it does not build — the
+     *  compile error comes back as the refusal, so a caller learns what is
+     *  wrong without opening the tab it asked for. */
+    add(params: { name: string; title?: string; activate?: boolean }): Promise<{ id: string; name: string; title: string; active: boolean }>;
+    /** Rename one. The extension in it does not care and is not told. */
+    update(params: { id: string; title: string }): Promise<{ id: string; title: string }>;
+    /** Close one. Whatever the extension in it was doing stops with it. */
+    close(params: { id: string }): Promise<{ id: string; activeId: string | null }>;
+    /** Bring one forward. */
+    focus(params: { id: string }): Promise<{ id: string; title: string }>;
+  };
 }
 
 /** Every method this package knows how to spell, in wire form. The host's
- *  table is the authority; this is the list that gets checked against it. */
-export const METHODS = ["repos.list", "ext.bundle", "agents.list", "run", "shell", "agent"] as const;
+ *  table is the authority; this is the list that gets checked against it.
+ *
+ *  The page's own methods are in it too, and an extension cannot tell them
+ *  apart — which is the claim: one API, and where an operation is answered is
+ *  the implementation's business rather than the caller's. */
+export const METHODS = ["repos.list", "ext.bundle", "agents.list", "run", "shell", "agent", ...PAGE_METHODS] as const;
 
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
@@ -306,5 +336,22 @@ export function apiFor(channel: Channel): PewtApi {
       answer.catch((e: unknown) => failed?.(e instanceof Error ? e : new Error(String(e))));
       return running;
     },
+    // The page's own, and they go over the same channel as everything else:
+    // the shell answers these itself instead of forwarding them to the host,
+    // and an extension is not told which it got. What that buys is a tab
+    // operation costing one message rather than a round trip through the
+    // folder — and, more to the point, working at all, since the answer is in
+    // the shell and nowhere else.
+    tabs: {
+      list: () => channel.call("tabs.list") as Promise<TabsState>,
+      add: (params) => channel.call("tabs.add", params) as Promise<{ id: string; name: string; title: string; active: boolean }>,
+      update: (params) => channel.call("tabs.update", params) as Promise<{ id: string; title: string }>,
+      close: (params) => channel.call("tabs.close", params) as Promise<{ id: string; activeId: string | null }>,
+      focus: (params) => channel.call("tabs.focus", params) as Promise<{ id: string; title: string }>,
+    },
   };
 }
+
+/** Re-exported so an extension can type what `tabs.list()` gives it without
+ *  reaching past the API for it. */
+export type { Tab, TabsState };

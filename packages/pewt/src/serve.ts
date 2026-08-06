@@ -27,6 +27,7 @@ import { spawnGate, terminalAsker, type Asker } from "./ask.js";
 import { pewtKind } from "./kind.js";
 import { hasClientDirs, openInChromium, pageIsWatching } from "./open.js";
 import { ensureState, type Pewter } from "./pewter.js";
+import { Router } from "./router.js";
 import { runKind } from "./run.js";
 
 /** Where the shell lives. pewter.town is where it will be served from;
@@ -79,6 +80,10 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
   const folderHasSeenAPage = hasClientDirs(p.fsio);
 
   const asker = opts.asker ?? terminalAsker();
+  // Where a command for the page goes. One per host, because a pewter is one
+  // folder and one shell: the page's session is what commands are delivered
+  // down, and the newest page to open takes that place (router.ts).
+  const router = new Router();
   const server = new HostServer({
     root: p.root,
     fresh: true,
@@ -94,7 +99,7 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
     ),
     logger: log,
   });
-  server.registerKind("pewt", pewtKind(p, log));
+  server.registerKind("pewt", pewtKind(p, router, log));
   server.registerKind("run", runKind(p, log));
   server.registerKind("agent", agentKind(p, log));
   await server.start();

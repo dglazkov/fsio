@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -82,6 +82,13 @@ const agent = await pewt.agent({ repo: "site", onMessage: (m) => acp.append(JSON
 agent.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
 await agent.exit;
 
+// A tab, from the same sandbox. This one is answered by the shell rather than
+// by the host, and the extension cannot tell: same package, same channel, same
+// shape of call. That indistinguishability is the claim.
+const { id } = await pewt.tabs.add({ name: "chat" });
+const { tabs } = await pewt.tabs.list();
+document.getElementById("tabbed")!.textContent = \`\${id} · \${tabs.length} open\`;
+
 document.title = "answered";
 `
 );
@@ -98,7 +105,7 @@ const PARENT = `<!doctype html>
 <body>
 <script type="module">
   const html = ${JSON.stringify(html).replace(/</g, "\\u003c")};
-  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [] };
+  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [] };
 
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts");
@@ -132,6 +139,18 @@ const PARENT = `<!doctype html>
       }
       window.__result.calls.push(call.method);
       window.__result.wire = call.v;
+      // The page's own operations, answered by the page. This stand-in keeps
+      // the list the real shell keeps, which is all a tab is at this level.
+      if (call.method === "tabs.add") {
+        const tab = { id: "tab-" + (window.__result.tabs.length + 1), title: call.params.name, body: { kind: "extension", name: call.params.name } };
+        window.__result.tabs.push(tab);
+        post({ ok: true, result: { id: tab.id, name: call.params.name, title: tab.title, active: true } });
+        return;
+      }
+      if (call.method === "tabs.list") {
+        post({ ok: true, result: { tabs: window.__result.tabs, activeId: window.__result.tabs.at(-1)?.id ?? null } });
+        return;
+      }
       if (call.method === "agent") {
         post({ type: "pewt:event", event: { started: true } });
         return;
@@ -187,7 +206,7 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
 await page.goto(url);
 
-const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [] };
+const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [] };
 let result = empty;
 let rendered = "";
 let streamed = "";
@@ -195,6 +214,7 @@ let code = "";
 let terminal = "";
 let left = "";
 let acp = "";
+let tabbed = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -212,6 +232,7 @@ try {
   terminal = await frame.locator("#term").textContent();
   left = await frame.locator("#left").textContent();
   acp = await frame.locator("#acp").textContent();
+  tabbed = await frame.locator("#tabbed").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -231,6 +252,8 @@ const checks = [
   ["and the shell's exit code came back as its call's answer", left === "left 0"],
   ["an extension sent an agent a whole ACP message", JSON.stringify(result.messaged) === JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "initialize" }])],
   ["and read the agent's answer back whole", acp.trim() === JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } })],
+  ["an extension asked the page for a tab over the same channel", result.calls.includes("tabs.add") && result.calls.includes("tabs.list")],
+  ["and read back a strip holding it", tabbed === "tab-1 · 1 open"],
   ["nothing threw in the page", errors.length === 0],
 ];
 
@@ -242,7 +265,7 @@ for (const [what, ok] of checks) {
 }
 if (failed)
   console.log(
-    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  errors: ${errors.join(" · ")}`
+    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  tabbed: ${JSON.stringify(tabbed)}\n  errors: ${errors.join(" · ")}`
   );
 console.log();
 

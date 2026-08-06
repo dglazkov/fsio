@@ -9,14 +9,15 @@
 // `actuate()` has the same shape and the same reason).
 import { FsioClient, RpcError, type FsDirectory } from "@fsio/client";
 
-/** What went wrong, in the two categories that need different fixes.
+/** What went wrong, in the categories that need different fixes.
  *
- *  `no_host` is the narrative's exit 3. Exit 4 — no page open — belongs to
- *  the operations only a page can answer, and this skeleton has none of
- *  those yet (https://github.com/dglazkov/fsio/issues/165). */
+ *  `no_host` is the narrative's exit 3 and `no_page` is its exit 4. They are
+ *  two codes because they are two things to do: start the host, or open the
+ *  page and hand it the folder. A page operation is the only way to get the
+ *  second one — nothing else in the API needs a browser to be open. */
 export class CallError extends Error {
   constructor(
-    readonly reason: "no_host" | "refused" | "timeout" | "transport",
+    readonly reason: "no_host" | "no_page" | "refused" | "timeout" | "transport",
     message: string,
     readonly code?: string,
     readonly hint?: string
@@ -75,7 +76,12 @@ export async function call(dir: FsDirectory, method: string, params: unknown, op
       // The operation's own code and hint ride in `data` — the JSON-RPC code
       // says only which kind of wrong it is (kind.ts).
       const data = (e.data ?? {}) as { code?: string; hint?: string };
-      throw new CallError("refused", e.message, data.code, data.hint);
+      // Three of those codes are not the operation refusing at all: they are
+      // the page not being there to ask. The host is fine, so this is not
+      // exit 3, and the command never reached an operation, so it is not
+      // exit 1 either.
+      const missing = data.code === "no_page" || data.code === "page_gone" || data.code === "timeout";
+      throw new CallError(missing ? "no_page" : "refused", e.message, data.code, data.hint);
     }
     throw new CallError("timeout", e instanceof Error ? e.message : String(e));
   } finally {

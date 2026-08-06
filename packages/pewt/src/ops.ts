@@ -11,14 +11,19 @@
 // repos` against `repos.list` — and the operation does not.
 //
 // There are two families in this file and they split by *shape*: a request
-// has one answer, and a process has a stream that ends in an exit code. Both
-// are answered by the host.
+// has one answer, and a process has a stream that ends in an exit code.
 //
-// Pewter has a third family that only the page can answer (`tabs`, `open`,
-// `fling`: that state lives in the browser and never touches disk), and the
-// router serving both directions is deliberately not built yet — see
-// https://github.com/dglazkov/fsio/issues/164.
-import { shellSpec } from "pewter";
+// Requests split again, by *who answers*. `repos`, `ext` and `agents` are the
+// host's, because the answer is on the machine. `tabs` is the page's, because
+// a tab is not on disk anywhere — it exists because a browser is open. An
+// operation says which it is and nothing else changes: the same table, the
+// same two spellings, the same one place to add the next one. What differs is
+// where the answer comes from, and router.ts is what carries a command to a
+// page and a receipt back.
+//
+// `open` and `fling` are page-answered too and are the next slice
+// (https://github.com/dglazkov/fsio/issues/164).
+import { asTabCommand, shellSpec, type TabsState } from "pewter";
 import { roster, type RosterEntry } from "./agents.js";
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
 import { listRepos, type Project } from "./repos.js";
@@ -59,7 +64,10 @@ export interface Operation {
    *  (spec/PROTOCOL.md, threat model) and the CLI is not a trusted caller
    *  either — it is just another client. */
   parse(params: unknown): unknown;
-  run(p: Pewter, params: unknown): Promise<unknown>;
+  /** the host's answer, or absent when the page has it. A page operation is
+   *  forwarded down the session the page holds (router.ts) and the host never
+   *  learns what the answer means. */
+  run?(p: Pewter, params: unknown): Promise<unknown>;
   /** what a terminal prints. `--json` prints the result instead. */
   render(result: unknown): string;
 }
@@ -85,6 +93,23 @@ const define = <P, R>(d: Def<P, R>): Operation => ({
   run: (p, params) => d.run(p, params as P),
   render: (result) => d.render(result as R),
 });
+
+/** A page operation: everything an operation has except an answer. Written as
+ *  its own constructor rather than an optional field on `define` so that
+ *  forgetting the host's half is impossible rather than merely unlikely. */
+const definePage = <P, R>(d: Omit<Def<P, R>, "run">): Operation => ({
+  method: d.method,
+  cli: d.cli,
+  summary: d.summary,
+  usage: d.usage ?? "",
+  fromArgv: (argv) => d.fromArgv(argv),
+  parse: (params) => d.parse(params),
+  render: (result) => d.render(result as R),
+});
+
+/** Whether the host answers this one itself. The kind reads it to decide
+ *  between its own table and the page's session. */
+export const hostAnswers = (op: Operation): boolean => op.run !== undefined;
 
 const noParams = (): Record<string, never> => ({});
 
@@ -176,7 +201,101 @@ export const agentsList = define<Record<string, never>, { agents: RosterEntry[] 
   },
 });
 
-export const OPERATIONS: Operation[] = [reposList, extBundle, agentsList];
+// ---- the operations the page answers
+//
+// Same table, same two spellings, no `run`. What a terminal types travels to
+// the host, the host forwards it down the session the page holds, and the
+// receipt comes back the way any answer does. The page checks the parameters
+// again when they arrive (`asTabCommand`, in the `pewter` package) — this
+// check is what a terminal gets a usage error from, not what makes the
+// command safe.
+
+/** The page's own parameter check, phrased for whoever typed it. */
+const tabParams =
+  (method: string, what: string) =>
+  (params: unknown): Record<string, unknown> => {
+    const cmd = asTabCommand(method, params);
+    if (!cmd) throw new OpError("bad_params", what);
+    return cmd.params as Record<string, unknown>;
+  };
+
+const tabId = (argv: string[], verb: string): { id: string } => {
+  if (argv.length !== 1 || !argv[0]) throw new OpError("usage", `tabs ${verb} takes one tab id — \`pewt tabs\` lists them`);
+  return { id: argv[0] };
+};
+
+export const tabsList = definePage<Record<string, never>, TabsState>({
+  method: "tabs.list",
+  cli: ["tabs"],
+  summary: "what the page has open",
+  fromArgv: noParams,
+  parse: tabParams("tabs.list", "tabs takes no parameters") as (params: unknown) => Record<string, never>,
+  render: ({ tabs, activeId }) => {
+    if (tabs.length === 0) {
+      return "no tabs — the page is open and holding nothing.\n  Put something in it:  pewt tabs add <extension>";
+    }
+    const width = Math.max(...tabs.map((t) => t.title.length));
+    // The id is first because it is what every other tab command takes, and
+    // the mark says which one you are looking at right now.
+    return tabs
+      .map((t) => `  ${t.id === activeId ? "▸" : " "} ${t.id}  ${t.title.padEnd(width)}  ${t.body.name}`)
+      .join("\n");
+  },
+});
+
+export const tabsAdd = definePage<{ name: string }, { id: string; name: string; title: string; active: boolean }>({
+  method: "tabs.add",
+  cli: ["tabs", "add"],
+  summary: "open an extension in a new tab",
+  usage: "<extension>",
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "tabs add takes one extension name");
+    return { name: argv[0] };
+  },
+  parse: tabParams("tabs.add", "tabs add needs an extension name") as (params: unknown) => { name: string },
+  // A tab twice is two tabs, so this says which one it made. The build that
+  // had to happen first is the page's business and does not show up here —
+  // when it fails, this operation is refused with the compile error instead.
+  render: ({ id, name, title, active }) =>
+    `${name} → ${id}${title === name ? "" : ` (${title})`}${active ? "" : "  · left in the strip, not brought forward"}`,
+});
+
+export const tabsUpdate = definePage<{ id: string; title: string }, { id: string; title: string }>({
+  method: "tabs.update",
+  cli: ["tabs", "update"],
+  summary: "rename a tab",
+  usage: "<id> <title>",
+  fromArgv: (argv) => {
+    if (argv.length !== 2 || !argv[0] || !argv[1]) throw new OpError("usage", 'tabs update takes a tab id and a title — `pewt tabs update tab-9f2c "Build log"`');
+    return { id: argv[0], title: argv[1] };
+  },
+  parse: tabParams("tabs.update", "tabs update needs a tab id and a title") as (params: unknown) => { id: string; title: string },
+  render: ({ id, title }) => `${id} → ${JSON.stringify(title)}`,
+});
+
+export const tabsClose = definePage<{ id: string }, { id: string; activeId: string | null }>({
+  method: "tabs.close",
+  cli: ["tabs", "close"],
+  summary: "close a tab",
+  usage: "<id>",
+  fromArgv: (argv) => tabId(argv, "close"),
+  parse: tabParams("tabs.close", "tabs close needs a tab id") as (params: unknown) => { id: string },
+  // What is on screen now is the half nobody thinks to ask for and everybody
+  // wants next: closing the tab you were looking at moves you somewhere.
+  render: ({ id, activeId }) => `closed ${id}${activeId ? `  · ${activeId} is on screen now` : "  · the page is holding nothing now"}`,
+});
+
+export const tabsFocus = definePage<{ id: string }, { id: string; title: string }>({
+  method: "tabs.focus",
+  cli: ["tabs", "focus"],
+  summary: "bring a tab forward",
+  usage: "<id>",
+  fromArgv: (argv) => tabId(argv, "focus"),
+  parse: tabParams("tabs.focus", "tabs focus needs a tab id") as (params: unknown) => { id: string },
+  render: ({ id, title }) => `${id} is on screen — ${JSON.stringify(title)}`,
+});
+
+export const OPERATIONS: Operation[] = [reposList, extBundle, agentsList, tabsList, tabsAdd, tabsUpdate, tabsClose, tabsFocus];
 
 export const byMethod = (method: string): Operation | undefined =>
   OPERATIONS.find((o) => o.method === method);

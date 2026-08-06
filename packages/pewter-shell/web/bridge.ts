@@ -32,9 +32,10 @@
 // extension can ask for any operation, which is stated plainly in
 // NARRATIVE.md's "Looking into the Future" and is the honest description of where
 // this stands.
-import { asCall, asSend, answer, connect, event, isHello, refusal } from "pewter";
+import { asCall, asSend, answer, connect, event, isHello, PAGE_METHODS, refusal } from "pewter";
 import { agentOnHost, callHost, runOnHost, shellOnHost, ShellCallError } from "./session";
 import { opaque, served } from "./state";
+import { answer as answerHere } from "./tabs";
 import { log, reporter } from "./reporter";
 
 /** Put an extension's bundle in a frame and wire it to the host.
@@ -130,8 +131,16 @@ async function serve(data: unknown, port: MessagePort, name: string, live: Map<n
     // keyed to this call's id and ends with the ordinary answer. A shell is
     // the same and talks back. The extension's callbacks never cross the
     // boundary — only the id does.
+    //
+    // The page's own operations are the fourth case and the shortest: they
+    // stop here. An extension asking for a tab is asking the shell, which is
+    // one message away rather than a folder away — and is the only party that
+    // knows the answer. Nothing about the call says which kind it was, which
+    // is the point of there being one API.
     const result =
-      call.method === "run"
+      PAGE_METHODS.includes(call.method as (typeof PAGE_METHODS)[number])
+        ? await answerHere(call.method, call.params)
+        : call.method === "run"
         ? await runOnHost(call.params as Record<string, unknown>, (line, stream) =>
             port.postMessage(event(call.id, stream === "out" ? { o: line } : { e: line }))
           )
@@ -143,8 +152,19 @@ async function serve(data: unknown, port: MessagePort, name: string, live: Map<n
     port.postMessage(answer(call.id, result));
     record(call.method, true, t0);
   } catch (e) {
+    // A refusal keeps its own code and hint whoever wrote it — the host's
+    // operation, or the page's tabs (TabError). An extension acts on those,
+    // and flattening them all to "internal" would leave it a sentence to
+    // parse instead.
+    const known = e as { code?: unknown; message?: unknown; hint?: unknown };
     const err =
-      e instanceof ShellCallError ? e : new ShellCallError("internal", e instanceof Error ? e.message : String(e));
+      e instanceof ShellCallError
+        ? e
+        : new ShellCallError(
+            typeof known.code === "string" ? known.code : "internal",
+            typeof known.message === "string" ? known.message : String(e),
+            typeof known.hint === "string" ? known.hint : undefined
+          );
     port.postMessage(refusal(call.id, { code: err.code, message: err.message, ...(err.hint ? { hint: err.hint } : {}) }));
     record(call.method, false, t0);
   } finally {

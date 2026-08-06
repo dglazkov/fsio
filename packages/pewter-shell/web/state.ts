@@ -1,6 +1,7 @@
 // Page state, as signals. The components render from these; session.ts and
-// tab.ts write them. The plain modules stay framework-free.
+// tabs.ts write them. The plain modules stay framework-free.
 import { signal } from "@lit-labs/signals";
+import { noTabs, type TabsState } from "pewter";
 
 /** Which face the shell shows.
  *  setup — no folder yet.
@@ -28,8 +29,17 @@ export const pending = signal<FileSystemDirectoryHandle | null>(null);
  *  is a page that can see the folder and ask it nothing. */
 export const host = signal<"none" | "alive" | "silent">("none");
 
-/** What the open tab is showing. One tab in the skeleton — the strip, and
- *  the state that goes with several, is the next slice. */
+/** Every tab this page holds, and which one is on screen.
+ *
+ *  The page owns this and nothing else does. It is not in the folder, it is
+ *  not in the host, and it does not survive the tab being closed — which is
+ *  why `pewt tabs` in a terminal is a question the host has to forward here
+ *  rather than answer (packages/pewt/src/router.ts). */
+export const tabs = signal<TabsState>(noTabs());
+
+/** What the host built for each open tab, by tab id. Provenance rather than
+ *  state: the bytes are in the frame, and this is what the footer and the
+ *  report say about where they came from. */
 export interface OpenExtension {
   name: string;
   /** the bundle the host built, as it reported it. */
@@ -37,7 +47,7 @@ export interface OpenExtension {
   bytes: number;
   rebuilt: boolean;
 }
-export const open = signal<OpenExtension | null>(null);
+export const opened = signal<Record<string, OpenExtension>>({});
 export const extError = signal<string>("");
 
 /** Calls an extension has made through the API, newest last. The rig reads

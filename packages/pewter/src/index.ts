@@ -21,7 +21,12 @@ export { PewtError, METHODS, type PewtApi, type Project, type Bundle, type RunOp
 export { Channel, apiFor } from "./api.js";
 export * from "./agent.js";
 export * from "./shell.js";
+export * from "./tabs.js";
 export * from "./wire.js";
+// The host↔page wire. Not an extension's business — it never sees a command
+// or a receipt — but this package is the one place the host and the shell can
+// both import from, which is what keeps them agreeing about the payload.
+export * from "./control.js";
 
 const channel = new Channel();
 

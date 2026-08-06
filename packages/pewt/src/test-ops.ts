@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseArgs } from "./args.js";
-import { byArgv, byMethod, OPERATIONS, OpError, processByMethod, PROCESSES } from "./ops.js";
+import { byArgv, byMethod, hostAnswers, OPERATIONS, OpError, processByMethod, PROCESSES } from "./ops.js";
 
 const asOp = (found: ReturnType<typeof byArgv>) => (found && "op" in found ? found.op : null);
 
@@ -99,6 +99,68 @@ test("pewt agents and pewt agent are different commands, and neither eats the ot
   assert.deepEqual(parseArgs(["agent"]).kind === "process" && (parseArgs(["agent"]) as { spec: unknown }).spec, {});
   assert.equal(parseArgs(["agent", "one", "two"]).kind, "error");
   assert.equal(parseArgs(["agents", "--repo", "site"]).kind, "error");
+});
+
+test("the page's operations are in the same table, and say the page answers them", () => {
+  // The claim is that nothing about a page operation is a second surface: the
+  // table, the spellings and the parameter check are the host's own. What
+  // differs is one field, and the kind reads it to decide where to send the
+  // question (packages/pewt/src/kind.ts).
+  const page = OPERATIONS.filter((o) => o.method.startsWith("tabs."));
+  assert.equal(page.length, 5);
+  for (const op of page) assert.equal(hostAnswers(op), false);
+  for (const op of OPERATIONS.filter((o) => !o.method.startsWith("tabs."))) assert.equal(hostAnswers(op), true);
+});
+
+test("pewt tabs lists them, and its verbs are longer matches", () => {
+  const list = parseArgs(["tabs"]);
+  assert.equal(list.kind === "op" && list.method, "tabs.list");
+  assert.deepEqual(list.kind === "op" && list.params, {});
+
+  const added = parseArgs(["tabs", "add", "dashboard"]);
+  assert.equal(added.kind === "op" && added.method, "tabs.add");
+  assert.deepEqual(added.kind === "op" && added.params, { name: "dashboard" });
+
+  const renamed = parseArgs(["tabs", "update", "tab-9f2c", "Build log"]);
+  assert.equal(renamed.kind === "op" && renamed.method, "tabs.update");
+  assert.deepEqual(renamed.kind === "op" && renamed.params, { id: "tab-9f2c", title: "Build log" });
+
+  for (const verb of ["close", "focus"]) {
+    const parsed = parseArgs(["tabs", verb, "tab-9f2c"]);
+    assert.equal(parsed.kind === "op" && parsed.method, `tabs.${verb}`);
+    assert.deepEqual(parsed.kind === "op" && parsed.params, { id: "tab-9f2c" });
+  }
+
+  assert.equal(parseArgs(["tabs", "add"]).kind, "error");
+  assert.equal(parseArgs(["tabs", "close"]).kind, "error");
+  assert.equal(parseArgs(["tabs", "update", "tab-9f2c"]).kind, "error");
+});
+
+test("a tab command's parameters are checked before they travel", () => {
+  const add = byMethod("tabs.add")!;
+  assert.deepEqual(add.parse({ name: "repos" }), { name: "repos" });
+  assert.deepEqual(add.parse({ name: "repos", activate: false }), { name: "repos", activate: false });
+  for (const bad of [{}, { name: 7 }, { name: "" }, null]) {
+    assert.throws(() => add.parse(bad), (e: unknown) => e instanceof OpError && e.code === "bad_params");
+  }
+  assert.throws(() => byMethod("tabs.focus")!.parse({}), (e: unknown) => e instanceof OpError && e.code === "bad_params");
+});
+
+test("an empty strip explains itself, and a full one is readable", () => {
+  const empty = byMethod("tabs.list")!.render({ tabs: [], activeId: null });
+  assert.match(empty, /no tabs/);
+  assert.match(empty, /pewt tabs add/);
+  const rendered = byMethod("tabs.list")!.render({
+    tabs: [
+      { id: "tab-1", title: "Projects", body: { kind: "extension", name: "repos" } },
+      { id: "tab-2", title: "chat", body: { kind: "extension", name: "chat" } },
+    ],
+    activeId: "tab-2",
+  });
+  // The mark says which one you are looking at, and the id is what every
+  // other tab command takes.
+  assert.match(rendered, /tab-1 {2}Projects/);
+  assert.match(rendered, /▸ tab-2/);
 });
 
 test("--repo and --dry-run are refused by commands that start nothing", () => {

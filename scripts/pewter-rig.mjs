@@ -115,11 +115,19 @@ process.stdin.on("data", (c) => {
   fs.mkdirSync(path.join(root, "repos", "site", ".git"), { recursive: true });
   fs.mkdirSync(path.join(root, "repos", "atlas"), { recursive: true });
 
+  // A second extension, so that "open a tab" has something to open that is
+  // not the one already on screen. Trivial on purpose: what is under test is
+  // that a tab appears, not what is in it.
+  const chat = path.join(root, "extensions", "chat");
+  fs.mkdirSync(chat, { recursive: true });
+  fs.writeFileSync(path.join(chat, "index.html"), `<main><h1>Chat</h1></main>\n<script type="module" src="./main.ts"></script>\n`);
+  fs.writeFileSync(path.join(chat, "main.ts"), `document.title = "chat";\n`);
+
   const ext = path.join(root, "extensions", "repos");
   fs.mkdirSync(ext, { recursive: true });
   fs.writeFileSync(
     path.join(ext, "index.html"),
-    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p><p id="talked">no agent yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
+    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p><p id="talked">no agent yet</p><p id="tabbed">no tab yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
   );
   // The extension under test: it imports the package, calls the API, and
   // renders the answer. Nothing about it is special to the rig.
@@ -176,6 +184,13 @@ document.getElementById("talked")!.textContent = answered?.result?.saw === "init
   ? \`exit \${agentLeft} · the agent answered\`
   : \`exit \${agentLeft} · nothing came back from the agent\`;
 
+// A tab, asked for from inside the sandbox. Every call above this one travels
+// to the host; this one stops at the shell, which is the only party that knows
+// what a tab is. Nothing in the extension says which kind it made.
+const { id } = await pewt.tabs.add({ name: "chat", activate: false });
+const { tabs } = await pewt.tabs.list();
+document.getElementById("tabbed")!.textContent = \`\${id} · \${tabs.length} open\`;
+
 document.title = "projects";
 `
   );
@@ -184,10 +199,9 @@ document.title = "projects";
 
 /** Has the shell reported the two things a verdict needs?
  *
- *  The `shell` call is the last one the extension makes, so waiting for it
+ *  The `tabs.add` call is the last one the extension makes, so waiting for it
  *  waits for all of them. A call is recorded when it is answered, and a
- *  shell's answer is its exit code — so this is also the point at which the
- *  pty has already gone.
+ *  shell's answer is its exit code — so by then the pty has already gone.
  *
  *  The reporter spreads its `facts` into the top level of report.json rather
  *  than nesting them under a `facts` key (@fsio/ui/reporter.ts), and the
@@ -196,10 +210,10 @@ document.title = "projects";
  *  undefined, so a run in which everything worked timed out waiting for
  *  itself. Exported and pure so it can be checked against a report from a
  *  real run without spending another human click on it. */
-export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "agent") ? report : null);
+export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "tabs.add") ? report : null);
 
 /** The verdict, as a list of [what, ok, detail]. Pure for the same reason. */
-export function verdict({ report, bundleExists, rendered, ran, shelled, talked }) {
+export function verdict({ report, bundleExists, rendered, ran, shelled, talked, tabbed, noPage, listed, added, afterAdd, closed, afterClose }) {
   return [
     ["the extension opened", !!report.open, report.open],
     ["its frame has an origin of its own", report.opaqueOrigin === true, report.opaqueOrigin],
@@ -212,8 +226,28 @@ export function verdict({ report, bundleExists, rendered, ran, shelled, talked }
     ["it took what the extension typed, and answered with its exit code", shelled === "exit 0 · the shell answered", shelled],
     ["an agent the extension asked for started from this pewter's own node_modules", report.calls.some((c) => c.method === "agent" && c.ok), report.calls],
     ["and a whole ACP message crossed the sandbox in each direction", talked === "exit 0 · the agent answered", talked],
+    // The page's own operations. Everything above is answered on the machine;
+    // these are answered in the browser, and the interesting half is that a
+    // terminal can reach them at all.
+    // The id is the page's own and is random, so this matches its shape
+    // rather than a value. A rig that expected `tab-2` would be asserting
+    // that ids are sequential, which is a claim nothing makes.
+    ["an extension opened a tab through the shell rather than the host", /^tab-[0-9a-f]+ · 2 open$/.test(tabbed ?? ""), tabbed],
+    ["`pewt tabs` with no page open is exit 4, not exit 3", noPage?.status === 4 && /no page is open/.test(noPage.stderr ?? ""), noPage],
+    ["`pewt tabs` in a terminal lists what the browser is holding", listed?.status === 0 && /repos/.test(listed.stdout ?? "") && /chat/.test(listed.stdout ?? ""), listed],
+    ["`pewt tabs add` in a terminal put a third tab in the page", added?.status === 0 && afterAdd?.tabs?.length === 3, added],
+    ["and the page brought it forward, which is what the receipt said", afterAdd?.tabs?.at(-1)?.active === true, afterAdd?.tabs],
+    ["`pewt tabs close` in a terminal took it back out", closed?.status === 0 && afterClose?.tabs?.length === 2, closed],
   ];
 }
+
+/** One `pewt` invocation against this pewter, as a terminal would run it.
+ *
+ *  Synchronous on purpose: the page and the host are separate processes, so
+ *  blocking here blocks nothing that has to keep moving — and the command's
+ *  whole point is that it waits for a browser to answer. */
+const pewt = (root, argv) =>
+  spawnSync(process.execPath, [path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, ...argv], { encoding: "utf8" });
 
 const children = [];
 function child(name, cmd, argv, cwd) {
@@ -277,6 +311,12 @@ async function run() {
   await waitFor("the host's .fsio", () => fs.existsSync(path.join(root, ".fsio")), 15_000);
   log(`host + shell up (http://localhost:${PORT}/)`);
 
+  // Exit 4, measured before the browser exists. A host is running and a page
+  // is not, which is the one moment those two are unambiguously different —
+  // and it costs nothing to ask here.
+  const noPage = pewt(root, ["tabs"]);
+  log(`pewt tabs with no page: exit ${noPage.status}`);
+
   const { chromium } = await import("playwright");
   if (!fs.existsSync(chromium.executablePath())) {
     log("Chrome for Testing not installed — running `npx playwright install chromium`…");
@@ -314,13 +354,18 @@ async function run() {
     30_000
   );
 
-  // Read once, from inside the frame. An earlier version also accepted
-  // `page.title() === "Projects"` as a pass — but `page` is the shell, whose
-  // title is "Pewter", so that clause could never be true and was quietly
-  // widening a check that looked like it had two ways to succeed.
+  // Read once, from inside the frame — and name which frame. An earlier
+  // version also accepted `page.title() === "Projects"` as a pass, but `page`
+  // is the shell, whose title is "Pewter", so that clause could never be true
+  // and was quietly widening a check that looked like it had two ways to
+  // succeed. A later one said `frameLocator("iframe")`, which was
+  // unambiguous only while the shell held exactly one tab: the moment the
+  // extension opened a second, every read failed with a strict-mode violation
+  // and five checks reported the subject broken when the instrument was.
+  // The title is the bridge's (`<name> (extension)`).
   const read = (selector) =>
     page
-      .frameLocator("iframe")
+      .frameLocator('iframe[title="repos (extension)"]')
       .locator(selector)
       .textContent()
       .catch((e) => `unreadable: ${e instanceof Error ? e.message : String(e)}`);
@@ -328,9 +373,48 @@ async function run() {
   const ran = await read("#ran");
   const shelled = await read("#shelled");
   const talked = await read("#talked");
+  const tabbed = await read("#tabbed");
+
+  // The terminal half of the round trip, and the only place it can be
+  // measured: a command typed on this machine, forwarded by the host down the
+  // session the browser holds, answered in the browser, and back. Nothing
+  // short of a real page can stand in for the middle of that.
+  const listed = pewt(root, ["tabs"]);
+  const added = pewt(root, ["tabs", "add", "chat", "--json"]);
+  log(`pewt tabs add chat: exit ${added.status} ${added.stdout?.trim()}`);
+  // A wait that gives up returns the last report rather than throwing: this
+  // is the verdict's evidence, and a run that ends in a stack trace instead of
+  // a list of checks has spent a human's click to say nothing.
+  const settle = (what, ok) =>
+    waitFor(what, () => (ok(readReport(root)) ? readReport(root) : null), 15_000).catch(() => readReport(root));
+
+  const afterAdd = await settle("the page to report three tabs", (r) => r?.tabs?.length === 3);
+  const id = JSON.parse(added.stdout || "{}").id;
+  const closed = pewt(root, ["tabs", "close", String(id)]);
+  const afterClose = await settle("the page to report the tab gone", (r) => r?.tabs?.length === 2 && !r.tabs.some((t) => t.id === id));
+
+  // What a report cannot say: whether the strip looks like a strip. Written
+  // beside the pewter rather than inside it, for the same reason the Chrome
+  // profile is — nothing that is not the channel goes in the folder.
+  const shot = `${root}-screen.png`;
+  await page.screenshot({ path: shot }).catch(() => {});
 
   const bundle = path.join(root, ".pewter", "build", "repos.html");
-  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered, ran, shelled, talked });
+  const checks = verdict({
+    report,
+    bundleExists: fs.existsSync(bundle),
+    rendered,
+    ran,
+    shelled,
+    talked,
+    tabbed,
+    noPage,
+    listed,
+    added,
+    afterAdd,
+    closed,
+    afterClose,
+  });
 
   console.log();
   let failed = 0;
@@ -341,7 +425,7 @@ async function run() {
       console.log(`      ${JSON.stringify(detail)}`);
     }
   }
-  console.log(`\n  report: ${path.join(root, ".fsio", "client")}\n  pewter: ${root}\n`);
+  console.log(`\n  report: ${path.join(root, ".fsio", "client")}\n  pewter: ${root}\n  screen: ${shot}\n`);
   return failed;
 }
 

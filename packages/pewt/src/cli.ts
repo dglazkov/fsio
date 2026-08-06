@@ -11,6 +11,11 @@
 //   1  the operation refused it — it arrived and the answer was no
 //   2  usage error, or this is not a pewter
 //   3  no host is running
+//   4  no page is open, for the operations only a page can answer
+//
+// 3 and 4 are two codes because they are two things to do: start the host, or
+// open the shell and hand it this folder. Everything before `tabs` could only
+// fail the first way.
 //
 // `pewt run` and `pewt shell` are the exception, and it is the one `npm run`
 // set: they exit with the process's own code, because a caller scripting a
@@ -229,6 +234,6 @@ if (parsed.kind === "serve") {
       console.error(`pewt: ${message}`);
       if (err?.hint) console.error(`  ${err.hint}`);
     }
-    process.exit(err?.reason === "refused" ? 1 : err?.reason === "no_host" ? 3 : 3);
+    process.exit(err?.reason === "refused" ? 1 : err?.reason === "no_page" ? 4 : 3);
   }
 }
