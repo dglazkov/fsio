@@ -22,9 +22,15 @@
 // build wants the build's answer. The collision with the codes above is real —
 // a script that exits 3 and a pewter with no host look alike from the outside
 // — and the message on stderr is what tells them apart.
+//
+// `pewt check` is the other exception, and it never reaches a host at all: 0
+// clean, 1 the compiler found errors, 2 there was nothing to check with. The
+// last one is 2 rather than 1 because a git hook wants "your code is wrong"
+// and "this pewter has no compiler" to be different things.
 import path from "node:path";
 import { parseArgs } from "./args.js";
 import { call, CallError } from "./call.js";
+import { check, CheckError, render as renderCheck } from "./check.js";
 import { NodeDirectory } from "./node-fs.js";
 import { byMethod } from "./ops.js";
 import { planAgent, AgentError, type AgentSpec } from "./agent.js";
@@ -58,7 +64,27 @@ const pewter = (() => {
   }
 })();
 
-if (parsed.kind === "serve") {
+if (parsed.kind === "check") {
+  // No host, no session, no folder round trip. `check` reads this pewter's
+  // own compiler off its own node_modules and runs it here (check.ts).
+  try {
+    const result = await check(pewter);
+    console.log(parsed.json ? JSON.stringify(result, null, 2) : renderCheck(result));
+    process.exit(result.ok ? 0 : 1);
+  } catch (e) {
+    if (!(e instanceof CheckError)) throw e;
+    if (parsed.json) {
+      console.log(JSON.stringify({ reason: "cannot_check", code: e.code, message: e.message, hint: e.hint }, null, 2));
+    } else {
+      console.error(`pewt: ${e.message}`);
+      if (e.hint) console.error(`  ${e.hint}`);
+    }
+    // 2 rather than 1: "your code is wrong" and "this pewter cannot answer
+    // that question" are different things to do about it, and a git hook
+    // running this wants to tell them apart.
+    process.exit(2);
+  }
+} else if (parsed.kind === "serve") {
   const server = await serve(pewter, {
     ...(parsed.url ? { url: parsed.url } : {}),
     open: parsed.open,

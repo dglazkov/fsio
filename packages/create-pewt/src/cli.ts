@@ -21,7 +21,7 @@ import { link as linkPackages, NotEmpty, scaffold } from "./scaffold.js";
 const USAGE = `usage: create-pewt <dir> [--no-install] [--no-git] [--link <path>]
 
   <dir>          where the pewter goes. Created if missing; must be empty.
-  --no-install   write the files and stop, without linking pewt and pewter
+  --no-install   write the files and stop: no npm install, no links
   --no-git       do not make it a git repository
   --link <path>  the fsio checkout to link from (default: this one)`;
 
@@ -80,6 +80,22 @@ if (git) {
 }
 
 if (install) {
+  // npm first, links second, and the order is the whole of it: `npm install`
+  // prunes anything in node_modules that no dependency declares, so linking
+  // before installing would install over the links and leave a broken pewter
+  // (https://github.com/dglazkov/fsio/issues/181).
+  //
+  // What it installs is `typescript`, which `pewt check` runs and an editor
+  // opening this folder picks up. Doing it here rather than telling you to is
+  // what keeps you away from an `npm i` in this folder until those two
+  // packages publish.
+  const r = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fund"], { cwd: root, stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error("\ncreate-pewt: npm install failed. The files are written; run it yourself, then link.");
+    process.exit(1);
+  }
+  console.log("  node_modules/typescript");
+
   try {
     for (const at of linkPackages(root, link)) console.log(`  ${at}`);
     console.log(`\n  pewt and pewter are linked from ${link}, not installed from a registry —

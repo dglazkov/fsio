@@ -6,15 +6,21 @@ export type Parsed =
   | { kind: "help"; text: string }
   | { kind: "error"; message: string }
   | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean; allowShells: boolean; allowAgents: boolean }
+  | { kind: "check"; dir: string | null; json: boolean }
   | { kind: "op"; dir: string | null; json: boolean; method: string; params: unknown }
   | { kind: "process"; dir: string | null; json: boolean; dryRun: boolean; method: string; spec: Record<string, unknown> };
 
-// `serve` is not an operation — it is the host rather than a call on one —
-// so it is written here, and everything else comes off the table. One column
-// width for all of them, computed rather than typed, because a hand-aligned
-// column is wrong the first time an operation with a longer name arrives.
+// Two commands are not operations, so they are written here and everything
+// else comes off the table. `serve` is the host rather than a call on one.
+// `check` is answered on this side of the folder and needs no host at all
+// (check.ts) — the one command with a single front end.
+//
+// One column width for all of them, computed rather than typed, because a
+// hand-aligned column is wrong the first time an operation with a longer name
+// arrives.
 const COMMANDS: [string, string][] = [
   ["serve", "run the host for this pewter"],
+  ["check", "compile extensions/ and say what is wrong"],
   ...COMMAND_LIST.map((c): [string, string] => [[...c.cli, c.usage].filter(Boolean).join(" "), c.summary]),
 ];
 const WIDTH = Math.max(...COMMANDS.map(([spelling]) => spelling.length)) + 2;
@@ -71,9 +77,24 @@ open, fling:
   the file and follows it; \`fling\` is a copy the page owns and keeps working
   when the file, the host and the grant are all gone.
 
+\`pewt check\` compiles \`extensions/\` with this pewter's own TypeScript — the
+same compiler your editor and your CI use, out of your own node_modules. It is
+the one command with no host in it: the moment you want a typecheck is while
+you are writing, which is not necessarily a moment with a host up, so it reads
+the disk here and answers here. That is also why there is no \`pewt.check()\`
+for an extension to call.
+
+It starts a process and does not ask, unlike \`run\`, \`shell\` and \`agent\`. A
+typechecker reads your extensions and never runs them, which is what \`ext
+bundle\` already does.
+
 Exit codes: 0 done · 1 refused · 2 usage · 3 no host is running · 4 no page is
 open. The last two are separate because they are separate things to do: start
 the host, or open the shell and hand it this folder.
+\`pewt check\` uses the first three differently: 0 is clean, 1 is errors found,
+and 2 is could not check at all — no compiler, no tsconfig — because a git
+hook wants "your code is wrong" and "this pewter is not set up" to be two
+things.
 \`pewt run\` exits with the script's own code instead, the way \`npm run\` does —
 so a script that exits 3 and a pewter with no host look alike, and the message
 on stderr is what tells them apart.`;
@@ -116,6 +137,10 @@ export function parseArgs(argv: string[]): Parsed {
   if (rest[0] === "serve") {
     if (rest.length > 1) return { kind: "error", message: `serve takes no arguments (got ${rest.slice(1).join(" ")})` };
     return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents };
+  }
+  if (rest[0] === "check") {
+    if (rest.length > 1) return { kind: "error", message: `check takes no arguments (got ${rest.slice(1).join(" ")}) — it compiles all of extensions/` };
+    return { kind: "check", dir, json };
   }
 
   const found = byArgv(rest);

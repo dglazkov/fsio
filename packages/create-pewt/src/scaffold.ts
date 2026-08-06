@@ -61,11 +61,16 @@ export function scaffold(opts: ScaffoldOptions): string[] {
         // working directory looking for it, which is how a command typed
         // inside a project still knows which pewter it is in.
         pewter: { version: 1 },
-        // `check` is deliberately absent until `pewt check` exists. A
-        // scaffold that writes a script for an unbuilt command hands
-        // everyone who runs it a usage error as their second experience.
         scripts: {
           start: "pewt serve",
+          check: "pewt check",
+        },
+        // The compiler `pewt check` runs, and the one your editor picks up
+        // from this folder. It is a real dependency rather than something
+        // `pewt` carries, so `git clone && npm i` restores the checker along
+        // with everything else and there is only ever one of it.
+        devDependencies: {
+          typescript: "^7.0.2",
         },
       },
       null,
@@ -130,6 +135,9 @@ the channel between this machine and the Pewter page at once.
   single file when a tab opens it. There is no plugin API to learn.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here.
+- \`npm run check\` compiles \`extensions/\` and says what is wrong. It needs no
+  host and no browser, so it is the signal to use while writing — open a tab
+  to see whether a screen is *right*, run this to know whether it *compiles*.
 
 ## Two things that are not finished
 
@@ -139,10 +147,12 @@ That means this pewter does not restore with \`git clone && npm i\` the way
 the documentation describes — it needs the checkout too. When those packages
 publish, \`npm i pewt pewter\` replaces the links and nothing else changes.
 
-\`pewt check\` — which compiles \`extensions/\` and reports what is wrong before
-anything reaches a screen — does not exist yet. It is the feedback signal an
-agent writing an extension can run alone, so until it lands the only way to
-know a screen works is to open it and look.
+\`npm install\` in this pewter deletes \`pewt\` and \`pewter\`. They are symlinks
+that no dependency declares, so npm prunes them as extraneous, and the folder
+stops working with no explanation. Re-link them by running \`create-pewt\`'s
+linker against the same fsio checkout. This goes away when those packages
+publish; until then, avoid \`npm i\` here — everything you need is already
+installed.
 
 ## What is worth committing
 
