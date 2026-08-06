@@ -76,6 +76,10 @@ export interface AgentPlan {
   version: string | null;
   /** true when `asks` was measured against a different version. */
   unmeasured: boolean;
+  /** the project this would run on, or absent for the pewter itself. Kept
+   *  beside the resolved directory because a standing grant names the project
+   *  a human recognizes, not a path (grants.ts). */
+  repo?: string | undefined;
   cwd: string;
   /** `cwd`, relative to the pewter — what a human recognizes. */
   where: string;
@@ -148,6 +152,7 @@ export function planAgent(p: Pewter, spec: AgentSpec): AgentPlan {
     bin: found.bin,
     version: found.version,
     unmeasured: found.version !== adapter.measured,
+    ...(repo !== undefined ? { repo } : {}),
     cwd,
     where: where(p, cwd),
     label: `agent ${adapter.name}${repo ? ` --repo ${repo}` : ""}`,

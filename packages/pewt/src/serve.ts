@@ -24,6 +24,7 @@ import path from "node:path";
 import { HostServer, type HostLogger } from "@fsio/host";
 import { agentKind } from "./agent.js";
 import { spawnGate, terminalAsker, type Asker } from "./ask.js";
+import { GRANTS_FILE, readGrants } from "./grants.js";
 import { pewtKind } from "./kind.js";
 import { hasClientDirs, openInChromium, pageIsWatching } from "./open.js";
 import { ensureState, type Pewter } from "./pewter.js";
@@ -114,7 +115,7 @@ pewter · ${p.root}
 
   from a terminal, in this folder:  pewt repos
 
-  ${runPolicy(opts, asker)}
+  ${runPolicy(p, opts, asker)}
 
 (Ctrl-C stops the host and sweeps .fsio)
 `);
@@ -134,15 +135,23 @@ pewter · ${p.root}
 
 /** What happens when something asks to start a process, said at startup
  *  rather than discovered at the first prompt — or, worse, at the first
- *  denial. Two flags, so up to two sentences: they are separate capabilities
- *  and a host can have been told about one and not the other. */
-function runPolicy(opts: ServeOptions, asker: Asker): string {
+ *  denial. Three flags, so up to three sentences: they are separate
+ *  capabilities and a host can have been told about one and not the others.
+ *
+ *  Standing grants get a line of their own when there are any. What this host
+ *  will not ask about is the half a person cannot see, and reading it off a
+ *  banner beats discovering it when something starts in silence. */
+function runPolicy(p: Pewter, opts: ServeOptions, asker: Asker): string {
+  const standing = grantLine(p);
   if (!asker.ask) {
     const told = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null].filter(Boolean);
     const list = told.length > 1 ? `${told.slice(0, -1).join(", ")} and ${told[told.length - 1]}` : told[0];
-    return list
+    // A host with no terminal still honours what somebody already answered:
+    // "cannot ask" is about the question, not about the memory of one.
+    const cannot = list
       ? `this host has no terminal to ask in. It allows ${list} because it was told to in advance, and denies everything else.`
       : "this host has no terminal to ask in, so it denies every run, shell and agent. Restart it with --allow-runs, --allow-shells or --allow-agents to allow them.";
+    return standing ? `${cannot}\n  ${standing}` : cannot;
   }
   // Each sentence stands alone: a host can have been told about runs and not
   // shells, and a shared clause would then be wrong about one of them.
@@ -153,7 +162,22 @@ function runPolicy(opts: ServeOptions, asker: Asker): string {
   const agents = opts.allowAgents
     ? "--allow-agents: every `pewt agent` starts without asking."
     : "a `pewt agent` asks here too, and that question says whether the agent will ask you back.";
-  return `${runs}\n  ${shells}\n  ${agents}`;
+  return [runs, shells, agents, ...(standing ? [standing] : [])].join("\n  ");
+}
+
+/** One line about what this host already remembers, or nothing when it
+ *  remembers nothing — which is every pewter until somebody answers `a`. An
+ *  unreadable grants file says so here rather than at the first question,
+ *  because that is a broken file and not a broken run. */
+function grantLine(p: Pewter): string | null {
+  let grants;
+  try {
+    grants = readGrants(p);
+  } catch (e) {
+    return `${GRANTS_FILE} cannot be read (${e instanceof Error ? e.message : String(e)}), so nothing will start until it is fixed or deleted.`;
+  }
+  if (grants.length === 0) return null;
+  return `${grants.length} standing grant${grants.length === 1 ? "" : "s"} — these start without asking. \`pewt grants\` lists them.`;
 }
 
 /** What this pewter can show, said once at startup. A pewter with no

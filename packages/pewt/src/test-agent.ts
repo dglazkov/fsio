@@ -18,10 +18,12 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { HostServer } from "@fsio/host";
+import { grantId } from "pewter";
 import { agentKind, agentEnv, AgentError, planAgent } from "./agent.js";
 import { ADAPTERS, roster } from "./agents.js";
 import { spawnGate, type Asker } from "./ask.js";
 import { CallError } from "./call.js";
+import { readGrants } from "./grants.js";
 import { NodeDirectory } from "./node-fs.js";
 import { pewterAt, type Pewter } from "./pewter.js";
 import { pipeAgent } from "./pipe.js";
@@ -317,6 +319,29 @@ test("--allow-runs does not allow an agent", async () => {
       () => open({}),
       (e: unknown) => e instanceof CallError && e.reason === "refused" && /--allow-agents/.test(e.message)
     );
+  });
+});
+
+test("an agent's `always` is remembered against the adapter, not against agents in general", async () => {
+  // The line a person reads before answering is whether *this* adapter asks
+  // before it edits, so that is what the grant carries. A second adapter in
+  // the same project is a second question (grants.ts).
+  const asked: string[] = [];
+  const asker: Asker = { ask: async (q) => (asked.push(q), asked.length === 1 ? "a" : "n") };
+  await withHost({ asker }, async ({ p, open }) => {
+    const { agent } = await open({ agent: NAME });
+    agent.send({ jsonrpc: "2.0", method: "leave" });
+    await agent.exit;
+    await agent.close();
+    assert.equal(asked.length, 1);
+    assert.deepEqual(readGrants(p).map(grantId), [`agent/${NAME}/.`]);
+
+    // The same adapter again, not asked about.
+    const second = await open({ agent: NAME });
+    second.agent.send({ jsonrpc: "2.0", method: "leave" });
+    await second.agent.exit;
+    await second.agent.close();
+    assert.equal(asked.length, 1);
   });
 });
 

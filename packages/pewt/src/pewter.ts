@@ -21,8 +21,13 @@ import path from "node:path";
  *
  *    .fsio    the channel — frames and transcripts. The host owns its
  *             cleanup (D6), and this package never writes into it directly.
- *    .pewter  this pewter's own state: bundled extensions, and (later)
- *             grants. Delete either and the next `pewt serve` rebuilds it. */
+ *    .pewter  this pewter's own state: bundled extensions, and the grants
+ *             this host remembers.
+ *
+ *  Delete `.fsio` or `.pewter/build` and the next `pewt serve` rebuilds them.
+ *  `.pewter/grants.json` is the one thing under here that nothing regenerates:
+ *  delete it and the host forgets what you allowed, which costs you the
+ *  questions again and nothing else. */
 export interface Pewter {
   /** absolute path to the pewter itself. */
   root: string;
@@ -34,6 +39,8 @@ export interface Pewter {
   state: string;
   /** `.pewter/build` — one self-contained HTML file per extension. */
   build: string;
+  /** `.pewter/grants.json` — the answers this host remembers (grants.ts). */
+  grants: string;
   /** `repos/` — the projects. Git-ignored: a cloned pewter has none. */
   repos: string;
   /** `extensions/` — the screens, including the ones agents wrote. */
@@ -58,6 +65,7 @@ const paths = (root: string): Pewter => ({
   fsio: path.join(root, ".fsio"),
   state: path.join(root, ".pewter"),
   build: path.join(root, ".pewter", "build"),
+  grants: path.join(root, ".pewter", "grants.json"),
   repos: path.join(root, "repos"),
   extensions: path.join(root, "extensions"),
 });

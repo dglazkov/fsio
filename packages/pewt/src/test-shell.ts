@@ -109,6 +109,24 @@ test("a shell takes what you type and exits with the code you give it", async ()
   });
 });
 
+test("a shell has no `always`, and typing one is denied rather than downgraded", async () => {
+  // The one question with two answers instead of three. A shell is
+  // unconfined — its own prompt says so — so an "always" would be "always,
+  // anything", and there is nothing in the question to scope it with. Almost
+  // everybody typing `a` here has just typed `a` at a run, so being told what
+  // happened matters more than being quietly given the narrower thing.
+  const asked: string[] = [];
+  const asker: Asker = { ask: async (q) => (asked.push(q), "a") };
+  await withHost({ asker }, async ({ p, open }) => {
+    await assert.rejects(
+      () => open({ cmd: "/bin/sh" }),
+      (e: unknown) => e instanceof CallError && e.reason === "refused" && /a shell has no standing grant/.test(e.message)
+    );
+    assert.match(asked[0]!, /allow once \/ deny {2}\[y\/N\]/);
+    assert.equal(fs.existsSync(p.grants), false, "a denied shell must write nothing down");
+  });
+});
+
 test("a shell with no cmd is the shell you use, on a real pty", async () => {
   // The spec a client actually sends: `pewt shell` and `pewt.shell()` name no
   // program. What it gets is $SHELL, applied by the host, and the host says

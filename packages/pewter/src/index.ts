@@ -22,6 +22,7 @@ export { Channel, apiFor } from "./api.js";
 export * from "./agent.js";
 export * from "./shell.js";
 export * from "./files.js";
+export * from "./grants.js";
 export * from "./tabs.js";
 export * from "./wire.js";
 // The host↔page wire. Not an extension's business — it never sees a command

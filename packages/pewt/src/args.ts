@@ -44,6 +44,17 @@ The allow flags are separate because these are separate capabilities:
 something that was told it could build is not thereby something that can do
 anything, or something that can run a coding agent on your projects.
 
+Answering a host's question with \`a\` records a standing grant in
+.pewter/grants.json, and questions of that shape are not asked again. A grant
+is narrower than any flag: a run's covers one project, an agent's covers one
+adapter in one project, and a shell gets none at all — it is unconfined, so an
+\`always\` there would be \`always, anything\`. \`pewt grants\` lists them and
+\`pewt grants revoke <id>\` takes one back, which the next question feels.
+
+The file is in .pewter/, which a pewter git-ignores, so a grant does not
+travel with a clone. It does travel to a host with no terminal: a background
+\`pewt serve\` cannot ask, but it can still honour what you already answered.
+
 \`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
 stdin, the agent's own messages out on stdout. Whatever is on the other end
 is the ACP client — a tab is the one Pewter ships toward.

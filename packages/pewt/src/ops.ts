@@ -21,9 +21,10 @@
 // table, the same two spellings, the same one place to add the next one. What
 // differs is where the answer comes from, and router.ts is what carries a
 // command to a page and a receipt back.
-import { asTabCommand, bodyLabel, shellSpec, sizeText, type HeldFile, type TabsListing } from "pewter";
+import { asTabCommand, bodyLabel, describeGrant, grantId, shellSpec, sizeText, type Grant, type HeldFile, type TabsListing } from "pewter";
 import { roster, type RosterEntry } from "./agents.js";
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
+import { GrantsError, readGrants, revokeGrant } from "./grants.js";
 import { listRepos, type Project } from "./repos.js";
 import type { Pewter } from "./pewter.js";
 
@@ -194,6 +195,74 @@ export const agentsList = define<Record<string, never>, { agents: RosterEntry[] 
       })
       .join("\n");
   },
+});
+
+// ---- the answers this host remembers
+//
+// A grant is the host's, so these are the host's: it asks the question, so it
+// owns what was answered and it is the only writer of the file (grants.ts).
+//
+// Both are on the same table as everything else, which means an extension can
+// call them. That is not a hole, because neither one widens anything: the only
+// gesture that *makes* a grant is a human typing `a` at the host's terminal
+// (P5 — a rung's enforcer must not benefit from the software asking), and the
+// only thing an extension can do here is read the list or make the host ask
+// again.
+
+/** A grants file that cannot be read or a grant that is not there, in the
+ *  vocabulary the table already speaks. */
+const asOpError = (e: unknown): never => {
+  if (e instanceof GrantsError) throw new OpError(e.code, e.message, e.hint);
+  throw e;
+};
+
+export const grantsList = define<Record<string, never>, { grants: Grant[] }>({
+  method: "grants.list",
+  cli: ["grants"],
+  summary: "the answers this host remembers",
+  fromArgv: noParams,
+  parse: noParams,
+  run: async (p) => {
+    try {
+      return { grants: readGrants(p) };
+    } catch (e) {
+      return asOpError(e);
+    }
+  },
+  render: ({ grants }) => {
+    if (grants.length === 0) {
+      return [
+        "no standing grants — every run and every agent asks on the host's terminal.",
+        "  Answer `a` to one of those questions to record one. A shell never gets one:",
+        "  it is unconfined, so an `always` there would be `always, anything`.",
+      ].join("\n");
+    }
+    // The id is first because it is what `pewt grants revoke` takes, and the
+    // sentence beside it is what the id means — `run/fsio` is short enough to
+    // type and too short to be the only thing a person reads before revoking.
+    const width = Math.max(...grants.map((g) => grantId(g).length));
+    return grants.map((g) => `  ${grantId(g).padEnd(width)}  ${describeGrant(g)}  ·  since ${g.granted.slice(0, 10)}`).join("\n");
+  },
+});
+
+export const grantsRevoke = define<{ id: string }, { id: string; grant: Grant }>({
+  method: "grants.revoke",
+  cli: ["grants", "revoke"],
+  summary: "take back a standing grant",
+  usage: "<id>",
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "grants revoke takes one grant id — `pewt grants` lists them");
+    return { id: argv[0] };
+  },
+  parse: (params) => ({ id: str(params, "id") }),
+  run: async (p, { id }) => {
+    try {
+      return { id, grant: revokeGrant(p, id) };
+    } catch (e) {
+      return asOpError(e);
+    }
+  },
+  render: ({ id, grant }) => `revoked ${id} — ${describeGrant(grant)}\n  the next one asks on the host's terminal again`,
 });
 
 // ---- the operations the page answers
@@ -391,6 +460,8 @@ export const OPERATIONS: Operation[] = [
   reposList,
   extBundle,
   agentsList,
+  grantsList,
+  grantsRevoke,
   tabsList,
   tabsAdd,
   tabsUpdate,
