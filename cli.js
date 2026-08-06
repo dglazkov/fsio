@@ -2,7 +2,7 @@
 // pewt — generated bundle; source: packages/pewt (github.com/dglazkov/fsio)
 
 // dist/cli.js
-import path13 from "node:path";
+import path14 from "node:path";
 
 // dist/ops.js
 import { asTabCommand, bodyLabel, describeGrant, grantId as grantId2, shellSpec, sizeText } from "pewter";
@@ -620,7 +620,7 @@ var filesOpen = definePage({
   // Whether a window was already on it is the half nobody asks for and
   // everybody wants next: `pewt open` twice is one tab, on purpose, and a
   // second id would be the more surprising answer to report.
-  render: ({ id, path: path14, reused }) => `${path14} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
+  render: ({ id, path: path15, reused }) => `${path15} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
 });
 var filesFling = definePage({
   method: "files.fling",
@@ -774,6 +774,7 @@ function byArgv(argv) {
 // dist/args.js
 var COMMANDS = [
   ["serve", "run the host for this pewter"],
+  ["check", "compile extensions/ and say what is wrong"],
   ...COMMAND_LIST.map((c) => [[...c.cli, c.usage].filter(Boolean).join(" "), c.summary])
 ];
 var WIDTH = Math.max(...COMMANDS.map(([spelling]) => spelling.length)) + 2;
@@ -829,9 +830,24 @@ open, fling:
   the file and follows it; \`fling\` is a copy the page owns and keeps working
   when the file, the host and the grant are all gone.
 
+\`pewt check\` compiles \`extensions/\` with this pewter's own TypeScript \u2014 the
+same compiler your editor and your CI use, out of your own node_modules. It is
+the one command with no host in it: the moment you want a typecheck is while
+you are writing, which is not necessarily a moment with a host up, so it reads
+the disk here and answers here. That is also why there is no \`pewt.check()\`
+for an extension to call.
+
+It starts a process and does not ask, unlike \`run\`, \`shell\` and \`agent\`. A
+typechecker reads your extensions and never runs them, which is what \`ext
+bundle\` already does.
+
 Exit codes: 0 done \xB7 1 refused \xB7 2 usage \xB7 3 no host is running \xB7 4 no page is
 open. The last two are separate because they are separate things to do: start
 the host, or open the shell and hand it this folder.
+\`pewt check\` uses the first three differently: 0 is clean, 1 is errors found,
+and 2 is could not check at all \u2014 no compiler, no tsconfig \u2014 because a git
+hook wants "your code is wrong" and "this pewter is not set up" to be two
+things.
 \`pewt run\` exits with the script's own code instead, the way \`npm run\` does \u2014
 so a script that exits 3 and a pewter with no host look alike, and the message
 on stderr is what tells them apart.`;
@@ -889,6 +905,11 @@ function parseArgs(argv) {
     if (rest.length > 1)
       return { kind: "error", message: `serve takes no arguments (got ${rest.slice(1).join(" ")})` };
     return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents };
+  }
+  if (rest[0] === "check") {
+    if (rest.length > 1)
+      return { kind: "error", message: `check takes no arguments (got ${rest.slice(1).join(" ")}) \u2014 it compiles all of extensions/` };
+    return { kind: "check", dir, json };
   }
   const found = byArgv(rest);
   if (!found)
@@ -1920,13 +1941,13 @@ var FsioSession = class {
   /** Resolve when status matches `pred`, reject after timeoutMs. */
   waitForStatus(pred, timeoutMs = 4e3) {
     return new Promise((resolve2, reject) => {
-      const check = (status) => {
+      const check2 = (status) => {
         if (status && pred(status)) {
           cleanup();
           resolve2(status);
         }
       };
-      const off = this.on("status", check);
+      const off = this.on("status", check2);
       const to = setTimeout(() => {
         cleanup();
         reject(new Error("status timeout"));
@@ -1935,7 +1956,7 @@ var FsioSession = class {
         off();
         clearTimeout(to);
       };
-      check(this.#status);
+      check2(this.#status);
     });
   }
   // ---------------- lifecycle
@@ -2033,9 +2054,122 @@ async function call(dir, method, params, opts = {}) {
   }
 }
 
-// dist/node-fs.js
-import fs6 from "node:fs/promises";
+// dist/check.js
+import { execFile } from "node:child_process";
+import fs6 from "node:fs";
 import path5 from "node:path";
+var CheckError = class extends Error {
+  code;
+  hint;
+  constructor(code, message, hint) {
+    super(message);
+    this.code = code;
+    this.hint = hint;
+    this.name = "CheckError";
+  }
+};
+function compilerIn(p) {
+  const dir = path5.join(p.root, "node_modules", "typescript");
+  let pkg;
+  try {
+    pkg = JSON.parse(fs6.readFileSync(path5.join(dir, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  const bin = pkg.bin?.["tsc"];
+  if (typeof bin !== "string")
+    return null;
+  const entry = path5.join(dir, bin);
+  if (!fs6.existsSync(entry))
+    return null;
+  return { entry, version: typeof pkg.version === "string" ? pkg.version : "unknown" };
+}
+async function check(p) {
+  const config = path5.join(p.root, "tsconfig.json");
+  if (!fs6.existsSync(config)) {
+    throw new CheckError("no_tsconfig", "this pewter has no tsconfig.json, so there is nothing describing how to compile it", "a scaffolded pewter has one covering extensions/ \u2014 `npm create pewt` writes it");
+  }
+  if (!fs6.existsSync(p.extensions)) {
+    throw new CheckError("no_extensions", "this pewter has no extensions/ directory", "an extension is a directory under extensions/ with an index.html and a main.ts");
+  }
+  const compiler = compilerIn(p);
+  if (!compiler) {
+    throw new CheckError(
+      "no_compiler",
+      "this pewter has no typescript installed, so there is nothing to check with",
+      // `npm create pewt` installs the compiler, so the folders that reach
+      // this are the hand-made ones — the rig writes its own pewter, and so
+      // does every test here. One sentence is the right size for that.
+      "it runs your pewter's own compiler, the same one your editor uses: npm i -D typescript"
+    );
+  }
+  const t0 = Date.now();
+  const { code, out } = await run(compiler.entry, p.root);
+  const errors = parse(out);
+  return { ok: code === 0, errors, version: compiler.version, ms: Date.now() - t0 };
+}
+function run(entry, cwd) {
+  return new Promise((resolve2, reject) => {
+    execFile(
+      process.execPath,
+      [entry, "--noEmit", "--pretty", "false"],
+      // tsc writes one line per diagnostic and a project with a lot wrong
+      // produces a lot of them; the default 1 MB would truncate mid-line and
+      // this would report fewer errors than there are.
+      { cwd, maxBuffer: 32 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        const code = err?.code;
+        if (err && typeof code !== "number")
+          return reject(new CheckError("compiler_failed", `the compiler did not run: ${err.message}`));
+        resolve2({ code: typeof code === "number" ? code : 0, out: `${stdout}${stderr}` });
+      }
+    );
+  });
+}
+function parse(out) {
+  const placed = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/;
+  const bare = /^error (TS\d+): (.*)$/;
+  const errors = [];
+  for (const line of out.split("\n")) {
+    const at = placed.exec(line.trimEnd());
+    if (at) {
+      errors.push({ file: at[1], line: Number(at[2]), column: Number(at[3]), code: at[4], message: at[5] });
+      continue;
+    }
+    const any = bare.exec(line.trimEnd());
+    if (any)
+      errors.push({ code: any[1], message: any[2] });
+  }
+  return errors;
+}
+function render(result) {
+  if (result.ok) {
+    return `extensions/ compiles \u2014 nothing to fix.
+  typescript ${result.version}, ${result.ms} ms`;
+  }
+  const lines = [];
+  let last = null;
+  for (const e of result.errors) {
+    const where4 = e.file ?? "(this project)";
+    if (where4 !== last) {
+      lines.push(`
+${where4}`);
+      last = where4;
+    }
+    const at = e.line !== void 0 ? `${e.line}:${e.column}`.padEnd(8) : "".padEnd(8);
+    lines.push(`  ${at}${e.code}  ${e.message}`);
+  }
+  const n = result.errors.length;
+  lines.push(`
+${n} error${n === 1 ? "" : "s"} \u2014 typescript ${result.version}, ${result.ms} ms`);
+  if (n === 0)
+    lines.push("(the compiler refused and this could not read its output \u2014 run `npx tsc --noEmit` here to see it)");
+  return lines.join("\n").trimStart();
+}
+
+// dist/node-fs.js
+import fs7 from "node:fs/promises";
+import path6 from "node:path";
 var NamedError = class extends Error {
   constructor(name, msg) {
     super(msg);
@@ -2048,28 +2182,28 @@ var NodeDirectory = class _NodeDirectory {
     this.dirPath = dirPath;
   }
   async getDirectoryHandle(name, options) {
-    const p = path5.join(this.dirPath, name);
+    const p = path6.join(this.dirPath, name);
     if (options?.create) {
-      await fs6.mkdir(p, { recursive: true });
+      await fs7.mkdir(p, { recursive: true });
     } else {
-      const st = await fs6.stat(p).catch(() => null);
+      const st = await fs7.stat(p).catch(() => null);
       if (!st?.isDirectory())
         throw new NamedError("NotFoundError", `no directory ${name}`);
     }
     return new _NodeDirectory(p);
   }
   async getFileHandle(name, options) {
-    const p = path5.join(this.dirPath, name);
-    const st = await fs6.stat(p).catch(() => null);
+    const p = path6.join(this.dirPath, name);
+    const st = await fs7.stat(p).catch(() => null);
     if (!st?.isFile()) {
       if (!options?.create)
         throw new NamedError("NotFoundError", `no file ${name}`);
-      await (await fs6.open(p, "a")).close();
+      await (await fs7.open(p, "a")).close();
     }
     return new NodeFile(p, name);
   }
   async *keys() {
-    yield* await fs6.readdir(this.dirPath);
+    yield* await fs7.readdir(this.dirPath);
   }
 };
 var NodeFile = class {
@@ -2080,12 +2214,12 @@ var NodeFile = class {
     this.name = name;
   }
   async getFile() {
-    const [st, buf] = await Promise.all([fs6.stat(this.filePath), fs6.readFile(this.filePath)]);
+    const [st, buf] = await Promise.all([fs7.stat(this.filePath), fs7.readFile(this.filePath)]);
     return new File([buf], this.name, { lastModified: Math.round(st.mtimeMs) });
   }
   async createWritable() {
     const tmp = `${this.filePath}.${Math.random().toString(36).slice(2, 8)}.crswap`;
-    const fh = await fs6.open(tmp, "w");
+    const fh = await fs7.open(tmp, "w");
     const target = this.filePath;
     return {
       async write(data) {
@@ -2093,7 +2227,7 @@ var NodeFile = class {
       },
       async close() {
         await fh.close();
-        await fs6.rename(tmp, target);
+        await fs7.rename(tmp, target);
       }
     };
   }
@@ -2101,9 +2235,9 @@ var NodeFile = class {
 
 // dist/agent.js
 import { spawn } from "node:child_process";
-import fs7 from "node:fs";
+import fs8 from "node:fs";
 import os from "node:os";
-import path6 from "node:path";
+import path7 from "node:path";
 
 // dist/framing.js
 var MAX_LINE_BYTES = 1 << 20;
@@ -2217,8 +2351,8 @@ function planAgent(p, spec) {
     if (typeof repo !== "string" || !isSegment(repo)) {
       throw new AgentError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
     }
-    cwd = path6.join(p.repos, repo);
-    if (!fs7.existsSync(cwd)) {
+    cwd = path7.join(p.repos, repo);
+    if (!fs8.existsSync(cwd)) {
       throw new AgentError("no_repo", `no project named ${repo} in this pewter`, "`pewt repos` lists them");
     }
   }
@@ -2251,7 +2385,7 @@ function planAgent(p, spec) {
   };
 }
 function where(p, dir) {
-  const rel = path6.relative(p.root, dir);
+  const rel = path7.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 function asAgentSpec(spec) {
@@ -2272,9 +2406,9 @@ function agentEnv(p, from2 = process.env) {
   }
   env["HOME"] ??= os.homedir();
   env["TERM"] = "dumb";
-  const bin = path6.join(p.root, "node_modules", ".bin");
+  const bin = path7.join(p.root, "node_modules", ".bin");
   const current = env["PATH"] ?? "";
-  env["PATH"] = current.includes(bin) ? current : `${bin}${path6.delimiter}${current}`;
+  env["PATH"] = current.includes(bin) ? current : `${bin}${path7.delimiter}${current}`;
   return env;
 }
 function agentKind(p, log) {
@@ -2388,24 +2522,24 @@ function agentKind(p, log) {
 }
 
 // dist/paths.js
-import path7 from "node:path";
+import path8 from "node:path";
 import { safeRelPath } from "pewter";
 function inPewter(typed, root, cwd) {
-  const landed = path7.resolve(cwd, typed);
-  const rel = path7.relative(root, landed);
-  if (rel !== "" && !rel.startsWith("..") && !path7.isAbsolute(rel))
-    return { path: rel.split(path7.sep).join("/") };
-  const here = path7.relative(root, path7.resolve(cwd));
-  const away = here.startsWith("..") || path7.isAbsolute(here);
-  if (away && !path7.isAbsolute(typed) && safeRelPath(typed))
+  const landed = path8.resolve(cwd, typed);
+  const rel = path8.relative(root, landed);
+  if (rel !== "" && !rel.startsWith("..") && !path8.isAbsolute(rel))
+    return { path: rel.split(path8.sep).join("/") };
+  const here = path8.relative(root, path8.resolve(cwd));
+  const away = here.startsWith("..") || path8.isAbsolute(here);
+  if (away && !path8.isAbsolute(typed) && safeRelPath(typed))
     return { path: safeRelPath(typed) };
   return { outside: landed };
 }
 
 // dist/run.js
 import { spawn as spawn2 } from "node:child_process";
-import fs8 from "node:fs";
-import path8 from "node:path";
+import fs9 from "node:fs";
+import path9 from "node:path";
 var RunError = class extends Error {
   code;
   hint;
@@ -2428,15 +2562,15 @@ function planRun(p, spec) {
     if (typeof repo !== "string" || !isSegment2(repo)) {
       throw new RunError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
     }
-    cwd = path8.join(p.repos, repo);
-    if (!fs8.existsSync(cwd)) {
+    cwd = path9.join(p.repos, repo);
+    if (!fs9.existsSync(cwd)) {
       throw new RunError("no_repo", `no project named ${repo} in this pewter`, "`pewt repos` lists them");
     }
   }
-  const manifest = path8.join(cwd, "package.json");
+  const manifest = path9.join(cwd, "package.json");
   let pkg;
   try {
-    pkg = JSON.parse(fs8.readFileSync(manifest, "utf8"));
+    pkg = JSON.parse(fs9.readFileSync(manifest, "utf8"));
   } catch {
     throw new RunError("no_manifest", `${where2(p, cwd)} has no package.json to declare scripts in`, "`pewt run` runs what a project already declares; a project with no package.json declares nothing");
   }
@@ -2456,7 +2590,7 @@ function planRun(p, spec) {
   };
 }
 function where2(p, dir) {
-  const rel = path8.relative(p.root, dir);
+  const rel = path9.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 function asRunSpec(spec) {
@@ -2525,9 +2659,9 @@ function runKind(p, log) {
   };
 }
 function childEnv(p) {
-  const bin = path8.join(p.root, "node_modules", ".bin");
+  const bin = path9.join(p.root, "node_modules", ".bin");
   const current = process.env["PATH"] ?? "";
-  return { ...process.env, PATH: current.includes(bin) ? current : `${bin}${path8.delimiter}${current}` };
+  return { ...process.env, PATH: current.includes(bin) ? current : `${bin}${path9.delimiter}${current}` };
 }
 function stopTree(child, alreadyDone) {
   if (alreadyDone || child.pid === void 0)
@@ -2824,13 +2958,13 @@ async function pipeAgent(dir, spec, streams, opts = {}) {
 }
 
 // dist/serve.js
-import fs12 from "node:fs";
+import fs13 from "node:fs";
 import os2 from "node:os";
-import path12 from "node:path";
+import path13 from "node:path";
 
 // ../host/dist/host-server.js
-import fs9 from "node:fs";
-import path9 from "node:path";
+import fs10 from "node:fs";
+import path10 from "node:path";
 import { spawn as cpSpawn } from "node:child_process";
 var errMsg2 = (e) => e instanceof Error ? e.message : String(e);
 var SILENT_LOGGER = { info() {
@@ -2861,9 +2995,9 @@ var DEFAULT_TRANSCRIPTS = {
 var CLIENT_DIR = "client";
 var CLIENT_DIR_CAP = 8;
 function writeFileAtomic(file, data) {
-  const tmp = path9.join(path9.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
-  fs9.writeFileSync(tmp, data);
-  fs9.renameSync(tmp, file);
+  const tmp = path10.join(path10.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  fs10.writeFileSync(tmp, data);
+  fs10.renameSync(tmp, file);
 }
 function writeJsonAtomic(file, obj) {
   writeFileAtomic(file, JSON.stringify(obj, null, 2));
@@ -2890,21 +3024,21 @@ function canonServices(d) {
 var isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 var echoSafe = (s) => s.replace(new RegExp("\\p{C}", "gu"), "").slice(0, 64);
 var within = (root, p) => {
-  const rel = path9.relative(root, p);
-  return rel === "" || !rel.startsWith("..") && !path9.isAbsolute(rel);
+  const rel = path10.relative(root, p);
+  return rel === "" || !rel.startsWith("..") && !path10.isAbsolute(rel);
 };
 function contains(root, p) {
   if (!within(root, p))
     return false;
   try {
-    return within(fs9.realpathSync(root), fs9.realpathSync(p));
+    return within(fs10.realpathSync(root), fs10.realpathSync(p));
   } catch {
     return true;
   }
 }
 function readJson(file) {
   try {
-    return JSON.parse(fs9.readFileSync(file, "utf8"));
+    return JSON.parse(fs10.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -2980,12 +3114,12 @@ var Session = class {
   constructor(host, id) {
     this.host = host;
     this.id = id;
-    this.dir = path9.join(host.sessionsDir, id);
+    this.dir = path10.join(host.sessionsDir, id);
   }
   /** Current writer's uplink dir (D18): `in/` for epoch 0, `in.<epoch>/`
    *  after an attach takeover. Only this dir is ever consumed. */
   get inDir() {
-    return path9.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
+    return path10.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
   }
   get pty() {
     return this.usesPty ? this.proc : null;
@@ -2994,7 +3128,7 @@ var Session = class {
     return this.usesPty || !this.proc ? null : this.proc;
   }
   segPath(gen) {
-    return path9.join(this.dir, segName(gen));
+    return path10.join(this.dir, segName(gen));
   }
   // Append with open/write/close per call, then bump a rename-committed
   // doorbell file. Rationale (measured, spec/FINDINGS.md F1): on macOS,
@@ -3004,9 +3138,9 @@ var Session = class {
   // appends), so every segment is independently parseable.
   appendFrame(type, payload) {
     const bytes = encodeFrame(type, payload);
-    const fd = fs9.openSync(this.segPath(this.outGen), "a");
-    fs9.writeSync(fd, bytes);
-    fs9.closeSync(fd);
+    const fd = fs10.openSync(this.segPath(this.outGen), "a");
+    fs10.writeSync(fd, bytes);
+    fs10.closeSync(fd);
     this.segBytes += bytes.length;
     this.outTotal += bytes.length;
     if (this.segBytes >= this.host.limits.segMax) {
@@ -3017,7 +3151,7 @@ var Session = class {
       this.gcSegments();
     }
     const sig = { gen: this.outGen, size: this.segBytes, prevFinal: this.prevFinal, total: this.outTotal };
-    writeFileAtomic(path9.join(this.dir, "out.sig"), JSON.stringify(sig));
+    writeFileAtomic(path10.join(this.dir, "out.sig"), JSON.stringify(sig));
     this.checkWindow();
   }
   ack(total) {
@@ -3029,7 +3163,7 @@ var Session = class {
     while (this.doneSegs.length > 0 && this.ackTotal >= this.doneSegs[0].endTotal) {
       const seg = this.doneSegs.shift();
       try {
-        fs9.unlinkSync(this.segPath(seg.gen));
+        fs10.unlinkSync(this.segPath(seg.gen));
       } catch {
       }
     }
@@ -3071,7 +3205,7 @@ var Session = class {
   setStatus(obj) {
     const { detached: _, ...base } = obj;
     this.statusBase = base;
-    writeJsonAtomic(path9.join(this.dir, "status.json"), { t: now(), ...obj });
+    writeJsonAtomic(path10.join(this.dir, "status.json"), { t: now(), ...obj });
   }
   /** Toggle the D17 detached marker in status.json (no-op until the first
    *  setStatus, and when already in the requested state). */
@@ -3195,10 +3329,10 @@ var HostServer = class {
   scanning = false;
   rescan = false;
   constructor(opts) {
-    this.sharedDir = path9.resolve(opts.root);
-    this.fsioDir = path9.join(this.sharedDir, ".fsio");
-    this.sessionsDir = path9.join(this.fsioDir, "sessions");
-    this.transcriptsDir = path9.join(this.fsioDir, "transcripts");
+    this.sharedDir = path10.resolve(opts.root);
+    this.fsioDir = path10.join(this.sharedDir, ".fsio");
+    this.sessionsDir = path10.join(this.fsioDir, "sessions");
+    this.transcriptsDir = path10.join(this.fsioDir, "transcripts");
     this.allowShell = opts.allowShell ?? false;
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
     const ownName = opts.workspaceName;
@@ -3318,12 +3452,12 @@ var HostServer = class {
     }
     this.servicesRev = prev + 1;
     this.servicesBody = body;
-    writeJsonAtomic(path9.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
+    writeJsonAtomic(path10.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
     return true;
   }
   readServices() {
     try {
-      const parsed2 = JSON.parse(fs9.readFileSync(path9.join(this.fsioDir, "services.json"), "utf8"));
+      const parsed2 = JSON.parse(fs10.readFileSync(path10.join(this.fsioDir, "services.json"), "utf8"));
       return parsed2 && typeof parsed2 === "object" ? parsed2 : null;
     } catch {
       return null;
@@ -3354,11 +3488,11 @@ var HostServer = class {
       this.log.warn("no pty (node-pty not installed): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
     if (this.fresh)
       this.cleanServiceDir();
-    fs9.mkdirSync(this.sessionsDir, { recursive: true });
+    fs10.mkdirSync(this.sessionsDir, { recursive: true });
     this.sweepTranscripts();
     this.ensureGitignore();
     const manifest = { protocol: PROTOCOL_VERSION };
-    writeJsonAtomic(path9.join(this.fsioDir, "fsio.json"), manifest);
+    writeJsonAtomic(path10.join(this.fsioDir, "fsio.json"), manifest);
     this.publishServices();
     this.heartbeat();
     this.timers.push(setInterval(() => this.heartbeat(), this.timings.heartbeatMs));
@@ -3425,7 +3559,7 @@ var HostServer = class {
     this.rootWatcher?.close();
     this.rootWatcher = null;
     try {
-      fs9.unlinkSync(path9.join(this.fsioDir, "host.json"));
+      fs10.unlinkSync(path10.join(this.fsioDir, "host.json"));
     } catch {
     }
     return Promise.all(reaps).then(() => {
@@ -3478,10 +3612,10 @@ var HostServer = class {
   // lifecycle), and `takeover` skips the refusal for a killed host whose
   // last beat hasn't gone stale yet.
   refuseLiveHost() {
-    const hostJson = path9.join(this.fsioDir, "host.json");
+    const hostJson = path10.join(this.fsioDir, "host.json");
     let ageMs;
     try {
-      ageMs = Date.now() - fs9.statSync(hostJson).mtimeMs;
+      ageMs = Date.now() - fs10.statSync(hostJson).mtimeMs;
     } catch {
       return;
     }
@@ -3508,24 +3642,24 @@ var HostServer = class {
       return;
     let dir = this.sharedDir;
     for (; ; ) {
-      if (fs9.existsSync(path9.join(dir, ".git")))
+      if (fs10.existsSync(path10.join(dir, ".git")))
         break;
-      const up = path9.dirname(dir);
+      const up = path10.dirname(dir);
       if (up === dir)
         return;
       dir = up;
     }
-    const file = path9.join(this.sharedDir, ".gitignore");
+    const file = path10.join(this.sharedDir, ".gitignore");
     try {
       let text = "";
       try {
-        text = fs9.readFileSync(file, "utf8");
+        text = fs10.readFileSync(file, "utf8");
       } catch {
       }
       if (text.split("\n").some((l) => /^\/?\.fsio\/?$/.test(l.trim())))
         return;
       const sep = text.length > 0 && !text.endsWith("\n") ? "\n" : "";
-      fs9.appendFileSync(file, `${sep}# fsio transport state \u2014 session scrollback lives here
+      fs10.appendFileSync(file, `${sep}# fsio transport state \u2014 session scrollback lives here
 .fsio/
 `);
       this.log.info(`added .fsio/ to ${file} (scrollback must never be committed)`);
@@ -3537,7 +3671,7 @@ var HostServer = class {
     if (!this.watchEnabled)
       return null;
     try {
-      const w = fs9.watch(p, cb);
+      const w = fs10.watch(p, cb);
       w.on("error", () => {
       });
       return w;
@@ -3562,7 +3696,7 @@ var HostServer = class {
       // the service directory; hub clients read `capabilities`.
       servicesRev: this.servicesRev
     };
-    writeJsonAtomic(path9.join(this.fsioDir, "host.json"), info);
+    writeJsonAtomic(path10.join(this.fsioDir, "host.json"), info);
   }
   idleSweep() {
     for (const s of this.sessions.values()) {
@@ -3597,10 +3731,10 @@ var HostServer = class {
   // staleGraceMs — a live reporter flushes at least every 5 s, so a live
   // page's dir never looks stale.
   sweepClientDirs() {
-    const root = path9.join(this.fsioDir, CLIENT_DIR);
+    const root = path10.join(this.fsioDir, CLIENT_DIR);
     let entries;
     try {
-      entries = fs9.readdirSync(root, { withFileTypes: true });
+      entries = fs10.readdirSync(root, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3609,10 +3743,10 @@ var HostServer = class {
       if (!e.isDirectory())
         continue;
       try {
-        const p = path9.join(root, e.name);
-        let mtime2 = fs9.statSync(p).mtimeMs;
+        const p = path10.join(root, e.name);
+        let mtime2 = fs10.statSync(p).mtimeMs;
         try {
-          mtime2 = Math.max(mtime2, fs9.statSync(path9.join(p, "report.json")).mtimeMs);
+          mtime2 = Math.max(mtime2, fs10.statSync(path10.join(p, "report.json")).mtimeMs);
         } catch {
         }
         dirs.push({ name: e.name, mtime: mtime2 });
@@ -3626,7 +3760,7 @@ var HostServer = class {
       if (Date.now() - d.mtime < this.timings.staleGraceMs)
         continue;
       try {
-        fs9.rmSync(path9.join(root, d.name), { recursive: true, force: true });
+        fs10.rmSync(path10.join(root, d.name), { recursive: true, force: true });
         this.log.info(`client dir ${d.name}: over cap (${CLIENT_DIR_CAP}) and stale, removed`);
       } catch {
       }
@@ -3660,26 +3794,26 @@ var HostServer = class {
       return;
     let logs;
     try {
-      logs = fs9.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
+      logs = fs10.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
     } catch {
       return;
     }
     if (!logs.length)
       return;
-    const dir = path9.join(this.transcriptsDir, s.id);
+    const dir = path10.join(this.transcriptsDir, s.id);
     try {
-      fs9.mkdirSync(dir, { recursive: true });
+      fs10.mkdirSync(dir, { recursive: true });
       let bytes = 0;
       for (const name of logs) {
-        const to = path9.join(dir, name);
-        fs9.renameSync(path9.join(s.dir, name), to);
-        bytes += fs9.statSync(to).size;
+        const to = path10.join(dir, name);
+        fs10.renameSync(path10.join(s.dir, name), to);
+        bytes += fs10.statSync(to).size;
       }
       try {
-        fs9.copyFileSync(path9.join(s.dir, "spawn.json"), path9.join(dir, "spawn.json"));
+        fs10.copyFileSync(path10.join(s.dir, "spawn.json"), path10.join(dir, "spawn.json"));
       } catch {
       }
-      const st = readJson(path9.join(s.dir, "status.json"));
+      const st = readJson(path10.join(s.dir, "status.json"));
       const first = OUT_LOG_RE.exec(logs[0]);
       const meta = {
         id: s.id,
@@ -3693,7 +3827,7 @@ var HostServer = class {
         total: s.outTotal,
         bytes
       };
-      writeJsonAtomic(path9.join(dir, "meta.json"), meta);
+      writeJsonAtomic(path10.join(dir, "meta.json"), meta);
       this.log.info(`session ${s.id}: transcript kept (${why}, ${bytes} B)`);
     } catch (e) {
       this.log.warn(`session ${s.id}: transcript not kept: ${errMsg2(e)}`);
@@ -3710,7 +3844,7 @@ var HostServer = class {
       return;
     let entries;
     try {
-      entries = fs9.readdirSync(this.transcriptsDir, { withFileTypes: true });
+      entries = fs10.readdirSync(this.transcriptsDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3718,13 +3852,13 @@ var HostServer = class {
     for (const e of entries) {
       if (!e.isDirectory())
         continue;
-      const dir = path9.join(this.transcriptsDir, e.name);
+      const dir = path10.join(this.transcriptsDir, e.name);
       let bytes = 0;
       let ended = 0;
       try {
-        for (const f of fs9.readdirSync(dir))
-          bytes += fs9.statSync(path9.join(dir, f)).size;
-        ended = readJson(path9.join(dir, "meta.json"))?.ended ?? fs9.statSync(dir).mtimeMs;
+        for (const f of fs10.readdirSync(dir))
+          bytes += fs10.statSync(path10.join(dir, f)).size;
+        ended = readJson(path10.join(dir, "meta.json"))?.ended ?? fs10.statSync(dir).mtimeMs;
       } catch {
         continue;
       }
@@ -3739,7 +3873,7 @@ var HostServer = class {
       if (!over)
         continue;
       try {
-        fs9.rmSync(path9.join(this.transcriptsDir, t.name), { recursive: true, force: true });
+        fs10.rmSync(path10.join(this.transcriptsDir, t.name), { recursive: true, force: true });
         this.log.info(`transcript ${t.name}: removed (${over})`);
       } catch {
       }
@@ -3769,12 +3903,12 @@ var HostServer = class {
   cleanServiceDir(keepClient = false) {
     const keep = /* @__PURE__ */ new Set();
     if (this.transcripts)
-      keep.add(path9.basename(this.transcriptsDir));
+      keep.add(path10.basename(this.transcriptsDir));
     if (keepClient)
       keep.add(CLIENT_DIR);
     let entries;
     try {
-      entries = fs9.readdirSync(this.fsioDir, { withFileTypes: true });
+      entries = fs10.readdirSync(this.fsioDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3782,12 +3916,12 @@ var HostServer = class {
       if (keep.has(e.name))
         continue;
       try {
-        fs9.rmSync(path9.join(this.fsioDir, e.name), { recursive: true, force: true });
+        fs10.rmSync(path10.join(this.fsioDir, e.name), { recursive: true, force: true });
       } catch {
       }
     }
     try {
-      fs9.rmdirSync(this.fsioDir);
+      fs10.rmdirSync(this.fsioDir);
     } catch {
     }
   }
@@ -3815,7 +3949,7 @@ var HostServer = class {
   scanOnce() {
     let entries;
     try {
-      entries = fs9.readdirSync(this.sessionsDir, { withFileTypes: true });
+      entries = fs10.readdirSync(this.sessionsDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3839,7 +3973,7 @@ var HostServer = class {
   adoptSession(id) {
     const s = new Session(this, id);
     this.sessions.set(id, s);
-    const status = readJson(path9.join(s.dir, "status.json"));
+    const status = readJson(path10.join(s.dir, "status.json"));
     if (status && status.state === "exited") {
       s.done = true;
       if (now() - (status.t ?? 0) > this.timings.staleGraceMs)
@@ -3851,7 +3985,7 @@ var HostServer = class {
     this.log.info(`session ${id}: adopted`);
   }
   tryStart(s) {
-    const raw = readJson(path9.join(s.dir, "spawn.json"));
+    const raw = readJson(path10.join(s.dir, "spawn.json"));
     if (!raw)
       return;
     if (raw.jsonrpc === "2.0" && raw.method === "spawn") {
@@ -3860,7 +3994,7 @@ var HostServer = class {
     } else {
       s.spawn = raw;
     }
-    const prior = readJson(path9.join(s.dir, "status.json"));
+    const prior = readJson(path10.join(s.dir, "status.json"));
     if (prior?.writer)
       s.epoch = prior.writer.epoch;
     s.started = true;
@@ -4012,7 +4146,7 @@ var HostServer = class {
     const name = r.name ?? asked;
     if (name)
       info.workspace = s.workspace = name;
-    return path9.resolve(r.root);
+    return path10.resolve(r.root);
   }
   /** The exact thing a shell spec would run — shared by the policy hook's
    *  info and startShell so the judged command can't drift from the
@@ -4023,7 +4157,7 @@ var HostServer = class {
     return {
       cmd: spec.cmd || process.env.SHELL || "/bin/bash",
       args: spec.args ?? [],
-      cwd: spec.cwd ? path9.resolve(root, spec.cwd) : root,
+      cwd: spec.cwd ? path10.resolve(root, spec.cwd) : root,
       pty: !!this.ptyMod && spec.pty !== false
     };
   }
@@ -4107,17 +4241,17 @@ var HostServer = class {
   processAttach(s) {
     let names;
     try {
-      names = fs9.readdirSync(s.dir);
+      names = fs10.readdirSync(s.dir);
     } catch {
       return;
     }
     for (const name of names.sort()) {
       if (!/^attach\.[A-Za-z0-9_-]+\.json$/.test(name))
         continue;
-      const p = path9.join(s.dir, name);
+      const p = path10.join(s.dir, name);
       const raw = readJson(p);
       try {
-        fs9.unlinkSync(p);
+        fs10.unlinkSync(p);
       } catch {
         continue;
       }
@@ -4174,7 +4308,7 @@ var HostServer = class {
     s.epoch += 1;
     s.nextInSeq = null;
     try {
-      fs9.mkdirSync(s.inDir, { recursive: true });
+      fs10.mkdirSync(s.inDir, { recursive: true });
     } catch {
     }
     s.watchers.push(this.watchDir(s.inDir, () => this.scheduleScan()));
@@ -4198,7 +4332,7 @@ var HostServer = class {
   processIncoming(s) {
     let names;
     try {
-      names = fs9.readdirSync(s.inDir);
+      names = fs10.readdirSync(s.inDir);
     } catch {
       return;
     }
@@ -4216,13 +4350,13 @@ var HostServer = class {
       s.nextInSeq = Math.min(...chunks.keys());
     while (chunks.has(s.nextInSeq)) {
       const chunk = chunks.get(s.nextInSeq);
-      const p = path9.join(s.inDir, chunk.name);
+      const p = path10.join(s.inDir, chunk.name);
       let bytes;
       if (chunk.data !== void 0) {
         bytes = b64urlDecode(chunk.data);
       } else {
         try {
-          bytes = fs9.readFileSync(p);
+          bytes = fs10.readFileSync(p);
         } catch {
           return;
         }
@@ -4244,9 +4378,9 @@ var HostServer = class {
       for (const f of frames)
         this.handleFrame(s, f, t1);
       if (chunk.data !== void 0)
-        fs9.rmdirSync(p);
+        fs10.rmdirSync(p);
       else
-        fs9.unlinkSync(p);
+        fs10.unlinkSync(p);
       s.nextInSeq++;
     }
   }
@@ -4369,7 +4503,7 @@ var HostServer = class {
   removeSessionDir(s, why) {
     try {
       this.archiveTranscript(s, why);
-      fs9.rmSync(s.dir, { recursive: true, force: true });
+      fs10.rmSync(s.dir, { recursive: true, force: true });
       this.sessions.delete(s.id);
       this.log.info(`session ${s.id}: removed (${why})`);
     } catch (e) {
@@ -4383,8 +4517,8 @@ import readline from "node:readline/promises";
 import { describeGrant as describeGrant2, grantId as grantId3 } from "pewter";
 
 // dist/shell.js
-import fs10 from "node:fs";
-import path10 from "node:path";
+import fs11 from "node:fs";
+import path11 from "node:path";
 import { repoOfCwd } from "pewter";
 var ShellError = class extends Error {
   code;
@@ -4402,7 +4536,7 @@ function planShell(p, spec, resolved) {
   const repo = repoOfCwd(asked);
   let stat;
   try {
-    stat = fs10.statSync(cwd);
+    stat = fs11.statSync(cwd);
   } catch {
     throw new ShellError(repo ? "no_repo" : "no_cwd", repo ? `no project named ${repo} in this pewter` : `${where3(p, cwd)} is not a directory in this pewter`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
   }
@@ -4422,7 +4556,7 @@ function planShell(p, spec, resolved) {
   };
 }
 function where3(p, dir) {
-  const rel = path10.relative(p.root, dir);
+  const rel = path11.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 
@@ -4764,9 +4898,9 @@ function asRpcError(e, method, log) {
 }
 
 // dist/open.js
-import { execFile } from "node:child_process";
-import fs11 from "node:fs";
-import path11 from "node:path";
+import { execFile as execFile2 } from "node:child_process";
+import fs12 from "node:fs";
+import path12 from "node:path";
 var CHROMIUMS = [
   { id: "com.google.Chrome", name: "Google Chrome" },
   { id: "com.microsoft.edgemac", name: "Microsoft Edge" },
@@ -4779,7 +4913,7 @@ async function openInChromium(url, platform = process.platform) {
   }
   for (const b of CHROMIUMS) {
     const ok = await new Promise((resolve2) => {
-      execFile("open", ["-b", b.id, url], { timeout: 1e4 }, (err) => resolve2(!err));
+      execFile2("open", ["-b", b.id, url], { timeout: 1e4 }, (err) => resolve2(!err));
     });
     if (ok)
       return { opened: true, browser: b.name };
@@ -4788,7 +4922,7 @@ async function openInChromium(url, platform = process.platform) {
 }
 function hasClientDirs(fsioDir) {
   try {
-    return fs11.readdirSync(path11.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
+    return fs12.readdirSync(path12.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
   } catch {
     return false;
   }
@@ -4814,7 +4948,7 @@ async function serve(p, opts = {}) {
   } catch {
     throw new Error(`--url ${JSON.stringify(base)} is not a URL`);
   }
-  const tmpReal = fs12.realpathSync(os2.tmpdir());
+  const tmpReal = fs13.realpathSync(os2.tmpdir());
   if (p.root.startsWith("/private/tmp") || p.root.startsWith(tmpReal)) {
     throw new Error(`refusing to serve a pewter under a temp dir (${p.root}) \u2014 Chrome's file observers break there (F9)`);
   }
@@ -4893,7 +5027,7 @@ function grantLine(p) {
 function countExtensions(p) {
   let names;
   try {
-    names = fs12.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
+    names = fs13.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
   } catch {
     return "no extensions/ directory \u2014 the page will have nothing to show.";
   }
@@ -4904,8 +5038,8 @@ async function stop(server, p, signal) {
 ${signal} \u2014 closing sessions\u2026`);
   await server.close();
   server.cleanServiceDir(true);
-  const clientDir = path12.join(p.fsio, "client");
-  const reports = fs12.existsSync(clientDir) ? fs12.readdirSync(clientDir).length : 0;
+  const clientDir = path13.join(p.fsio, "client");
+  const reports = fs13.existsSync(clientDir) ? fs13.readdirSync(clientDir).length : 0;
   console.log(reports ? `done; .fsio swept, ${reports} page report${reports === 1 ? "" : "s"} kept.` : "done; .fsio removed.");
 }
 
@@ -4970,7 +5104,24 @@ var pewter = (() => {
     process.exit(2);
   }
 })();
-if (parsed.kind === "serve") {
+if (parsed.kind === "check") {
+  try {
+    const result = await check(pewter);
+    console.log(parsed.json ? JSON.stringify(result, null, 2) : render(result));
+    process.exit(result.ok ? 0 : 1);
+  } catch (e) {
+    if (!(e instanceof CheckError))
+      throw e;
+    if (parsed.json) {
+      console.log(JSON.stringify({ reason: "cannot_check", code: e.code, message: e.message, hint: e.hint }, null, 2));
+    } else {
+      console.error(`pewt: ${e.message}`);
+      if (e.hint)
+        console.error(`  ${e.hint}`);
+    }
+    process.exit(2);
+  }
+} else if (parsed.kind === "serve") {
   const server = await serve(pewter, {
     ...parsed.url ? { url: parsed.url } : {},
     open: parsed.open,
@@ -5012,7 +5163,7 @@ if (parsed.kind === "serve") {
     }
     if (parsed.method === "shell") {
       const cwd = typeof parsed.spec["cwd"] === "string" ? parsed.spec["cwd"] : ".";
-      const where4 = path13.join(pewter.name, cwd);
+      const where4 = path14.join(pewter.name, cwd);
       console.log(parsed.json ? JSON.stringify({ dryRun: true, cwd, where: where4 }, null, 2) : `would open  a shell
        cwd  ${where4}/
 
