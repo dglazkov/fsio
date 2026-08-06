@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -96,6 +96,13 @@ document.getElementById("tabbed")!.textContent = \`\${id} · \${tabs.length} ope
 const view = await pewt.open("notes.md");
 const { files } = await pewt.files.list();
 document.getElementById("filed")!.textContent = \`\${view.path} → \${view.id} · \${files.length} held\`;
+
+// What the host will start without asking. An extension can read this and take
+// one back; it cannot make one, because the only gesture that makes a grant is
+// a human typing at the host's terminal (P5). So this is the one operation
+// where the sandbox is not the interesting boundary — the terminal is.
+const { grants } = await pewt.grants.list();
+document.getElementById("granted")!.textContent = grants.map((g) => \`\${g.kind}/\${g.repo ?? "."}\`).join(", ");
 
 document.title = "answered";
 `
@@ -172,6 +179,10 @@ const PARENT = `<!doctype html>
         post({ ok: true, result: { files: [] } });
         return;
       }
+      if (call.method === "grants.list") {
+        post({ ok: true, result: { grants: [{ kind: "run", repo: "site", granted: "2026-08-06T12:06:02.000Z" }] } });
+        return;
+      }
       if (call.method === "agent") {
         post({ type: "pewt:event", event: { started: true } });
         return;
@@ -237,6 +248,7 @@ let left = "";
 let acp = "";
 let tabbed = "";
 let filed = "";
+let granted = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -256,6 +268,7 @@ try {
   acp = await frame.locator("#acp").textContent();
   tabbed = await frame.locator("#tabbed").textContent();
   filed = await frame.locator("#filed").textContent();
+  granted = await frame.locator("#granted").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -279,6 +292,7 @@ const checks = [
   ["and read back a strip holding it", tabbed === "tab-1 · 1 open"],
   ["an extension asked for a file by path, and only the path crossed", result.calls.includes("files.open") && result.calls.includes("files.list")],
   ["and the tab it got back names the file", filed === "notes.md → tab-2 · 0 held"],
+  ["an extension read what the host will start without asking", result.calls.includes("grants.list") && granted === "run/site"],
   ["nothing threw in the page", errors.length === 0],
 ];
 
@@ -290,7 +304,7 @@ for (const [what, ok] of checks) {
 }
 if (failed)
   console.log(
-    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  tabbed: ${JSON.stringify(tabbed)}\n  filed: ${JSON.stringify(filed)}\n  errors: ${errors.join(" · ")}`
+    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  tabbed: ${JSON.stringify(tabbed)}\n  filed: ${JSON.stringify(filed)}\n  granted: ${JSON.stringify(granted)}\n  errors: ${errors.join(" · ")}`
   );
 console.log();
 

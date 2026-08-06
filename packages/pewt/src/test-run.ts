@@ -16,6 +16,7 @@ import test from "node:test";
 import { HostServer } from "@fsio/host";
 import { spawnGate, type Asker } from "./ask.js";
 import { CallError } from "./call.js";
+import { recordGrant, revokeGrant } from "./grants.js";
 import { pewtKind } from "./kind.js";
 import { Router } from "./router.js";
 import { NodeDirectory } from "./node-fs.js";
@@ -167,6 +168,96 @@ test("--allow-runs answers yes without a terminal", async () => {
     const { outcome, out } = await run({ script: "build" });
     assert.equal(outcome.exitCode, 0);
     assert.ok(out.includes("built"));
+  });
+});
+
+test("`a` records a standing grant, and it covers that project and no other", async () => {
+  // The third answer, end to end: one question, and then the host stops
+  // asking about that project. The grant is the project rather than the
+  // script (grants.ts), so a second script in the same package.json is
+  // covered — and a different project is not.
+  const asked: string[] = [];
+  // "a" once, "n" ever after: a later question is a failed run, which is how
+  // "it did not ask" is measured rather than asserted.
+  const asker: Asker = {
+    ask: async (q) => {
+      asked.push(q);
+      return asked.length === 1 ? "a" : "n";
+    },
+  };
+  await withHost({ scripts: { build: "node -e 0", test: "node -e 0" }, asker }, async ({ p, run }) => {
+    assert.equal((await run({ script: "build" })).outcome.exitCode, 0);
+    assert.equal(asked.length, 1);
+    assert.match(asked[0]!, /allow once \/ allow always \/ deny {2}\[o\/a\/D\]/);
+
+    // The same project, a different script. Not asked about.
+    assert.equal((await run({ script: "test" })).outcome.exitCode, 0);
+    assert.equal(asked.length, 1);
+
+    assert.deepEqual(JSON.parse(fs.readFileSync(p.grants, "utf8")).grants.map((g: { kind: string; repo?: string }) => [g.kind, g.repo]), [["run", undefined]]);
+
+    // A different project is a different grant, so this one is asked about.
+    const site = path.join(p.repos, "site");
+    fs.mkdirSync(site, { recursive: true });
+    fs.writeFileSync(path.join(site, "package.json"), JSON.stringify({ name: "site", scripts: { build: "node -e 0" } }));
+    await assert.rejects(
+      () => run({ script: "build", repo: "site" }),
+      (e: unknown) => e instanceof CallError && e.reason === "refused" && /denied at the host's terminal/.test(e.message)
+    );
+    assert.equal(asked.length, 2);
+  });
+});
+
+test("a standing grant survives the host, and `grants revoke` makes it ask again", async () => {
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pewt-grant-"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "p", pewter: {}, scripts: { build: "node -e 0" } }));
+  const p = pewterAt(root)!;
+  try {
+    // Written by a host that is already gone — the file is the memory, and
+    // nothing about it belongs to the process that asked.
+    recordGrant(p, { kind: "run" }, "2026-08-06T12:06:02.000Z");
+
+    const asked: string[] = [];
+    const asker: Asker = { ask: async (q) => (asked.push(q), "n") };
+    const host = new HostServer({
+      root,
+      logger: silent,
+      pty: false,
+      timings: { heartbeatMs: 100, safetyPollMs: 25 },
+      onSpawnRequest: spawnGate(p, { asker }, silent),
+    });
+    host.registerKind("run", runKind(p, silent));
+    await host.start();
+    const dir = new NodeDirectory(root);
+    try {
+      const first = await runOnHost(dir, "run", { script: "build" }, { pollMs: 5 });
+      assert.equal(first.exitCode, 0);
+      assert.equal(asked.length, 0, "a host that started with a grant on disk must not ask");
+
+      // Read at every question rather than cached, so this lands on the very
+      // next one instead of on the next host.
+      revokeGrant(p, "run/.");
+      await assert.rejects(
+        () => runOnHost(dir, "run", { script: "build" }, { pollMs: 5 }),
+        (e: unknown) => e instanceof CallError && e.reason === "refused" && /denied at the host's terminal/.test(e.message)
+      );
+      assert.equal(asked.length, 1);
+    } finally {
+      await host.close();
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a grants file nobody can read starts nothing", async () => {
+  await withHost({ scripts: { build: "node -e 0" } }, async ({ p, run }) => {
+    fs.mkdirSync(p.state, { recursive: true });
+    fs.writeFileSync(p.grants, "{ not json");
+    await assert.rejects(
+      () => run({ script: "build" }),
+      (e: unknown) => e instanceof CallError && e.reason === "refused" && /grants\.json is not JSON/.test(e.message)
+    );
   });
 });
 

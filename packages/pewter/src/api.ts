@@ -10,6 +10,7 @@
 // a refusal arrives as a thrown error carrying the operation's own code.
 import { agentSpec, type Agent, type AgentEntry, type AgentOptions } from "./agent.js";
 import type { HeldFile } from "./files.js";
+import type { Grant } from "./grants.js";
 import { shellSpec, type Shell, type ShellOptions, type ShellResult } from "./shell.js";
 import { PAGE_METHODS, type Tab, type TabsListing, type TabsState } from "./tabs.js";
 import { asAnswer, asEvent, send, WIRE_VERSION, type ApiError, type Call } from "./wire.js";
@@ -120,6 +121,18 @@ export interface PewtApi {
    *  permission question a screen somebody designed rather than a redraw in
    *  a terminal nobody can style. */
   agent(options?: AgentOptions): Promise<Agent>;
+  grants: {
+    /** What the host will start without asking, because somebody at its
+     *  terminal answered "always" once. Reading it is how an extension can
+     *  say "this will ask you" before it makes you wait for a question. */
+    list(): Promise<{ grants: Grant[] }>;
+    /** Take one back, so the next one asks again.
+     *
+     *  There is no `add` here and there will not be. A grant is made by a
+     *  human typing at the host's terminal and by nothing else (P5), so the
+     *  only direction this API moves is narrower. */
+    revoke(params: { id: string }): Promise<{ id: string; grant: Grant }>;
+  };
   /** The tabs this page is holding.
    *
    *  The first operations the *page* answers rather than the host. Everything
@@ -219,7 +232,7 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export const METHODS = ["repos.list", "ext.bundle", "agents.list", "run", "shell", "agent", ...PAGE_METHODS] as const;
+export const METHODS = ["repos.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS] as const;
 
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
@@ -402,6 +415,10 @@ export function apiFor(channel: Channel): PewtApi {
       };
       answer.catch((e: unknown) => failed?.(e instanceof Error ? e : new Error(String(e))));
       return running;
+    },
+    grants: {
+      list: () => channel.call("grants.list") as Promise<{ grants: Grant[] }>,
+      revoke: (params) => channel.call("grants.revoke", params) as Promise<{ id: string; grant: Grant }>,
     },
     // The page's own, and they go over the same channel as everything else:
     // the shell answers these itself instead of forwarding them to the host,

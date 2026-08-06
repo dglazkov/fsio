@@ -103,7 +103,9 @@ export function scaffold(opts: ScaffoldOptions): string[] {
 # you have worked on.
 repos/
 
-# Regenerated. Delete either and the next \`pewt serve\` rebuilds it.
+# The channel and this pewter's own state. \`.pewter/\` also holds the answers
+# the host remembers (grants.json), which is a second reason it is here: what
+# you allowed on your machine is not something a clone of this should inherit.
 .fsio/
 .pewter/
 

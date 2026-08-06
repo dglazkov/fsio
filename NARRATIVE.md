@@ -420,7 +420,7 @@ RUNNING     run · shell · agent · agents
 THE PAGE    tabs {list, add, update, close, focus} · open · fling
             files {list, show, drop}
 EXTENDING   ext {new, rm, bundle}
-THE RECORD  sessions {log, replay} · grants {revoke}
+THE RECORD  grants {list, revoke} · sessions {log, replay}   (sessions not built)
 SHARING     publish · share · join · workspaces   (not built)
 ```
 
@@ -490,12 +490,13 @@ The host also launches processes. `pewt run`, `pewt shell`, and `pewt
 agent` all start something, and the host asks first:
 
 ```
-12:06:02  ▸ run build --repo fsio                       from the page
+12:06:02  ▸ run build --repo fsio                   from the page
 12:06:02    ?   npm run build
 12:06:02        vite build
-12:06:02        cwd repos/fsio
+12:06:02        cwd repos/fsio/
 12:06:02      allow once / allow always / deny  [o/a/D] a
 12:06:02    ✓ standing grant recorded → .pewter/grants.json
+12:06:02      any run in fsio — take it back with `pewt grants revoke run/fsio`
 12:06:09    ✓ exit 0 · 41 lines of output
 ```
 
@@ -503,8 +504,36 @@ The question appears in the terminal, not in the page. The page is the
 thing asking for permission, so the page cannot be the thing granting it.
 
 Only commands that launch a process prompt. Sending a tab title does not.
-Answers are recorded in `.pewter/grants.json`; `pewt grants` lists them and
-`pewt grants revoke` takes one back.
+
+### What "always" remembers
+
+`allow always` writes a standing grant to `.pewter/grants.json`, and the
+next question of that shape is not asked. What a grant covers is deliberately
+narrower than the question that produced it:
+
+| You answered `a` to | The grant covers | Called |
+|---|---|---|
+| `run build --repo fsio` | any run in `fsio` | `run/fsio` |
+| `agent pi-acp --repo fsio` | `pi-acp` in `fsio` | `agent/pi-acp/fsio` |
+| `shell` | nothing — there is no third answer | — |
+
+A run's grant is the project rather than the script, because a script is a
+line in that project's `package.json` and the next one is a line away: what
+you are trusting is the project. An agent's names the adapter as well,
+because the line you read before answering was whether *that* adapter asks
+before it edits, and carrying that answer over to different software would
+answer a question nobody asked.
+
+A shell has no standing grant at all. It is unconfined — its own question
+says so — so an `always` would mean "always, anything", and there is nothing
+in the question to scope it with. Typing `a` there is denied and told why,
+rather than quietly treated as `allow once`.
+
+`pewt grants` lists what this pewter remembers and `pewt grants revoke <id>`
+takes one back, which the very next question feels: the host reads the file
+each time it asks rather than holding a copy. `.pewter/` is git-ignored, so a
+grant does not travel with a clone, and deleting the file costs you the
+questions again and nothing else.
 
 A host with no terminal in front of it — started by a script, by CI, or in
 the background — cannot ask, so it cannot allow anything it was not told
@@ -513,6 +542,11 @@ that telling, and they are three flags rather than one: something told it
 could build a project has not been told it can open a terminal, or run a
 coding agent on your work. All three are meant for hosts nobody is sitting
 at.
+
+A standing grant is the other kind of telling in advance, and it applies to
+those hosts too: a background `pewt serve` cannot ask, but it still honours
+what you already answered. That is what makes a grant worth having over a
+flag — it is narrower, and it costs a keystroke rather than a restart.
 
 The host is not optional. While it is down the page has no session, so
 browsing files and running commands both stop, and any process the host
