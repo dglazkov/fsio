@@ -185,6 +185,32 @@ and it is why the extensions that arrive with a new pewter are written
 exactly the way yours are. `extensions/repos/` is both the proof that
 there are no built-ins and the worked example of how to write one.
 
+```
+$ pewt check
+
+extensions/repos/main.ts
+  33:7    TS2322  Type 'number' is not assignable to type 'string'.
+  34:18   TS2345  Argument of type 'string' is not assignable to parameter of type 'Node'.
+
+2 errors — typescript 7.0.2, 55 ms
+```
+
+The compiler is your pewter's own — the one in its `node_modules`, restored
+by `git clone && npm i` along with everything else, and the one your editor
+picks up when you open the folder. Nothing carries a second copy that could
+disagree with it.
+
+It is also the one command with no host in it. Everything else in `pewt` is a
+call over the folder, and this reads the disk where you typed it, because the
+moment you want a typecheck is while you are writing rather than while a
+browser is attached. `pewt check` in a git hook works with nothing running.
+For the same reason there is no `pewt.check()` for an extension to call: the
+API is the host's table, and this is not on it.
+
+Exit codes say which kind of no: `0` clean, `1` the compiler found errors,
+`2` there was nothing to check with. The last is separate because "your code
+is wrong" and "this pewter has no compiler" need different fixes.
+
 ## Running things on your machine
 
 An extension runs in a browser tab. It cannot compile anything, touch git,
@@ -414,7 +440,7 @@ catalog of what this page owns, and `pewt files show` puts one back in a tab.
 there is nothing to run.
 
 ```
-PEWTER      serve · check · doctor · api
+PEWTER      serve · check · doctor · api   (doctor, api not built)
 PROJECTS    repos {new, clone, link, rm} · template {new, apply}
 RUNNING     run · shell · agent · agents
 THE PAGE    tabs {list, add, update, close, focus} · open · fling

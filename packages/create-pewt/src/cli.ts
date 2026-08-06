@@ -83,11 +83,12 @@ if (git) {
 }
 
 if (install) {
-  // Just `npm install`, on a `package.json` that declares what it needs.
-  // This used to make symlinks by hand, because neither package had
-  // published; the symlinks were undeclared, npm pruned them on the next
-  // install of anything, and the pewter broke silently (#181). Nothing here
-  // is special any more, which is the point.
+  // Just `npm install`, on a `package.json` that declares what it needs:
+  // `pewt` and `pewter` (#181) and the `typescript` that `pewt check` runs.
+  // This used to make symlinks by hand and install afterwards, in that order
+  // and for a reason — npm prunes what nothing declares, so installing over
+  // the links broke the pewter. Neither the links nor the ordering rule
+  // survives, which is the point: there is one step here now.
   const r = spawnSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: root, stdio: "inherit" });
   if (r.status !== 0) {
     console.error(`\ncreate-pewt: npm install failed in ${root}.`);
