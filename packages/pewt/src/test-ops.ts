@@ -106,10 +106,14 @@ test("the page's operations are in the same table, and say the page answers them
   // table, the spellings and the parameter check are the host's own. What
   // differs is one field, and the kind reads it to decide where to send the
   // question (packages/pewt/src/kind.ts).
-  const page = OPERATIONS.filter((o) => o.method.startsWith("tabs."));
-  assert.equal(page.length, 5);
-  for (const op of page) assert.equal(hostAnswers(op), false);
-  for (const op of OPERATIONS.filter((o) => !o.method.startsWith("tabs."))) assert.equal(hostAnswers(op), true);
+  //
+  // Two families of them now: a tab is not on disk anywhere, and a flung copy
+  // is in the browser's storage, which the machine cannot see either.
+  const isPage = (method: string): boolean => method.startsWith("tabs.") || method.startsWith("files.");
+  const page = OPERATIONS.filter((o) => isPage(o.method));
+  assert.equal(page.length, 10);
+  for (const op of page) assert.equal(hostAnswers(op), false, `${op.method} answers on the host`);
+  for (const op of OPERATIONS.filter((o) => !isPage(o.method))) assert.equal(hostAnswers(op), true, `${op.method} does not`);
 });
 
 test("pewt tabs lists them, and its verbs are longer matches", () => {

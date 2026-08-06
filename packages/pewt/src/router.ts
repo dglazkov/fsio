@@ -3,10 +3,12 @@
 //
 // Pewter's operations split by who answers them. `repos`, `ext`, `run`,
 // `shell` and `agent` are the host's, because the answer is on the machine.
-// `tabs` is the page's, because a tab is not on disk anywhere — it exists
-// because a browser is open. Until now every operation was the first kind and
-// the host could answer everything by itself; this is what changes with the
-// second kind, and it is the piece NARRATIVE.md never spells out.
+// `tabs` and `files` are the page's: a tab is not on disk anywhere — it exists
+// because a browser is open — and a flung copy is in that browser's storage,
+// which the machine cannot see either. Until #174 every operation was the
+// first kind and the host could answer everything by itself; this is what
+// changes with the second kind, and it is the piece NARRATIVE.md never spells
+// out.
 //
 // Deliberately knows nothing about fsio. It takes a "page port" — something
 // that can be sent a command — and hands back promises, so the routing is

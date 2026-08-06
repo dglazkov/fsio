@@ -76,13 +76,28 @@ async function attachPage(root: string): Promise<FakePage> {
   const session = client.createSession({ kind: "pewt", client: "fake-page", page: true }, { pollMs: 5 });
   let state = noTabs();
   let n = 0;
+  let f = 0;
+  /** What the page learns by opening the file, which here is `fs` and in a
+   *  browser is the grant. Both commands refuse a path with nothing at it, so
+   *  a typo is an answer rather than a tab pointing at nothing. */
+  const measure = (rel: string): { type: string; size: number } => {
+    const stat = fs.statSync(path.join(root, rel), { throwIfNoEntry: false });
+    if (!stat?.isFile()) throw new TabError("file_not_found", `no file at ${JSON.stringify(rel)} in this pewter`, "paths are relative to the pewter");
+    return { type: "", size: stat.size };
+  };
   session.on("data", (bytes) => {
     const command = asCommand(bytes);
     if (!command) return;
     try {
       const parsed = asTabCommand(command.method, command.params);
       if (!parsed) throw new TabError("bad_params", `${command.method} did not get the parameters it needs`);
-      const applied = applyTabs(state, parsed, { makeId: () => `tab-${++n}` });
+      if (parsed.method === "files.open") measure(parsed.params.path);
+      const applied = applyTabs(state, parsed, {
+        makeId: () => `tab-${++n}`,
+        makeFileId: () => `file-${++f}`,
+        now: () => 1700000000000,
+        ...(parsed.method === "files.fling" ? { flung: measure(parsed.params.path) } : {}),
+      });
       state = applied.state;
       session.sendData(encodeControl(receipt(command.id, applied.result)));
     } catch (e) {
@@ -162,8 +177,63 @@ test("a tab command typed in a terminal is answered by the page", async () => {
     assert.deepEqual(added, { id: "tab-1", name: "repos", title: "repos", active: true });
     // The page is where it landed — not the host, which never learns what the
     // answer meant.
-    assert.deepEqual(open.state(), { tabs: [{ id: "tab-1", title: "repos", body: { kind: "extension", name: "repos" } }], activeId: "tab-1" });
-    assert.deepEqual(await call("tabs.list"), open.state());
+    assert.deepEqual(open.state(), {
+      tabs: [{ id: "tab-1", title: "repos", body: { kind: "extension", name: "repos" } }],
+      activeId: "tab-1",
+      held: [],
+    });
+    const { tabs, activeId } = open.state();
+    assert.deepEqual(await call("tabs.list"), { tabs, activeId });
+  });
+});
+
+test("open and fling travel to the page, and only the path travels", async () => {
+  await withHost(async ({ p, call, page }) => {
+    const open = await page();
+    fs.writeFileSync(path.join(p.root, "notes.md"), "# hello\n");
+
+    // A window. What went down the session is a path, and the page is the
+    // party that read the file — which is why neither of these can name a file
+    // outside the folder, and why the size never rode the wire.
+    const opened = (await call("files.open", { path: "notes.md" })) as { id: string; path: string; reused: boolean };
+    assert.deepEqual(opened, { id: "tab-1", path: "notes.md", title: "notes.md", active: true, reused: false });
+    assert.deepEqual(open.state().tabs[0]!.body, { kind: "file", path: "notes.md" });
+
+    // A copy. The catalog is the page's and the host never learns what is in
+    // it — `pewt files` is a question that goes the same way this one did.
+    const flung = (await call("files.fling", { path: "notes.md" })) as { fileId: string; size: number };
+    assert.equal(flung.fileId, "file-1");
+    assert.equal(flung.size, 8);
+    assert.deepEqual(await call("files.list"), { files: open.state().held });
+
+    // And dropping it closes the tab that was showing it, which is the answer
+    // a terminal gets rather than a tab that vanished with no line about it.
+    assert.deepEqual(await call("files.drop", { id: "file-1" }), { id: "file-1", name: "notes.md", closedTabs: 1, activeId: "tab-1" });
+  });
+});
+
+test("a path outside the pewter never becomes a command", async () => {
+  await withHost(async ({ call, page }) => {
+    await page();
+    // Refused by the host's own parameter check, before anything is forwarded:
+    // the page's reach is exactly the folder it was granted, and the check for
+    // that is shared by both ends (packages/pewter/src/tabs.ts).
+    for (const path of ["../secrets", "/etc/passwd"]) {
+      await assert.rejects(
+        () => call("files.open", { path }),
+        (e: unknown) => e instanceof CallError && e.reason === "refused" && e.code === "bad_params" && /climbs out/.test(e.hint ?? "")
+      );
+    }
+  });
+});
+
+test("a file that is not there is the page's refusal, not a tab pointing at nothing", async () => {
+  await withHost(async ({ call, page }) => {
+    await page();
+    await assert.rejects(
+      () => call("files.open", { path: "nope.md" }),
+      (e: unknown) => e instanceof CallError && e.reason === "refused" && e.code === "file_not_found"
+    );
   });
 });
 

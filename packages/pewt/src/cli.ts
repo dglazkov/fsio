@@ -28,6 +28,7 @@ import { call, CallError } from "./call.js";
 import { NodeDirectory } from "./node-fs.js";
 import { byMethod } from "./ops.js";
 import { planAgent, AgentError, type AgentSpec } from "./agent.js";
+import { inPewter } from "./paths.js";
 import { findPewter, NotAPewter } from "./pewter.js";
 import { pipeAgent } from "./pipe.js";
 import { planRun, RunError, type RunSpec } from "./run.js";
@@ -221,6 +222,20 @@ if (parsed.kind === "serve") {
   }
 } else {
   const op = byMethod(parsed.method)!;
+  // The two commands that name a file: what a shell completed becomes the one
+  // spelling the page reads (paths.ts). Done here rather than in the operation
+  // because it needs a working directory and a pewter, and an operation has
+  // neither — an extension calling `pewt.open()` has no cwd to resolve against.
+  if (parsed.method === "files.open" || parsed.method === "files.fling") {
+    const typed = (parsed.params as { path: string }).path;
+    const where = inPewter(typed, pewter.root, process.cwd());
+    if ("outside" in where) {
+      console.error(`pewt: ${where.outside} is outside ${pewter.name}/, so this page cannot read it`);
+      console.error(`  The page's reach is exactly the folder you granted it, and neither open nor fling moves bytes across that edge.`);
+      process.exit(2);
+    }
+    parsed.params = { ...(parsed.params as object), path: where.path };
+  }
   try {
     const result = await call(new NodeDirectory(pewter.root), parsed.method, parsed.params);
     console.log(parsed.json ? JSON.stringify(result, null, 2) : op.render(result));

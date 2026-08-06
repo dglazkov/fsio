@@ -3,6 +3,12 @@
 import { signal } from "@lit-labs/signals";
 import { noTabs, type TabsState } from "pewter";
 
+/** What the host calls this pewter. It arrives with the session, and it is
+ *  what the page's own storage is keyed by: one origin serves every pewter
+ *  anybody opens, so the copies `pewt fling` made here must not show up in
+ *  another folder's page (db.ts). */
+export const pewterName = signal<string>("");
+
 /** Which face the shell shows.
  *  setup — no folder yet.
  *  live — connected to a host, showing an extension. */
@@ -49,6 +55,31 @@ export interface OpenExtension {
 }
 export const opened = signal<Record<string, OpenExtension>>({});
 export const extError = signal<string>("");
+
+/** One file tab's bytes, decoded far enough to render.
+ *
+ *  Kept beside the tab list rather than in it, for the same reason the frames
+ *  are: a tab holds a reference, and a state carrying file contents would stop
+ *  being something a test can construct or a report can print. */
+export interface Loaded {
+  key: string;
+  viewer: "text" | "image" | "none";
+  type: string;
+  size: number;
+  /** the head of the file, for a text view. */
+  text: string | null;
+  /** an object URL, for an image view. Revoked when this entry is replaced or
+   *  forgotten — a page that never forgets pins every image it ever showed. */
+  url: string | null;
+  truncated: boolean;
+  /** the file is not there. Normal for a window (`pewt open`), and the whole
+   *  difference a copy (`pewt fling`) is for. */
+  missing: boolean;
+  loadedAt: number;
+}
+
+/** What each open file tab is showing, by reference key (files.ts). */
+export const content = signal<Map<string, Loaded>>(new Map());
 
 /** Calls an extension has made through the API, newest last. The rig reads
  *  this to know the round trip happened; a human reads it to see that the

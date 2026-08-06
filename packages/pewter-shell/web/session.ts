@@ -12,9 +12,10 @@
 // signal than two, but answering it from inside a skeleton would settle a
 // library's shape as a side effect of building something else.
 import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
-import { asCommand, encodeControl, receipt, receiptError } from "pewter";
+import { asCommand, encodeControl, receipt, receiptError, safeRelPath } from "pewter";
 import { folder, gate, host, pending, phase, pickError } from "./state";
-import { answer } from "./tabs";
+import { adoptCatalog, answer } from "./tabs";
+import { watchOpenFiles } from "./files";
 import { log, reporter, step } from "./reporter";
 
 let client: FsioClient | null = null;
@@ -188,6 +189,16 @@ async function openSession(): Promise<void> {
     const info = await s.ready;
     reporter.event("session", { id: s.id, operations: info["operations"] ?? null });
     log(`session ${s.id} open on ${String(info["pewter"] ?? "this pewter")}`);
+    // The copies this page already holds for *this* pewter, before it can be
+    // asked about them. The name arrives with the session and not before, which
+    // is why the catalog loads here rather than at boot: one origin serves
+    // every pewter, so a page that read the store before it knew which folder
+    // it was on would show one pewter's copies in another's strip (db.ts).
+    await adoptCatalog(String(info["pewter"] ?? "pewter"));
+    // Windows follow their files. Only the paths tabs are actually open on are
+    // watched — the folder itself is not walked, because nothing in the shell
+    // needs a listing and a repo checkout is not a file browser.
+    watchOpenFiles();
     phase.set("live");
     markState("connected");
   } catch (e) {
@@ -445,26 +456,42 @@ export async function agentOnHost(spec: Record<string, unknown>, onMessage: (mes
   };
 }
 
-/** Read a folder-relative path through the grant this page already holds.
+/** The file at a folder-relative path, through the grant this page already
+ *  holds. Null means it is not there — which is a normal answer, not an error:
+ *  the folder is a live thing and the page is one of several parties looking
+ *  at it.
  *
- *  This is how an extension's bundle reaches the shell: the host says where
- *  it put the file, and the page opens it itself. Nothing about the bytes
- *  rides a session — the same one grant that carries the transport carries
- *  this, which is why opening a tab costs no frames. */
-export async function readAt(path: string): Promise<string | null> {
+ *  This is the one read every part of the shell shares. An extension's bundle
+ *  arrives this way — the host says where it put the file and the page opens
+ *  it itself — and so does every file `pewt open` and `pewt fling` name.
+ *  Nothing about those bytes rides a session: the same one grant that carries
+ *  the transport carries this, which is why opening a tab costs no frames and
+ *  why a fling has no size limit of ours. */
+export async function fileAt(path: string): Promise<File | null> {
   const dir = rootHandle;
-  if (!dir) return null;
-  const parts = path.split("/").filter((p) => p && p !== ".");
-  if (parts.some((p) => p === "..") || parts.length === 0) return null;
+  const safe = safeRelPath(path);
+  if (!dir || !safe) return null;
+  const parts = safe.split("/");
   const name = parts.pop()!;
   let at: FileSystemDirectoryHandle = dir;
   try {
     for (const part of parts) at = await at.getDirectoryHandle(part);
-    const file = await (await at.getFileHandle(name)).getFile();
-    return await file.text();
+    return await (await at.getFileHandle(name)).getFile();
   } catch {
     // Missing, or a torn read while the host was writing it (F11): both are
     // normal, and both mean "ask again" rather than "broken".
+    return null;
+  }
+}
+
+/** The text at a folder-relative path. What `extension.ts` wants, which is
+ *  always a document. */
+export async function readAt(path: string): Promise<string | null> {
+  const file = await fileAt(path);
+  if (!file) return null;
+  try {
+    return await file.text();
+  } catch {
     return null;
   }
 }

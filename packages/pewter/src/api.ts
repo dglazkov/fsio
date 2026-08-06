@@ -9,8 +9,9 @@
 // port are queued rather than lost, every call gets exactly one answer, and
 // a refusal arrives as a thrown error carrying the operation's own code.
 import { agentSpec, type Agent, type AgentEntry, type AgentOptions } from "./agent.js";
+import type { HeldFile } from "./files.js";
 import { shellSpec, type Shell, type ShellOptions, type ShellResult } from "./shell.js";
-import { PAGE_METHODS, type Tab, type TabsState } from "./tabs.js";
+import { PAGE_METHODS, type Tab, type TabsListing, type TabsState } from "./tabs.js";
 import { asAnswer, asEvent, send, WIRE_VERSION, type ApiError, type Call } from "./wire.js";
 
 /** A project in this pewter — a directory under `repos/`. */
@@ -131,8 +132,10 @@ export interface PewtApi {
    *  on your machine, and opening a screen the folder already contains starts
    *  nothing. */
   tabs: {
-    /** Every tab, in strip order, and which one is on screen. */
-    list(): Promise<TabsState>;
+    /** Every tab, in strip order, and which one is on screen. The catalog of
+     *  held copies is not in it — `files.list()` is that question, and an
+     *  operation answering both would make one of them impossible to ask. */
+    list(): Promise<TabsListing>;
     /** Open an extension in a new tab. Refused if it does not build — the
      *  compile error comes back as the refusal, so a caller learns what is
      *  wrong without opening the tab it asked for. */
@@ -144,6 +147,70 @@ export interface PewtApi {
     /** Bring one forward. */
     focus(params: { id: string }): Promise<{ id: string; title: string }>;
   };
+  /** Put a file from this pewter in a tab, as a window on it.
+   *
+   *  The page reads it through the grant it already holds, so nothing rides a
+   *  session and the path is the only thing that travels. It stays a window:
+   *  edit the file and the tab follows, delete it and the tab says it is gone.
+   *
+   *  Paths are relative to the pewter, and only inside it. A path that climbs
+   *  out is refused — the page's reach is exactly the folder you granted.
+   *
+   *  Opening the same path twice brings the window already on it forward. */
+  open(path: string, options?: FileTabOptions): Promise<OpenResult>;
+  /** Take a copy of a file from this pewter into the page's custody.
+   *
+   *  The same one read as `open`, with a different intention about it: the
+   *  bytes land in browser storage and stop needing the file, the host, or the
+   *  folder. That is how a build output outlives its build directory — delete
+   *  `dist/`, stop `pewt serve`, revoke the grant, and the tab still works.
+   *
+   *  There is no size limit of this API's own. The browser's storage quota is
+   *  the limit, and running into it is a refusal naming it rather than a
+   *  truncated copy.
+   *
+   *  Flinging the same path twice supersedes the first copy: you edited the
+   *  file and threw it again, and any tab showing the old one follows over. */
+  fling(path: string, options?: FileTabOptions): Promise<FlingResult>;
+  files: {
+    /** Every copy this page holds, oldest first. Survives a reload; the tabs
+     *  that were showing them do not, which is what this list is for. */
+    list(): Promise<{ files: HeldFile[] }>;
+    /** Put a copy back in a tab. */
+    show(params: { id: string; title?: string; activate?: boolean }): Promise<{ id: string; fileId: string; name: string; active: boolean; reused: boolean }>;
+    /** Forget a copy and free its bytes. Tabs showing it close with it. */
+    drop(params: { id: string }): Promise<{ id: string; name: string; closedTabs: number; activeId: string | null }>;
+  };
+}
+
+/** What every file command takes besides the file: what to call the tab, and
+ *  whether to bring it forward. */
+export interface FileTabOptions {
+  title?: string;
+  activate?: boolean;
+}
+
+export interface OpenResult {
+  id: string;
+  path: string;
+  title: string;
+  active: boolean;
+  /** whether a window was already on this path. */
+  reused: boolean;
+}
+
+export interface FlingResult {
+  /** the copy, in the catalog `files.list()` returns. */
+  fileId: string;
+  /** the tab showing it. */
+  id: string;
+  name: string;
+  from: string;
+  size: number;
+  type: string;
+  /** the copy of the same path this one replaced, if there was one. */
+  superseded: string | null;
+  active: boolean;
 }
 
 /** Every method this package knows how to spell, in wire form. The host's
@@ -343,15 +410,25 @@ export function apiFor(channel: Channel): PewtApi {
     // folder — and, more to the point, working at all, since the answer is in
     // the shell and nowhere else.
     tabs: {
-      list: () => channel.call("tabs.list") as Promise<TabsState>,
+      list: () => channel.call("tabs.list") as Promise<TabsListing>,
       add: (params) => channel.call("tabs.add", params) as Promise<{ id: string; name: string; title: string; active: boolean }>,
       update: (params) => channel.call("tabs.update", params) as Promise<{ id: string; title: string }>,
       close: (params) => channel.call("tabs.close", params) as Promise<{ id: string; activeId: string | null }>,
       focus: (params) => channel.call("tabs.focus", params) as Promise<{ id: string; title: string }>,
     },
+    // The path is the first argument rather than a field, because it is the
+    // whole of what these two commands are about and `pewt.open({ path })`
+    // would be ceremony. What travels is the same object either way.
+    open: (path, options = {}) => channel.call("files.open", { path, ...options }) as Promise<OpenResult>,
+    fling: (path, options = {}) => channel.call("files.fling", { path, ...options }) as Promise<FlingResult>,
+    files: {
+      list: () => channel.call("files.list") as Promise<{ files: HeldFile[] }>,
+      show: (params) => channel.call("files.show", params) as Promise<{ id: string; fileId: string; name: string; active: boolean; reused: boolean }>,
+      drop: (params) => channel.call("files.drop", params) as Promise<{ id: string; name: string; closedTabs: number; activeId: string | null }>,
+    },
   };
 }
 
-/** Re-exported so an extension can type what `tabs.list()` gives it without
- *  reaching past the API for it. */
-export type { Tab, TabsState };
+/** Re-exported so an extension can type what `tabs.list()` and `files.list()`
+ *  give it without reaching past the API for them. */
+export type { HeldFile, Tab, TabsListing, TabsState };

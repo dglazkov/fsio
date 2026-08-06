@@ -17,6 +17,7 @@ import { LitElement, html, css, nothing } from "lit";
 import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { tokens, panel } from "@fsio/ui";
+import { bodyLabel } from "pewter";
 import { grantPending, pickFolder } from "../session";
 import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, served, tabs } from "../state";
 import { answer, chipsOf, openFirst, setStage } from "../tabs";
@@ -130,8 +131,12 @@ class PewterShell extends SignalWatcher(LitElement) {
   }
 
   #live(): TemplateResult {
-    const { tabs: list, activeId } = tabs.get();
+    const { tabs: list, activeId, held } = tabs.get();
     const shown = activeId ? opened.get()[activeId] : undefined;
+    // A file tab has no bundle behind it, so the footer says what it is
+    // instead. `bodyLabel` is the same reading `pewt tabs` prints in a
+    // terminal, which is the point of it living in the shared package.
+    const active = list.find((t) => t.id === activeId);
     const calls = served.get();
     const last = calls[calls.length - 1];
     return html`
@@ -140,8 +145,11 @@ class PewterShell extends SignalWatcher(LitElement) {
       <footer>
         ${shown
           ? html`<span><span class="mark">▸</span> ${shown.name} · ${shown.bytes} B · ${shown.hash}${shown.rebuilt ? " · rebuilt" : ""}</span>`
-          : html`<span>${list.length ? "nothing on screen" : `opening ${FIRST}…`}</span>`}
+          : active
+            ? html`<span><span class="mark">▸</span> ${bodyLabel(active.body)}</span>`
+            : html`<span>${list.length ? "nothing on screen" : `opening ${FIRST}…`}</span>`}
         <span>${list.length} ${list.length === 1 ? "tab" : "tabs"}</span>
+        ${held.length ? html`<span>${held.length} held</span>` : nothing}
         <span>${opaque.get() === null ? "frame not loaded" : opaque.get() ? "own origin" : "SAME ORIGIN — the sandbox is not holding"}</span>
         <span>host ${host.get()}</span>
         ${last ? html`<span>${last.method} → ${last.ok ? "ok" : "refused"} (${last.ms} ms)</span>` : nothing}

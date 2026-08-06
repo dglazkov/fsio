@@ -14,16 +14,14 @@
 // has one answer, and a process has a stream that ends in an exit code.
 //
 // Requests split again, by *who answers*. `repos`, `ext` and `agents` are the
-// host's, because the answer is on the machine. `tabs` is the page's, because
-// a tab is not on disk anywhere — it exists because a browser is open. An
-// operation says which it is and nothing else changes: the same table, the
-// same two spellings, the same one place to add the next one. What differs is
-// where the answer comes from, and router.ts is what carries a command to a
-// page and a receipt back.
-//
-// `open` and `fling` are page-answered too and are the next slice
-// (https://github.com/dglazkov/fsio/issues/164).
-import { asTabCommand, shellSpec, type TabsState } from "pewter";
+// host's, because the answer is on the machine. `tabs` and `files` are the
+// page's: a tab is not on disk anywhere — it exists because a browser is open
+// — and a flung copy is in that browser's storage, which the machine cannot
+// see either. An operation says which it is and nothing else changes: the same
+// table, the same two spellings, the same one place to add the next one. What
+// differs is where the answer comes from, and router.ts is what carries a
+// command to a page and a receipt back.
+import { asTabCommand, bodyLabel, shellSpec, sizeText, type HeldFile, type TabsListing } from "pewter";
 import { roster, type RosterEntry } from "./agents.js";
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
 import { listRepos, type Project } from "./repos.js";
@@ -122,9 +120,6 @@ function str(params: unknown, key: string): string {
   return value;
 }
 
-const size = (n: number): string =>
-  n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
-
 export const reposList = define<Record<string, never>, { repos: Project[] }>({
   method: "repos.list",
   cli: ["repos"],
@@ -165,7 +160,7 @@ export const extBundle = define<{ name: string }, Bundle>({
     }
   },
   render: (b) =>
-    `${b.name} → ${b.path}  (${size(b.bytes)}, ${b.hash})` +
+    `${b.name} → ${b.path}  (${sizeText(b.bytes)}, ${b.hash})` +
     (b.rebuilt ? `\n  rebuilt in ${b.ms} ms` : "\n  already newer than its sources — nothing to do"),
 });
 
@@ -212,19 +207,24 @@ export const agentsList = define<Record<string, never>, { agents: RosterEntry[] 
 
 /** The page's own parameter check, phrased for whoever typed it. */
 const tabParams =
-  (method: string, what: string) =>
+  (method: string, what: string, hint?: string) =>
   (params: unknown): Record<string, unknown> => {
     const cmd = asTabCommand(method, params);
-    if (!cmd) throw new OpError("bad_params", what);
+    if (!cmd) throw new OpError("bad_params", what, hint);
     return cmd.params as Record<string, unknown>;
   };
+
+/** The refusal a path outside the pewter gets. One sentence for both file
+ *  commands, because it is one rule: the page's reach is exactly the folder
+ *  you granted it, and neither command moves bytes across that edge. */
+const OUTSIDE = "paths are relative to the pewter, and a path that climbs out of it is not one the page can read";
 
 const tabId = (argv: string[], verb: string): { id: string } => {
   if (argv.length !== 1 || !argv[0]) throw new OpError("usage", `tabs ${verb} takes one tab id — \`pewt tabs\` lists them`);
   return { id: argv[0] };
 };
 
-export const tabsList = definePage<Record<string, never>, TabsState>({
+export const tabsList = definePage<Record<string, never>, TabsListing>({
   method: "tabs.list",
   cli: ["tabs"],
   summary: "what the page has open",
@@ -236,9 +236,11 @@ export const tabsList = definePage<Record<string, never>, TabsState>({
     }
     const width = Math.max(...tabs.map((t) => t.title.length));
     // The id is first because it is what every other tab command takes, and
-    // the mark says which one you are looking at right now.
+    // the mark says which one you are looking at right now. The last column is
+    // what is in the tab, which is a name, a path, or a copy — `bodyLabel` is
+    // the one place that decides, so the strip in the browser says the same.
     return tabs
-      .map((t) => `  ${t.id === activeId ? "▸" : " "} ${t.id}  ${t.title.padEnd(width)}  ${t.body.name}`)
+      .map((t) => `  ${t.id === activeId ? "▸" : " "} ${t.id}  ${t.title.padEnd(width)}  ${bodyLabel(t.body)}`)
       .join("\n");
   },
 });
@@ -295,7 +297,111 @@ export const tabsFocus = definePage<{ id: string }, { id: string; title: string 
   render: ({ id, title }) => `${id} is on screen — ${JSON.stringify(title)}`,
 });
 
-export const OPERATIONS: Operation[] = [reposList, extBundle, agentsList, tabsList, tabsAdd, tabsUpdate, tabsClose, tabsFocus];
+// ---- the two file verbs
+//
+// Both take a path inside the pewter, and the page reads it through the grant
+// it already holds — the same trick an extension's bundle rides. So no bytes
+// go on the wire in either direction, `fling` has no size limit of this
+// table's choosing, and a path outside the folder is refused rather than
+// resolved. The difference between them is what the page does with the read:
+// `open` keeps the path and looks again, `fling` keeps the bytes and stops
+// looking.
+
+/** The one argument both file commands take. */
+const filePath = (argv: string[], verb: string): { path: string } => {
+  if (argv.length !== 1 || !argv[0]) throw new OpError("usage", `${verb} takes one path inside this pewter`);
+  return { path: argv[0] };
+};
+
+export const filesOpen = definePage<{ path: string }, { id: string; path: string; title: string; active: boolean; reused: boolean }>({
+  method: "files.open",
+  cli: ["open"],
+  summary: "show a file from this pewter, as a window on it",
+  usage: "<path>",
+  fromArgv: (argv) => filePath(argv, "open"),
+  parse: tabParams("files.open", "open needs a path inside this pewter", OUTSIDE) as (params: unknown) => { path: string },
+  // Whether a window was already on it is the half nobody asks for and
+  // everybody wants next: `pewt open` twice is one tab, on purpose, and a
+  // second id would be the more surprising answer to report.
+  render: ({ id, path, reused }) => `${path} → ${id}${reused ? "  · the window already on it, brought forward" : ""}`,
+});
+
+export const filesFling = definePage<{ path: string }, { fileId: string; id: string; name: string; size: number; superseded: string | null }>({
+  method: "files.fling",
+  cli: ["fling"],
+  summary: "give the page a copy of a file, which outlives the file",
+  usage: "<path>",
+  fromArgv: (argv) => filePath(argv, "fling"),
+  parse: tabParams("files.fling", "fling needs a path inside this pewter", OUTSIDE) as (params: unknown) => { path: string },
+  render: ({ fileId, id, name, size, superseded }) =>
+    `${name} → ${fileId} (${sizeText(size)}), in ${id}` +
+    (superseded ? `\n  replaced ${superseded} — the same path, flung again` : "") +
+    "\n  the page holds these bytes now: delete the file, stop the host, revoke the folder, and the tab still works",
+});
+
+export const filesList = definePage<Record<string, never>, { files: HeldFile[] }>({
+  method: "files.list",
+  cli: ["files"],
+  summary: "the copies the page has custody of",
+  fromArgv: noParams,
+  parse: tabParams("files.list", "files takes no parameters") as (params: unknown) => Record<string, never>,
+  render: ({ files }) => {
+    if (files.length === 0) {
+      return "no copies — this page holds nothing of its own.\n  Give it one:  pewt fling <path>";
+    }
+    const width = Math.max(...files.map((f) => f.name.length));
+    // `from` is provenance and nothing more: the copy is not looking at that
+    // path any more, which is the entire difference from `pewt open`.
+    return files
+      .map((f) => `  ${f.id}  ${f.name.padEnd(width)}  ${sizeText(f.size).padStart(7)}  was ${f.from}`)
+      .join("\n");
+  },
+});
+
+export const filesShow = definePage<{ id: string }, { id: string; fileId: string; name: string; reused: boolean }>({
+  method: "files.show",
+  cli: ["files", "show"],
+  summary: "put a copy the page holds back in a tab",
+  usage: "<file id>",
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "files show takes one file id — `pewt files` lists them");
+    return { id: argv[0] };
+  },
+  parse: tabParams("files.show", "files show needs a file id") as (params: unknown) => { id: string },
+  render: ({ id, name, reused }) => `${name} → ${id}${reused ? "  · the tab already on it, brought forward" : ""}`,
+});
+
+export const filesDrop = definePage<{ id: string }, { id: string; name: string; closedTabs: number }>({
+  method: "files.drop",
+  cli: ["files", "drop"],
+  summary: "forget a copy and free its bytes",
+  usage: "<file id>",
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "files drop takes one file id — `pewt files` lists them");
+    return { id: argv[0] };
+  },
+  parse: tabParams("files.drop", "files drop needs a file id") as (params: unknown) => { id: string },
+  // The tabs are worth saying out loud: dropping bytes closes windows onto
+  // them, and a tab vanishing with no line about it is the confusing kind.
+  render: ({ id, name, closedTabs }) =>
+    `dropped ${name} (${id})` + (closedTabs ? `  · closed ${closedTabs} tab${closedTabs === 1 ? "" : "s"} showing it` : ""),
+});
+
+export const OPERATIONS: Operation[] = [
+  reposList,
+  extBundle,
+  agentsList,
+  tabsList,
+  tabsAdd,
+  tabsUpdate,
+  tabsClose,
+  tabsFocus,
+  filesOpen,
+  filesFling,
+  filesList,
+  filesShow,
+  filesDrop,
+];
 
 export const byMethod = (method: string): Operation | undefined =>
   OPERATIONS.find((o) => o.method === method);
