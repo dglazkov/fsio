@@ -33,7 +33,7 @@
 // NARRATIVE.md's "Looking into the Future" and is the honest description of where
 // this stands.
 import { asCall, asSend, answer, connect, event, isHello, refusal } from "pewter";
-import { callHost, runOnHost, shellOnHost, ShellCallError } from "./session";
+import { agentOnHost, callHost, runOnHost, shellOnHost, ShellCallError } from "./session";
 import { opaque, served } from "./state";
 import { log, reporter } from "./reporter";
 
@@ -137,7 +137,9 @@ async function serve(data: unknown, port: MessagePort, name: string, live: Map<n
           )
         : call.method === "shell"
           ? await serveShell(call.id, call.params as Record<string, unknown>, port, live)
-          : await callHost(call.method, call.params);
+          : call.method === "agent"
+            ? await serveAgent(call.id, call.params as Record<string, unknown>, port, live)
+            : await callHost(call.method, call.params);
     port.postMessage(answer(call.id, result));
     record(call.method, true, t0);
   } catch (e) {
@@ -167,6 +169,23 @@ async function serveShell(id: number, spec: Record<string, unknown>, port: Messa
   });
   port.postMessage(event(id, { started: true }));
   return shell.exit;
+}
+
+/** One agent, for as long as it runs.
+ *
+ *  Same shape as a shell — the call stays open, `started` is an event, the
+ *  exit code is the answer — carrying whole ACP messages instead of bytes.
+ *  Nothing here reads one: the extension on the other side of the port is the
+ *  ACP client, and this is the wire it holds. */
+async function serveAgent(id: number, spec: Record<string, unknown>, port: MessagePort, live: Map<number, (body: unknown) => void>): Promise<{ exitCode: number | null }> {
+  const agent = await agentOnHost(spec, (message) => port.postMessage(event(id, { m: message })));
+  live.set(id, (body) => {
+    const asked = body as { m?: unknown; close?: unknown };
+    if ("m" in asked) agent.send(asked.m);
+    else if (asked.close) agent.close();
+  });
+  port.postMessage(event(id, { started: true }));
+  return agent.exit;
 }
 
 function record(method: string, ok: boolean, t0: number): void {

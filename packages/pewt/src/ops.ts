@@ -19,6 +19,7 @@
 // router serving both directions is deliberately not built yet — see
 // https://github.com/dglazkov/fsio/issues/164.
 import { shellSpec } from "pewter";
+import { roster, type RosterEntry } from "./agents.js";
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
 import { listRepos, type Project } from "./repos.js";
 import type { Pewter } from "./pewter.js";
@@ -143,7 +144,39 @@ export const extBundle = define<{ name: string }, Bundle>({
     (b.rebuilt ? `\n  rebuilt in ${b.ms} ms` : "\n  already newer than its sources — nothing to do"),
 });
 
-export const OPERATIONS: Operation[] = [reposList, extBundle];
+export const agentsList = define<Record<string, never>, { agents: RosterEntry[] }>({
+  method: "agents.list",
+  cli: ["agents"],
+  summary: "the ACP adapters this pewter depends on",
+  fromArgv: noParams,
+  parse: noParams,
+  run: async (p) => ({ agents: roster(p) }),
+  render: ({ agents }) => {
+    const here = agents.filter((a) => a.installed);
+    if (here.length === 0) {
+      return [
+        "no agents in this pewter — an adapter is an ordinary dependency, so add one:",
+        ...agents.map((a) => `  ${a.install.padEnd(44)}${a.asks ? "asks before it edits" : "edits with its own hands"}`),
+        "",
+        "It is pinned in your lockfile, `npm rm` removes it, and `git clone && npm i`",
+        "brings it back on another machine.",
+      ].join("\n");
+    }
+    const width = Math.max(...here.map((a) => a.name.length));
+    return here
+      .map((a) => {
+        // Whether it asks before it edits is the reason this list exists, so
+        // it is the column, and a version nobody measured says so in the same
+        // breath rather than in a footnote somebody has to go and find.
+        const asks = a.asks ? "asks before it edits" : "edits with its own hands — nothing will ask you";
+        const doubt = a.unmeasured ? ` (measured at ${a.measured}, this is ${a.version ?? "unknown"})` : "";
+        return `  ${a.name.padEnd(width)}  ${a.version ?? "?"}  ${asks}${doubt}`;
+      })
+      .join("\n");
+  },
+});
+
+export const OPERATIONS: Operation[] = [reposList, extBundle, agentsList];
 
 export const byMethod = (method: string): Operation | undefined =>
   OPERATIONS.find((o) => o.method === method);
@@ -221,7 +254,29 @@ export const shellProcess: ProcessOperation = {
   parse: (params) => shellSpec(repoOf(params)),
 };
 
-export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess];
+export const agentProcess: ProcessOperation = {
+  method: "agent",
+  cli: ["agent"],
+  summary: "start an ACP agent on a project",
+  usage: "[name]",
+  repo: true,
+  fromArgv: (argv) => {
+    if (argv.length > 1) throw new OpError("usage", "agent takes at most one adapter name — `pewt agents` lists them");
+    return argv[0] ? { agent: argv[0] } : {};
+  },
+  // The name is checked against the roster when the agent is planned
+  // (agent.ts), which is the only check that means anything: a name nobody
+  // lists is not runnable however well-formed it looks.
+  parse: (params) => {
+    const agent = (params as Record<string, unknown> | null)?.["agent"];
+    if (agent !== undefined && (typeof agent !== "string" || agent === "")) {
+      throw new OpError("bad_params", "agent must be an adapter name");
+    }
+    return { ...(agent !== undefined ? { agent } : {}), ...repoOf(params) };
+  },
+};
+
+export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess];
 
 export const processByMethod = (method: string): ProcessOperation | undefined =>
   PROCESSES.find((o) => o.method === method);

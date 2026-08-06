@@ -5,7 +5,7 @@ import { byArgv, COMMAND_LIST } from "./ops.js";
 export type Parsed =
   | { kind: "help"; text: string }
   | { kind: "error"; message: string }
-  | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean; allowShells: boolean }
+  | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean; allowShells: boolean; allowAgents: boolean }
   | { kind: "op"; dir: string | null; json: boolean; method: string; params: unknown }
   | { kind: "process"; dir: string | null; json: boolean; dryRun: boolean; method: string; spec: Record<string, unknown> };
 
@@ -29,7 +29,7 @@ Anywhere:
   --json         print the result as JSON instead of prose
   --help         this
 
-run, shell:
+run, shell, agent:
   --repo <name>  a project under repos/ (default: the pewter itself)
   --dry-run      print what would start, and start nothing
 
@@ -38,9 +38,15 @@ serve:
   --no-open      print the URL and open nothing
   --allow-runs   allow every \`run\` without asking on this terminal
   --allow-shells allow every \`shell\` without asking on this terminal
+  --allow-agents allow every \`agent\` without asking on this terminal
 
-The two allow flags are separate because a shell is not a script: something
-that was told it could build is not thereby something that can do anything.
+The allow flags are separate because these are separate capabilities:
+something that was told it could build is not thereby something that can do
+anything, or something that can run a coding agent on your projects.
+
+\`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
+stdin, the agent's own messages out on stdout. Whatever is on the other end
+is the ACP client — a tab is the one Pewter ships toward.
 
 Exit codes: 0 done · 1 refused · 2 usage · 3 no host is running.
 \`pewt run\` exits with the script's own code instead, the way \`npm run\` does —
@@ -56,6 +62,7 @@ export function parseArgs(argv: string[]): Parsed {
   let dryRun = false;
   let allowRuns = false;
   let allowShells = false;
+  let allowAgents = false;
   const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -66,6 +73,7 @@ export function parseArgs(argv: string[]): Parsed {
     else if (a === "--dry-run") dryRun = true;
     else if (a === "--allow-runs") allowRuns = true;
     else if (a === "--allow-shells") allowShells = true;
+    else if (a === "--allow-agents") allowAgents = true;
     else if (a === "--dir" || a === "--url" || a === "--repo") {
       const value = argv[++i];
       if (!value) return { kind: "error", message: `${a} needs a value` };
@@ -82,7 +90,7 @@ export function parseArgs(argv: string[]): Parsed {
   if (rest.length === 0) return { kind: "help", text: USAGE };
   if (rest[0] === "serve") {
     if (rest.length > 1) return { kind: "error", message: `serve takes no arguments (got ${rest.slice(1).join(" ")})` };
-    return { kind: "serve", dir, url, open, allowRuns, allowShells };
+    return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents };
   }
 
   const found = byArgv(rest);

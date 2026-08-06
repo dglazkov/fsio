@@ -266,9 +266,16 @@ the Future".
 
 ## Agents
 
-Pewter ships no agent. It speaks the Agent Client Protocol, so the shell
-is an ACP client and an agent is an ordinary process on your machine whose
-stdio rides the folder — the same channel everything else uses.
+Pewter ships no agent. It carries the Agent Client Protocol: an agent is an
+ordinary process on your machine whose stdio rides the folder — the same
+channel everything else uses — and **the tab is the ACP client**.
+
+That last part is what makes the rest work. `session/request_permission`
+and `fs/read_text_file` arrive as requests from the agent, and the party
+that should answer them is the one with you and the folder in front of it.
+So the agent's permission question becomes a screen somebody designed
+rather than a redraw inside a terminal nobody can style, and its file reads
+are served through the grant you already made.
 
 Which agents your pewter can run is a line in `package.json`:
 
@@ -297,18 +304,31 @@ assumed, and the answers differ:
 | `pi-acp` | No. It reads and edits with its own hands. |
 
 The difference matters, and it is not something to find out afterward, so
-the roster says which is which before you pick. Start one on a project:
+the roster says which is which before you pick — along with the version you
+have, because that answer was measured against one build and yours may not
+be it. The host asks before it starts an agent, and its question repeats
+whether this one will ask you back.
+
+The conversation happens in a tab. `extensions/chat/` is an extension like
+any other: change how it looks, add to it, or replace it. From there the
+agent reads `AGENTS.md` and works through `pewt` exactly as you would, and
+the conversation rides the folder, so it lands in the same transcripts every
+other session does.
+
+The terminal spelling is a pipe rather than a chat:
 
 ```sh
 pewt agent --repo fsio
 ```
 
-From there the agent reads `AGENTS.md` and works through `pewt` exactly as
-you would. The conversation rides the folder, so it lands in the same
-transcripts every other session does.
+One ACP message per line in on stdin, the agent's own messages out on
+stdout. Nothing in between interprets either, which makes `pewt agent` the
+thing a terminal can do that a tab cannot: be driven by another program.
 
-The chat tab itself is `extensions/chat/`, an extension like any other.
-Change how it looks, add to it, or replace it.
+An agent gets a synthesized environment rather than yours — eight variables,
+plus `pewt` on its `PATH` so it can call back in. Nothing confines it, and
+this is not confinement; it is the difference between a wall and not handing
+over your ssh-agent socket to something nobody is sitting at.
 
 ## Sending a file to the page
 
@@ -363,6 +383,8 @@ operations. Neither is the real one:
 | `pewt repos new site --github` | `await pewt.repos.create({ name: "site", github: true })` |
 | `pewt run build --repo site` | `await pewt.run("build", { repo: "site" })` |
 | `pewt shell --repo site` | `await pewt.shell({ repo: "site" })` |
+| `pewt agents` | `await pewt.agents.list()` |
+| `pewt agent --repo site` | `await pewt.agent({ repo: "site" })` |
 | `pewt fling report.html` | `await pewt.fling("report.html")` |
 
 The spellings differ where each side has its own conventions. The
@@ -416,10 +438,11 @@ Answers are recorded in `.pewter/grants.json`; `pewt grants` lists them and
 
 A host with no terminal in front of it — started by a script, by CI, or in
 the background — cannot ask, so it cannot allow anything it was not told
-about in advance. `pewt serve --allow-runs` and `pewt serve --allow-shells`
-are that telling, and they are separate flags: something told it could build
-a project has not been told it can open a terminal. Both are meant for hosts
-nobody is sitting at.
+about in advance. `--allow-runs`, `--allow-shells` and `--allow-agents` are
+that telling, and they are three flags rather than one: something told it
+could build a project has not been told it can open a terminal, or run a
+coding agent on your work. All three are meant for hosts nobody is sitting
+at.
 
 The host is not optional. While it is down the page has no session, so
 browsing files and running commands both stop, and any process the host

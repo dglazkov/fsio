@@ -210,3 +210,118 @@ export async function shellOnHost(dir: FsDirectory, spec: ShellSpec, opts: Shell
     exit: exit.finally(() => void session.close().catch(() => {})),
   };
 }
+
+// ---- an agent: the same plumbing again, carrying somebody else's protocol
+
+/** An agent that is running, as a client holds one.
+ *
+ *  `send` takes one complete ACP message. Not a string and not a chunk: the
+ *  framing contract is that one DATA frame is exactly one message
+ *  (framing.ts), and the way to keep a contract is to make the shape that
+ *  breaks it unsayable. */
+export interface AgentAttachment {
+  send(message: unknown): void;
+  close(): Promise<void>;
+  /** stderr, counters, and whether it has exited — everything that is not
+   *  ACP and therefore cannot ride DATA. */
+  diagnostics(): Promise<AgentDiagnostics>;
+  readonly exit: Promise<ShellOutcome>;
+}
+
+export interface AgentDiagnostics {
+  messagesOut: number;
+  messagesIn: number;
+  junkLines: number;
+  refusedIn: number;
+  overflows: number;
+  exited: boolean;
+  /** the agent's own stderr, kept because it is where "I could not
+   *  authenticate" arrives and it is not a message anybody can route. */
+  stderr: string[];
+}
+
+export interface AgentOptions {
+  /** one complete ACP message from the agent. */
+  onMessage: (message: unknown) => void;
+  onWaiting?: () => void;
+  onStart?: (info: Record<string, unknown>) => void;
+  pollMs?: number;
+  answerMs?: number;
+}
+
+/** Open an agent on the host and hand back the live thing.
+ *
+ *  Nothing here is an ACP client. It moves messages, and whoever called it is
+ *  the peer — a tab, or the program on the other side of `pewt agent`'s pipe.
+ *
+ *  The exit arrives on the status, as a shell's does and unlike a run's: a
+ *  DATA frame here is one ACP message, so an end marker among them would be a
+ *  message this build invented in somebody else's protocol. */
+export async function agentOnHost(dir: FsDirectory, spec: Record<string, unknown>, opts: AgentOptions): Promise<AgentAttachment> {
+  const client = await connect(dir);
+  const session = client.createSession({ kind: "agent", client: "pewt-cli", ...spec }, { pollMs: opts.pollMs ?? 15, heartbeatMs: 0 });
+
+  let settle: ((outcome: ShellOutcome) => void) | null = null;
+  const exit = new Promise<ShellOutcome>((resolve) => {
+    settle = resolve;
+  });
+
+  session.on("data", (bytes) => {
+    // The host promised one frame is one whole message, so there is no buffer
+    // here and no half-message state. A frame this build cannot parse is
+    // dropped rather than guessed at — it would have to be a host bug, and
+    // handing a client half a protocol is worse than handing it none.
+    try {
+      opts.onMessage(JSON.parse(new TextDecoder().decode(bytes)));
+    } catch {
+      /* not a message; the host counts it in diagnostics */
+    }
+  });
+
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  session.on("status", (status) => {
+    if ((status.state !== "exited" && status.state !== "error") || grace) return;
+    const outcome: ShellOutcome =
+      status.state === "exited" ? { exitCode: status.exitCode ?? null, ended: "exit" } : { exitCode: null, ended: "host_gone" };
+    grace = setTimeout(() => settle?.(outcome), STATUS_GRACE_MS);
+    grace.unref();
+  });
+
+  const waiting = setTimeout(() => opts.onWaiting?.(), WAITING_MS);
+  try {
+    const started = await Promise.race([
+      session.ready,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new CallError("timeout", "the host never answered the request to start this agent")), opts.answerMs ?? 10 * 60_000).unref()
+      ),
+    ]);
+    opts.onStart?.(started as unknown as Record<string, unknown>);
+  } catch (e) {
+    await session.close().catch(() => {});
+    if (e instanceof CallError) throw e;
+    if (e instanceof RpcError) {
+      const data = (e.data ?? {}) as { code?: string; hint?: string };
+      throw new CallError("refused", e.message, data.code, data.hint);
+    }
+    throw new CallError("transport", e instanceof Error ? e.message : String(e));
+  } finally {
+    clearTimeout(waiting);
+  }
+
+  return {
+    send: (message) => session.sendData(JSON.stringify(message)),
+    close: async () => {
+      await session.close().catch(() => {});
+      settle?.({ exitCode: null, ended: "exit" });
+    },
+    diagnostics: async () => {
+      const { result } = await session.request("agent/diagnostics", {}, { timeoutMs: 5000 });
+      return result as AgentDiagnostics;
+    },
+    // Unlike a shell's, this does not close the session when it settles: an
+    // agent that died has just put the reason on stderr, and `diagnostics()`
+    // is how anybody reads it. Closing here would reap the session the
+    // question has to be asked on. The caller closes when it is done.
+    exit,
+  };
+}

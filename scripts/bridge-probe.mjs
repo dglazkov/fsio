@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -73,6 +73,15 @@ const shell = await pewt.shell({ repo: "site", onData: (chunk) => term.append(ch
 shell.resize(100, 30);
 shell.write("exit 0\\n");
 document.getElementById("left")!.textContent = \`left \${await shell.exit}\`;
+
+// An agent, from the same sandbox. The extension is the ACP client, so what
+// crosses is whole messages in both directions and nothing in between reads
+// one — which is the claim this checks.
+const acp = document.getElementById("acp")!;
+const agent = await pewt.agent({ repo: "site", onMessage: (m) => acp.append(JSON.stringify(m) + "\\n") });
+agent.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
+await agent.exit;
+
 document.title = "answered";
 `
 );
@@ -89,7 +98,7 @@ const PARENT = `<!doctype html>
 <body>
 <script type="module">
   const html = ${JSON.stringify(html).replace(/</g, "\\u003c")};
-  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null };
+  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [] };
 
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts");
@@ -111,6 +120,11 @@ const PARENT = `<!doctype html>
           window.__result.typed.push(call.body.d);
           post({ type: "pewt:event", event: { d: call.body.d } });
           if (call.body.d.startsWith("exit")) post({ ok: true, result: { exitCode: 0 } });
+        } else if ("m" in call.body) {
+          // An ACP peer: it answers the request it was handed, then leaves.
+          window.__result.messaged.push(call.body.m);
+          post({ type: "pewt:event", event: { m: { jsonrpc: "2.0", id: call.body.m.id, result: { protocolVersion: 1 } } } });
+          post({ ok: true, result: { exitCode: 0 } });
         } else if (typeof call.body.cols === "number") {
           window.__result.sized = { cols: call.body.cols, rows: call.body.rows };
         }
@@ -118,6 +132,10 @@ const PARENT = `<!doctype html>
       }
       window.__result.calls.push(call.method);
       window.__result.wire = call.v;
+      if (call.method === "agent") {
+        post({ type: "pewt:event", event: { started: true } });
+        return;
+      }
       if (call.method === "shell") {
         // The prompt before the started event, which is the order the real
         // bridge produces: it registers the data callback and then announces
@@ -169,13 +187,14 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
 await page.goto(url);
 
-const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null };
+const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [] };
 let result = empty;
 let rendered = "";
 let streamed = "";
 let code = "";
 let terminal = "";
 let left = "";
+let acp = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -192,6 +211,7 @@ try {
   code = await frame.locator("#code").textContent();
   terminal = await frame.locator("#term").textContent();
   left = await frame.locator("#left").textContent();
+  acp = await frame.locator("#acp").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -209,6 +229,8 @@ const checks = [
   ["keystrokes left the sandbox after the call was made", JSON.stringify(result.typed) === JSON.stringify(["exit 0\n"])],
   ["so did a window size", JSON.stringify(result.sized) === JSON.stringify({ cols: 100, rows: 30 })],
   ["and the shell's exit code came back as its call's answer", left === "left 0"],
+  ["an extension sent an agent a whole ACP message", JSON.stringify(result.messaged) === JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "initialize" }])],
+  ["and read the agent's answer back whole", acp.trim() === JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } })],
   ["nothing threw in the page", errors.length === 0],
 ];
 
@@ -220,7 +242,7 @@ for (const [what, ok] of checks) {
 }
 if (failed)
   console.log(
-    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  errors: ${errors.join(" · ")}`
+    `\n  result: ${JSON.stringify(result)}\n  rendered: ${JSON.stringify(rendered)}\n  streamed: ${JSON.stringify(streamed)}\n  code: ${JSON.stringify(code)}\n  terminal: ${JSON.stringify(terminal)}\n  left: ${JSON.stringify(left)}\n  acp: ${JSON.stringify(acp)}\n  errors: ${errors.join(" · ")}`
   );
 console.log();
 

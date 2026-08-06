@@ -23,6 +23,7 @@
 import readline from "node:readline/promises";
 import type { HostLogger, SpawnPolicy } from "@fsio/host";
 import type { Pewter } from "./pewter.js";
+import { asAgentSpec, AgentError, planAgent, type AgentPlan } from "./agent.js";
 import { asRunSpec, planRun, RunError, type RunPlan } from "./run.js";
 import { planShell, ShellError, type ShellPlan } from "./shell.js";
 
@@ -65,9 +66,15 @@ export interface GateOptions {
   allowRuns?: boolean;
   /** allow every shell without asking. */
   allowShells?: boolean;
+  /** allow every agent without asking. */
+  allowAgents?: boolean;
   /** where the question goes. */
   asker: Asker;
 }
+
+/** The kinds that start something, and the flag that answers yes to each in
+ *  advance. Everything else is the API, which starts nothing. */
+const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents" } as const;
 
 /** The host's spawn policy (D12): consulted for every session, and the only
  *  thing standing between a page and a process on this machine.
@@ -77,21 +84,27 @@ export interface GateOptions {
  *  are resolved first (a human should never be asked about a script that does
  *  not exist, or a project that is not there) and then asked about. */
 export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnPolicy {
+  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents };
   return async (spec, info) => {
-    if (info.kind !== "run" && info.kind !== "shell") {
+    if (!(info.kind in STARTS)) {
       log.info(`● ${info.kind} session — origin: ${info.origin ?? "(none reported)"}`);
       return true;
     }
+    const kind = info.kind as keyof typeof STARTS;
     let plan: Question;
     try {
-      plan = info.kind === "run" ? runQuestion(p, spec) : shellQuestion(p, spec, info);
+      plan = kind === "run" ? runQuestion(p, spec) : kind === "shell" ? shellQuestion(p, spec, info) : agentQuestion(p, spec);
     } catch (e) {
       const message =
-        e instanceof RunError || e instanceof ShellError ? [e.message, e.hint].filter(Boolean).join(" — ") : e instanceof Error ? e.message : String(e);
+        e instanceof RunError || e instanceof ShellError || e instanceof AgentError
+          ? [e.message, e.hint].filter(Boolean).join(" — ")
+          : e instanceof Error
+            ? e.message
+            : String(e);
       log.warn(`✗ ${message}`);
       return { allow: false, reason: message };
     }
-    if (info.kind === "run" ? opts.allowRuns : opts.allowShells) {
+    if (told[kind]) {
       log.info(`▸ ${plan.label} — allowed by ${plan.flag} (${info.origin ? `from the page (${info.origin})` : "from a terminal"})`);
       return true;
     }
@@ -121,7 +134,7 @@ function runQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Questi
   return {
     label: plan.label,
     lines: [`npm run ${plan.script}`, plan.declared, `cwd ${plan.where}/`],
-    flag: "--allow-runs",
+    flag: STARTS.run,
   };
 }
 
@@ -133,7 +146,26 @@ function shellQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>, info:
     // to show than a run has: the program, where it starts, and the one thing
     // a person cannot see from the outside — that nothing confines it.
     lines: [plan.cmd, `cwd ${plan.where}/`, plan.pty ? "a terminal, unconfined — it can do anything you can" : "no pty (node-pty missing): pipes, so no job control and no full-screen programs"],
-    flag: "--allow-shells",
+    flag: STARTS.shell,
+  };
+}
+
+function agentQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Question {
+  const plan: AgentPlan = planAgent(p, asAgentSpec(spec));
+  return {
+    label: plan.label,
+    lines: [
+      `${plan.adapter.title}${plan.version ? ` ${plan.version}` : ""}`,
+      `cwd ${plan.where}/`,
+      // The one fact a person wants before saying yes to an agent, and the
+      // reason the roster carries a measured column at all. A version nobody
+      // measured says so here rather than in a footnote — this is the moment
+      // the answer matters.
+      plan.adapter.asks
+        ? `it asks before it edits${plan.unmeasured ? ` (measured at ${plan.adapter.measured}, this is ${plan.version ?? "unknown"})` : ""}`
+        : "it edits with its own hands — nothing will ask you again",
+    ],
+    flag: STARTS.agent,
   };
 }
 
