@@ -16,22 +16,25 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { link as linkPackages, NotEmpty, scaffold } from "./scaffold.js";
+import { NotEmpty, scaffold, type Source } from "./scaffold.js";
 
 const USAGE = `usage: create-pewt <dir> [--no-install] [--no-git] [--link <path>]
 
   <dir>          where the pewter goes. Created if missing; must be empty.
-  --no-install   write the files and stop, without linking pewt and pewter
+  --no-install   write the files and stop, without running npm install
   --no-git       do not make it a git repository
-  --link <path>  the fsio checkout to link from (default: this one)`;
+  --link <path>  depend on an fsio checkout instead of the published
+                 artifacts, for working on fsio itself`;
 
 const argv = process.argv.slice(2);
 let dir: string | null = null;
 let install = true;
 let git = true;
-// Until `pewt` and `pewter` publish, a new pewter depends on a checkout of
-// this repository. Two levels up from dist/ is the package; four is the repo.
-let link = path.resolve(import.meta.dirname, "../../..");
+// The default is the artifact branches, which is what makes a scaffolded
+// pewter a real one: it restores with `git clone && npm i` on a machine that
+// has never heard of this repository. `--link` opts into a checkout instead,
+// and is only interesting to somebody changing fsio.
+let source: Source = { kind: "git" };
 
 const fail = (msg: string): never => {
   console.error(`create-pewt: ${msg}\n\n${USAGE}`);
@@ -45,8 +48,8 @@ for (let i = 0; i < argv.length; i++) {
     process.exit(0);
   } else if (a === "--no-install") install = false;
   else if (a === "--no-git") git = false;
-  else if (a === "--link") link = path.resolve(argv[++i] ?? fail("--link needs a path"));
-  else if (a.startsWith("--link=")) link = path.resolve(a.slice("--link=".length));
+  else if (a === "--link") source = { kind: "checkout", path: path.resolve(argv[++i] ?? fail("--link needs a path")) };
+  else if (a.startsWith("--link=")) source = { kind: "checkout", path: path.resolve(a.slice("--link=".length)) };
   else if (a.startsWith("-")) fail(`unknown flag ${a}`);
   else if (dir) fail("one directory, please");
   else dir = a;
@@ -54,13 +57,13 @@ for (let i = 0; i < argv.length; i++) {
 if (!dir) fail("which directory should the pewter go in?");
 
 const root = path.resolve(dir!);
-if (!fs.existsSync(path.join(link, "packages/pewt"))) {
-  fail(`--link ${link} does not look like an fsio checkout (no packages/pewt in it)`);
+if (source.kind === "checkout" && !fs.existsSync(path.join(source.path, "packages/pewt"))) {
+  fail(`--link ${source.path} does not look like an fsio checkout (no packages/pewt in it)`);
 }
 
 let written: string[];
 try {
-  written = scaffold({ root, link });
+  written = scaffold({ root, source });
 } catch (e) {
   if (e instanceof NotEmpty) {
     fail(`${e.dir} already has things in it. A pewter starts empty, so this would be a merge rather than a start.`);
@@ -80,14 +83,15 @@ if (git) {
 }
 
 if (install) {
-  try {
-    for (const at of linkPackages(root, link)) console.log(`  ${at}`);
-    console.log(`\n  pewt and pewter are linked from ${link}, not installed from a registry —
-  neither has published yet. This pewter therefore needs that checkout as
-  well as itself, which is the one way it differs from the documentation.`);
-  } catch (e) {
-    console.error(`\ncreate-pewt: ${e instanceof Error ? e.message : String(e)}`);
-    console.error("The files are written; link them yourself and then `npm start`.");
+  // Just `npm install`, on a `package.json` that declares what it needs.
+  // This used to make symlinks by hand, because neither package had
+  // published; the symlinks were undeclared, npm pruned them on the next
+  // install of anything, and the pewter broke silently (#181). Nothing here
+  // is special any more, which is the point.
+  const r = spawnSync("npm", ["install", "--no-audit", "--no-fund"], { cwd: root, stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error(`\ncreate-pewt: npm install failed in ${root}.`);
+    console.error("The files are written and they are correct — run `npm install` there yourself when you know why.");
     process.exit(1);
   }
 }
@@ -96,7 +100,7 @@ console.log(`
 Next:
 
   cd ${root}
-  ${install ? "npm start" : "# link pewt and pewter, then: npm start"}
+  ${install ? "npm start" : "npm install && npm start"}
 
 That runs \`pewt serve\`, which opens the page and waits. The last step is
 yours: pick this folder in the browser and allow it. Picking and allowing are

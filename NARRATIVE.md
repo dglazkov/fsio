@@ -40,7 +40,7 @@ you can read.
 ## Create a pewter
 
 ```sh
-npm create pewt@latest ~/Documents/code/work-pewter
+npx github:dglazkov/fsio#create-pewt ~/Documents/code/work-pewter
 cd ~/Documents/code/work-pewter
 npm start
 ```

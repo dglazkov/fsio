@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { link, NotEmpty, scaffold } from "./scaffold.js";
+import { dependencies, NotEmpty, scaffold } from "./scaffold.js";
 
 /** This checkout: two levels up from dist/ is the package, four is the repo. */
 const repo = path.resolve(import.meta.dirname, "../../..");
@@ -19,7 +19,7 @@ const read = (root: string, rel: string): string => fs.readFileSync(path.join(ro
 
 test("a new pewter is a pewter — the host can find it", () => {
   const root = path.join(into(), "tinkering");
-  scaffold({ root, link: "/somewhere/fsio" });
+  scaffold({ root });
   const pkg = JSON.parse(read(root, "package.json"));
   // The one field `findPewter` looks for. Without it the folder is an
   // ordinary npm project and `pewt` refuses to run in it.
@@ -30,33 +30,51 @@ test("a new pewter is a pewter — the host can find it", () => {
   // and `npm run check` failing with a usage error would be somebody's
   // second experience of a new pewter.
   assert.equal(pkg.scripts.check, undefined);
-  // No dependencies yet, and that is deliberate: `pewt` and `pewter` are
-  // linked into node_modules until they publish, because a dependency npm
-  // cannot install would be worse than none in a file somebody commits.
-  assert.equal(pkg.dependencies, undefined);
 });
 
-test("linking puts pewt where `npm start` looks for it", () => {
+// The regression this file exists for now (#181). These two were bare
+// symlinks that `package.json` deliberately did not mention, npm prunes
+// whatever no dependency declares, and so the first `npm install` of
+// anything deleted them — including the `npm i <adapter>` that `pewt agents`
+// itself tells you to run. Declared is the entire fix, and it is a property
+// of the written file rather than of anything that runs, so it is checkable
+// here with no network and no npm.
+test("pewt and pewter are declared, which is what stops npm pruning them", () => {
   const root = path.join(into(), "p");
-  scaffold({ root, link: repo });
-  const linked = link(root, repo);
-  assert.ok(linked.includes("node_modules/.bin/pewt"));
-  // `npm start` runs `pewt serve`, which npm resolves through node_modules/.bin.
-  const shim = path.join(root, "node_modules/.bin/pewt");
-  assert.ok(fs.existsSync(shim), "the bin shim resolves");
-  // And an extension's `import { pewt } from "pewter"` has something to find.
-  assert.ok(fs.existsSync(path.join(root, "node_modules/pewter/dist/index.js")));
+  scaffold({ root });
+  const pkg = JSON.parse(read(root, "package.json"));
+  assert.equal(pkg.dependencies.pewt, "github:dglazkov/fsio#pewt");
+  assert.equal(pkg.dependencies.pewter, "github:dglazkov/fsio#pewter");
 });
 
-test("linking an unbuilt checkout says so instead of producing a broken pewter", () => {
+test("--link spells them as relative file: paths, with no home directory in them", () => {
   const root = path.join(into(), "p");
-  scaffold({ root, link: "/nowhere" });
-  assert.throws(() => link(root, path.join(into(), "empty-checkout")), /has not been built/);
+  scaffold({ root, source: { kind: "checkout", path: repo } });
+  const pkg = JSON.parse(read(root, "package.json"));
+  for (const name of ["pewt", "pewter"]) {
+    const spec = pkg.dependencies[name];
+    assert.match(spec, /^file:\.\./, `${name} is relative`);
+    // The cost the old comment worried about, and the reason this is
+    // relative: this file goes into a git repository, and an absolute path
+    // would carry somebody's home directory into it.
+    assert.doesNotMatch(spec, /^file:\//, `${name} carries no absolute path`);
+    // It still has to point at the real thing.
+    assert.equal(path.resolve(root, spec.slice("file:".length)), path.join(repo, "packages", name));
+  }
+});
+
+test("both spellings name the directory node_modules will hold", () => {
+  // The key is what npm installs under, whatever the package on the other
+  // end calls itself — which is why an extension's `import … from "pewter"`
+  // resolves with no registry name anywhere in the story.
+  for (const source of [{ kind: "git" } as const, { kind: "checkout", path: repo } as const]) {
+    assert.deepEqual(Object.keys(dependencies("/p", source)).sort(), ["pewt", "pewter"]);
+  }
 });
 
 test("it ships one extension, in the shape the bundler compiles", () => {
   const root = path.join(into(), "p");
-  scaffold({ root, link: "/somewhere/fsio" });
+  scaffold({ root });
   // `bundleExtension` needs exactly these two names.
   assert.ok(fs.existsSync(path.join(root, "extensions/repos/index.html")));
   assert.ok(fs.existsSync(path.join(root, "extensions/repos/main.ts")));
@@ -70,7 +88,7 @@ test("it ships one extension, in the shape the bundler compiles", () => {
 
 test("everything sorts by what deletes it", () => {
   const root = path.join(into(), "p");
-  scaffold({ root, link: "/somewhere/fsio" });
+  scaffold({ root });
   const ignored = read(root, ".gitignore");
   // Your work is not committed, which is what lets a pewter be pushed
   // somewhere public.
@@ -87,17 +105,17 @@ test("everything sorts by what deletes it", () => {
 
 test("tsconfig covers extensions/, which is what `pewt check` compiles", () => {
   const root = path.join(into(), "p");
-  scaffold({ root, link: "/somewhere/fsio" });
+  scaffold({ root });
   assert.deepEqual(JSON.parse(read(root, "tsconfig.json")).include, ["extensions"]);
 });
 
 test("a folder with things in it is a merge, not a start", () => {
   const root = into();
   fs.writeFileSync(path.join(root, "notes.md"), "mine");
-  assert.throws(() => scaffold({ root, link: "/somewhere/fsio" }), (e: unknown) => e instanceof NotEmpty);
+  assert.throws(() => scaffold({ root }), (e: unknown) => e instanceof NotEmpty);
 });
 
 test("a folder that does not exist yet is fine", () => {
   const root = path.join(into(), "deep", "nested", "pewter");
-  assert.deepEqual(scaffold({ root, link: "/x" }).includes("package.json"), true);
+  assert.deepEqual(scaffold({ root }).includes("package.json"), true);
 });

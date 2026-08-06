@@ -15,7 +15,8 @@
   },
   "scripts": {
     "build": "wireit",
-    "test": "wireit"
+    "test": "wireit",
+    "bundle": "wireit"
   },
   "wireit": {
     "build": {
@@ -43,6 +44,19 @@
         "../client/src/**"
       ],
       "output": [],
+      "dependencies": [
+        "build"
+      ]
+    },
+    "bundle": {
+      "command": "node scripts/make-artifact.mjs",
+      "files": [
+        "scripts/make-artifact.mjs",
+        "artifact/**"
+      ],
+      "output": [
+        "artifact-dist/**"
+      ],
       "dependencies": [
         "build"
       ]
