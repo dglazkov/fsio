@@ -19,6 +19,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { ADAPTERS } from "../packages/pewt/dist/agents.js";
 import { readReport, waitFor } from "./harness-rig.mjs";
 
 const repo = path.resolve(import.meta.dirname, "..");
@@ -79,6 +80,38 @@ function makePewter() {
   fs.mkdirSync(modules, { recursive: true });
   fs.symlinkSync(path.join(repo, "packages/pewter"), path.join(modules, "pewter"), "dir");
 
+  // An ACP adapter, exactly where `npm i` would leave one: the package, and
+  // its binary linked into node_modules/.bin. That is what the roster reads,
+  // so this is the real lookup rather than a way around it. A fixture and not
+  // a real adapter because a rig must not need a model, a credential, or a
+  // network — and because a real one phrases things differently every run.
+  const adapter = ADAPTERS[0];
+  const pkgDir = path.join(modules, ...adapter.pkg.split("/"));
+  fs.mkdirSync(pkgDir, { recursive: true });
+  fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: adapter.pkg, version: adapter.measured }));
+  const agentBin = path.join(modules, ".bin", adapter.bin);
+  fs.mkdirSync(path.dirname(agentBin), { recursive: true });
+  fs.writeFileSync(
+    agentBin,
+    `#!/usr/bin/env node
+let buf = "";
+process.stdin.on("data", (c) => {
+  buf += c;
+  for (;;) {
+    const at = buf.indexOf("\\n");
+    if (at === -1) break;
+    const line = buf.slice(0, at);
+    buf = buf.slice(at + 1);
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line);
+    if (msg.method === "leave") process.exit(0);
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { saw: msg.method } }) + "\\n");
+  }
+});
+`
+  );
+  fs.chmodSync(agentBin, 0o755);
+
   fs.mkdirSync(path.join(root, "repos", "site", ".git"), { recursive: true });
   fs.mkdirSync(path.join(root, "repos", "atlas"), { recursive: true });
 
@@ -86,7 +119,7 @@ function makePewter() {
   fs.mkdirSync(ext, { recursive: true });
   fs.writeFileSync(
     path.join(ext, "index.html"),
-    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
+    `<main><h1>Projects</h1><ul id="list"></ul><p id="note">asking the host…</p><p id="ran">no run yet</p><p id="shelled">no shell yet</p><p id="talked">no agent yet</p></main>\n<script type="module" src="./main.ts"></script>\n`
   );
   // The extension under test: it imports the package, calls the API, and
   // renders the answer. Nothing about it is special to the rig.
@@ -130,6 +163,19 @@ document.getElementById("shelled")!.textContent = term.join("").includes("the-sh
   ? \`exit \${left} · the shell answered\`
   : \`exit \${left} · nothing came back from the shell\`;
 
+// An ACP agent, from the same sandbox, against a real adapter this pewter
+// depends on. The extension is the client: what crosses is whole messages.
+const heard: unknown[] = [];
+const agent = await pewt.agent({ onMessage: (m) => heard.push(m) });
+agent.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
+for (let i = 0; i < 200 && heard.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+agent.send({ jsonrpc: "2.0", method: "leave" });
+const agentLeft = await agent.exit;
+const answered = heard[0] as { result?: { saw?: string } } | undefined;
+document.getElementById("talked")!.textContent = answered?.result?.saw === "initialize"
+  ? \`exit \${agentLeft} · the agent answered\`
+  : \`exit \${agentLeft} · nothing came back from the agent\`;
+
 document.title = "projects";
 `
   );
@@ -150,10 +196,10 @@ document.title = "projects";
  *  undefined, so a run in which everything worked timed out waiting for
  *  itself. Exported and pure so it can be checked against a report from a
  *  real run without spending another human click on it. */
-export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "shell") ? report : null);
+export const ready = (report) => (report?.open && report.calls?.some((c) => c.method === "agent") ? report : null);
 
 /** The verdict, as a list of [what, ok, detail]. Pure for the same reason. */
-export function verdict({ report, bundleExists, rendered, ran, shelled }) {
+export function verdict({ report, bundleExists, rendered, ran, shelled, talked }) {
   return [
     ["the extension opened", !!report.open, report.open],
     ["its frame has an origin of its own", report.opaqueOrigin === true, report.opaqueOrigin],
@@ -164,6 +210,8 @@ export function verdict({ report, bundleExists, rendered, ran, shelled }) {
     ["its output reached the extension, and so did its exit code", ran === "exit 0 · the script's line arrived", ran],
     ["a shell the extension asked for opened on the machine", report.calls.some((c) => c.method === "shell" && c.ok), report.calls],
     ["it took what the extension typed, and answered with its exit code", shelled === "exit 0 · the shell answered", shelled],
+    ["an agent the extension asked for started from this pewter's own node_modules", report.calls.some((c) => c.method === "agent" && c.ok), report.calls],
+    ["and a whole ACP message crossed the sandbox in each direction", talked === "exit 0 · the agent answered", talked],
   ];
 }
 
@@ -218,7 +266,7 @@ async function run() {
   // are two capabilities (P3) — and a rig that had to be told about the shell
   // separately is the point of the split rather than a nuisance.
   child("pewt", process.execPath, [
-    path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open", "--allow-runs", "--allow-shells",
+    path.join(repo, "packages/pewt/dist/cli.js"), "--dir", root, "serve", "--no-open", "--allow-runs", "--allow-shells", "--allow-agents",
   ]);
   child("shell", "npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], path.join(repo, "packages/pewter-shell"));
   await waitFor(
@@ -279,9 +327,10 @@ async function run() {
   const rendered = await read("#note");
   const ran = await read("#ran");
   const shelled = await read("#shelled");
+  const talked = await read("#talked");
 
   const bundle = path.join(root, ".pewter", "build", "repos.html");
-  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered, ran, shelled });
+  const checks = verdict({ report, bundleExists: fs.existsSync(bundle), rendered, ran, shelled, talked });
 
   console.log();
   let failed = 0;

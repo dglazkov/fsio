@@ -22,7 +22,9 @@ import { parseArgs } from "./args.js";
 import { call, CallError } from "./call.js";
 import { NodeDirectory } from "./node-fs.js";
 import { byMethod } from "./ops.js";
+import { planAgent, AgentError, type AgentSpec } from "./agent.js";
 import { findPewter, NotAPewter } from "./pewter.js";
+import { pipeAgent } from "./pipe.js";
 import { planRun, RunError, type RunSpec } from "./run.js";
 import { serve, stop } from "./serve.js";
 import { runOnHost } from "./stream.js";
@@ -56,6 +58,7 @@ if (parsed.kind === "serve") {
     open: parsed.open,
     allowRuns: parsed.allowRuns,
     allowShells: parsed.allowShells,
+    allowAgents: parsed.allowAgents,
   }).catch((e: unknown) => {
     // A second host on the same folder is an operator message, not a crash.
     console.error(`pewt: ${e instanceof Error ? e.message : String(e)}`);
@@ -75,6 +78,26 @@ if (parsed.kind === "serve") {
   // and this process can read both, so asking a host to describe a run it is
   // not going to start would only mean the answer needs a host to exist.
   if (parsed.dryRun) {
+    if (parsed.method === "agent") {
+      // Resolvable here, on this side of the folder: which adapters this
+      // pewter depends on is two files this process can read. Asking a host
+      // to describe an agent it is not going to start would only mean the
+      // answer needs a host to exist.
+      try {
+        const plan = planAgent(pewter, parsed.spec as AgentSpec);
+        console.log(
+          parsed.json
+            ? JSON.stringify({ dryRun: true, agent: plan.adapter.name, version: plan.version, asks: plan.adapter.asks, unmeasured: plan.unmeasured, where: plan.where }, null, 2)
+            : `would start  ${plan.adapter.title}${plan.version ? ` ${plan.version}` : ""}\n         cwd  ${plan.where}/\n              ${plan.adapter.asks ? "it asks before it edits" : "it edits with its own hands"}\n\n(nothing started — the host was not asked)`
+        );
+        process.exit(0);
+      } catch (e) {
+        if (!(e instanceof AgentError)) throw e;
+        console.error(`pewt: ${e.message}`);
+        if (e.hint) console.error(`  ${e.hint}`);
+        process.exit(1);
+      }
+    }
     if (parsed.method === "shell") {
       // A shell's spec is already resolved (args.ts), so there is nothing to
       // look up: what a dry run can say is where it would start. Which
@@ -102,6 +125,34 @@ if (parsed.kind === "serve") {
       console.error(`pewt: ${e.message}`);
       if (e.hint) console.error(`  ${e.hint}`);
       process.exit(1);
+    }
+  }
+
+  if (parsed.method === "agent") {
+    // --json is what this already is. Every line out is one JSON message, so
+    // a flag promising JSON would either change nothing or wrap the agent's
+    // protocol in a second one.
+    if (parsed.json) {
+      console.error("pewt: agent has no --json — every line it prints is already one JSON message");
+      process.exit(2);
+    }
+    try {
+      const outcome = await pipeAgent(
+        new NodeDirectory(pewter.root),
+        parsed.spec,
+        { input: process.stdin, output: process.stdout, errors: process.stderr },
+        { onWaiting: () => process.stderr.write("pewt: waiting for the host to allow this agent — it is asking on its own terminal\n") }
+      );
+      if (outcome.ended === "host_gone") {
+        process.stderr.write("pewt: the host stopped, and the agent stopped with it\n");
+        process.exit(3);
+      }
+      process.exit(outcome.exitCode ?? 1);
+    } catch (e) {
+      const err = e instanceof CallError ? e : null;
+      console.error(`pewt: ${err ? err.message : e instanceof Error ? e.message : String(e)}`);
+      if (err?.hint) console.error(`  ${err.hint}`);
+      process.exit(err?.reason === "refused" ? 1 : 3);
     }
   }
 

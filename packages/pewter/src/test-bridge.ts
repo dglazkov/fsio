@@ -233,6 +233,43 @@ test("a shell is live: it starts, takes what it is sent, and ends in a code", as
   }
 });
 
+test("an agent is live too, and what crosses is whole messages", async () => {
+  // The extension is the ACP client; the channel carries its messages and
+  // reads none of them. So what is under test is that an object goes in one
+  // piece and comes back one, keyed to the call that opened the agent.
+  const { port1, port2 } = new MessageChannel();
+  const sent: unknown[] = [];
+  port2.onmessage = (e: MessageEvent) => {
+    const call = asCall(e.data);
+    if (call) {
+      port2.postMessage(event(call.id, { started: true }));
+      return;
+    }
+    const more = asSend(e.data)!;
+    const body = more.body as { m?: unknown; close?: boolean };
+    if (body.close) return;
+    sent.push(body.m);
+    // A peer answering the request it was just handed.
+    port2.postMessage(event(more.id, { m: { jsonrpc: "2.0", id: (body.m as { id: number }).id, result: { ok: true } } }));
+    port2.postMessage(answer(more.id, { exitCode: 0 }));
+  };
+  port2.start();
+
+  const channel = new Channel();
+  channel.attach(port1);
+  const heard: unknown[] = [];
+  try {
+    const agent = await apiFor(channel).agent({ repo: "fsio", onMessage: (m) => heard.push(m) });
+    agent.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
+    assert.equal(await agent.exit, 0);
+    assert.deepEqual(sent, [{ jsonrpc: "2.0", id: 1, method: "initialize" }]);
+    assert.deepEqual(heard, [{ jsonrpc: "2.0", id: 1, result: { ok: true } }]);
+  } finally {
+    port1.close();
+    port2.close();
+  }
+});
+
 test("a shell that is refused rejects rather than handing back something dead", async () => {
   const { port1, port2 } = new MessageChannel();
   port2.onmessage = (e: MessageEvent) => {

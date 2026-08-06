@@ -338,6 +338,74 @@ export async function shellOnHost(spec: Record<string, unknown>, onData: (chunk:
   };
 }
 
+/** An agent that is running, as the bridge holds one. */
+export interface AgentHandle {
+  send(message: unknown): void;
+  close(): void;
+  readonly exit: Promise<{ exitCode: number | null }>;
+}
+
+/** Open an ACP agent on the host.
+ *
+ *  The fourth kind of session this page opens, and the only one carrying a
+ *  protocol that is not ours. The host promised one DATA frame is exactly one
+ *  complete ACP message in both directions, so there is no buffer here and no
+ *  half-message state — an extension gets whole messages or nothing.
+ *
+ *  This page is not the ACP client. The extension is: `session/request_
+ *  permission` and `fs/*` are requests from the agent, and the party that
+ *  should answer them is the one with the human and the screen. All this does
+ *  is carry them. */
+export async function agentOnHost(spec: Record<string, unknown>, onMessage: (message: unknown) => void): Promise<AgentHandle> {
+  if (!client) throw new ShellCallError("no_session", "the shell is not connected to a host", "start one in the pewter: npm start");
+  const session = client.createSession({ kind: "agent", client: "pewter-shell", ...spec }, { pollMs: 15 });
+
+  let settle: ((result: { exitCode: number | null }) => void) | null = null;
+  const exit = new Promise<{ exitCode: number | null }>((resolve) => {
+    settle = resolve;
+  });
+
+  session.on("data", (bytes) => {
+    try {
+      onMessage(JSON.parse(new TextDecoder().decode(bytes)));
+    } catch {
+      // A frame that is not a message would be a host bug (it enforces the
+      // contract), and handing an extension half a protocol is worse than
+      // handing it none.
+      log("dropped a frame from the agent that was not a message");
+    }
+  });
+  // The backstop and the signal both: a DATA frame here is one ACP message,
+  // so an end marker among them would be a message this build invented in
+  // somebody else's protocol. The grace period is what keeps the agent's last
+  // words from being cut off.
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  session.on("status", (status) => {
+    if ((status.state !== "exited" && status.state !== "error") || grace) return;
+    grace = setTimeout(() => settle?.({ exitCode: status.exitCode ?? null }), 500);
+  });
+
+  try {
+    await session.ready;
+  } catch (e) {
+    await session.close().catch(() => {});
+    if (e instanceof RpcError) {
+      const data = (e.data ?? {}) as { code?: string; hint?: string };
+      throw new ShellCallError(data.code ?? "refused", e.message, data.hint);
+    }
+    throw new ShellCallError("transport", e instanceof Error ? e.message : String(e));
+  }
+
+  return {
+    send: (message) => session.sendData(JSON.stringify(message)),
+    close: () => {
+      void session.close().catch(() => {});
+      settle?.({ exitCode: null });
+    },
+    exit: exit.finally(() => void session.close().catch(() => {})),
+  };
+}
+
 /** Read a folder-relative path through the grant this page already holds.
  *
  *  This is how an extension's bundle reaches the shell: the host says where

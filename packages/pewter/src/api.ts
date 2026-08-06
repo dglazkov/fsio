@@ -8,6 +8,7 @@
 // should not have to think about: calls made before the shell hands over the
 // port are queued rather than lost, every call gets exactly one answer, and
 // a refusal arrives as a thrown error carrying the operation's own code.
+import { agentSpec, type Agent, type AgentEntry, type AgentOptions } from "./agent.js";
 import { shellSpec, type Shell, type ShellOptions, type ShellResult } from "./shell.js";
 import { asAnswer, asEvent, send, WIRE_VERSION, type ApiError, type Call } from "./wire.js";
 
@@ -98,11 +99,30 @@ export interface PewtApi {
    *  included, so drawing one needs a terminal emulator. This API hands over
    *  the stream and holds no opinion about what renders it. */
   shell(options?: ShellOptions): Promise<Shell>;
+  agents: {
+    /** Every ACP adapter this build knows, and which of them your pewter
+     *  actually depends on. An adapter is an ordinary npm dependency, so this
+     *  is a reading of your own `package.json` rather than a scan of your
+     *  machine. */
+    list(): Promise<{ agents: AgentEntry[] }>;
+  };
+  /** Start an agent on a project.
+   *
+   *  It resolves once the adapter is running — after a human at the host's
+   *  terminal has allowed it — and what it resolves to is live: send it ACP
+   *  messages, read them through `onMessage`, and await its exit.
+   *
+   *  **You are the ACP client.** Pewter carries the protocol and does not
+   *  speak it, so correlating ids, answering `session/request_permission`,
+   *  and serving `fs/*` through the folder are yours. That is what makes the
+   *  permission question a screen somebody designed rather than a redraw in
+   *  a terminal nobody can style. */
+  agent(options?: AgentOptions): Promise<Agent>;
 }
 
 /** Every method this package knows how to spell, in wire form. The host's
  *  table is the authority; this is the list that gets checked against it. */
-export const METHODS = ["repos.list", "ext.bundle", "run", "shell"] as const;
+export const METHODS = ["repos.list", "ext.bundle", "agents.list", "run", "shell", "agent"] as const;
 
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
@@ -246,6 +266,39 @@ export function apiFor(channel: Channel): PewtApi {
         exit: new Promise<number | null>((resolve) => {
           answer.then(
             (result) => resolve((result as ShellResult).exitCode),
+            () => resolve(null)
+          );
+        }),
+      };
+      answer.catch((e: unknown) => failed?.(e instanceof Error ? e : new Error(String(e))));
+      return running;
+    },
+    agents: {
+      list: () => channel.call("agents.list") as Promise<{ agents: AgentEntry[] }>,
+    },
+    agent: (options = {}) => {
+      // The same two-promise shape a shell has, and for the same reason: the
+      // call settles when the agent exits, and `pewt.agent()` settles when it
+      // started. The gap between them is a human deciding.
+      let started: ((agent: Agent) => void) | null = null;
+      let failed: ((e: Error) => void) | null = null;
+      const running = new Promise<Agent>((resolve, reject) => {
+        started = resolve;
+        failed = reject;
+      });
+
+      const { id, answer } = channel.open("agent", agentSpec(options), (payload) => {
+        const e = payload as { m?: unknown; started?: unknown };
+        if (e.started) started?.(agent);
+        else if ("m" in e) options.onMessage?.(e.m);
+      });
+
+      const agent: Agent = {
+        send: (message) => channel.send(id, { m: message }),
+        close: () => channel.send(id, { close: true }),
+        exit: new Promise<number | null>((resolve) => {
+          answer.then(
+            (result) => resolve((result as { exitCode: number | null }).exitCode),
             () => resolve(null)
           );
         }),

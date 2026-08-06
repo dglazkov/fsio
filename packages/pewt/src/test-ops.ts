@@ -82,6 +82,25 @@ test("pewt shell carries the working directory the wire expects", () => {
   assert.equal(parseArgs(["shell", "bash"]).kind, "error");
 });
 
+test("pewt agents and pewt agent are different commands, and neither eats the other", () => {
+  // One is a request with an answer, the other starts a process, and they
+  // differ by one letter. The longest-match rule keeps them apart; this is
+  // where that stays true.
+  const listed = parseArgs(["agents"]);
+  assert.equal(listed.kind, "op");
+  assert.equal(listed.kind === "op" && listed.method, "agents.list");
+
+  const started = parseArgs(["agent", "pi-acp", "--repo", "site"]);
+  assert.equal(started.kind, "process");
+  assert.equal(started.kind === "process" && started.method, "agent");
+  assert.deepEqual(started.kind === "process" && started.spec, { agent: "pi-acp", repo: "site" });
+  // Naming none is the common case: a page cannot know what is installed, so
+  // the host chooses from its own roster.
+  assert.deepEqual(parseArgs(["agent"]).kind === "process" && (parseArgs(["agent"]) as { spec: unknown }).spec, {});
+  assert.equal(parseArgs(["agent", "one", "two"]).kind, "error");
+  assert.equal(parseArgs(["agents", "--repo", "site"]).kind, "error");
+});
+
 test("--repo and --dry-run are refused by commands that start nothing", () => {
   assert.equal(parseArgs(["repos", "--repo", "site"]).kind, "error");
   assert.equal(parseArgs(["repos", "--dry-run"]).kind, "error");
