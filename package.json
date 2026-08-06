@@ -1,0 +1,20 @@
+{
+  "name": "fsio-terminal-demo",
+  "version": "0.0.0-f1994346a2eb",
+  "description": "fsio /terminal demo helper: a sandboxed shell over your working folder. Run in the folder you want to share; see the demo page for the other half.",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "bin": {
+    "fsio-terminal-demo": "./helper.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.mjs"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  }
+}
