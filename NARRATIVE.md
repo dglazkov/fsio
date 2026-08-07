@@ -115,7 +115,7 @@ extensions/
 │   ├── index.html
 │   └── main.ts
 ├── terminal/       A shell on your machine, drawn by an emulator you chose.
-├── chat/           Where you talk to an agent.
+├── agent/          Where you talk to an agent.
 └── dashboard/      What is happening in a project right now.
 ```
 
@@ -343,7 +343,7 @@ have, because that answer was measured against one build and yours may not
 be it. The host asks before it starts an agent, and its question repeats
 whether this one will ask you back.
 
-The conversation happens in a tab. `extensions/chat/` is an extension like
+The conversation happens in a tab. `extensions/agent/` is an extension like
 any other: change how it looks, add to it, or replace it. From there the
 agent reads `AGENTS.md` and works through `pewt` exactly as you would, and
 the conversation rides the folder, so it lands in the same transcripts every
@@ -483,7 +483,7 @@ operations. Neither is the real one:
 | `pewt shell --repo site` | `await pewt.shell({ repo: "site" })` |
 | `pewt agents` | `await pewt.agents.list()` |
 | `pewt agent --repo site` | `await pewt.agent({ repo: "site" })` |
-| `pewt tabs add chat` | `await pewt.tabs.add({ name: "chat" })` |
+| `pewt tabs add agent` | `await pewt.tabs.add({ name: "agent" })` |
 | `pewt open notes.md` | `await pewt.open("notes.md")` |
 | `pewt fling report.html` | `await pewt.fling("report.html")` |
 | `pewt files` | `await pewt.files.list()` |
