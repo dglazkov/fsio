@@ -25,7 +25,7 @@ import { asTabCommand, bodyLabel, describeGrant, grantId, shellSpec, sizeText, t
 import { roster, type RosterEntry } from "./agents.js";
 import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
 import { GrantsError, readGrants, revokeGrant } from "./grants.js";
-import { listRepos, type Project } from "./repos.js";
+import { createRepo, listRepos, ReposError, type Project } from "./repos.js";
 import type { Pewter } from "./pewter.js";
 
 /** An operation said no. Distinct from a transport failure: the request
@@ -129,15 +129,41 @@ export const reposList = define<Record<string, never>, { repos: Project[] }>({
   parse: noParams,
   run: async (p) => ({ repos: await listRepos(p) }),
   render: ({ repos }) => {
-    // An empty pewter is the normal first state and the normal state after a
-    // clone, so it gets a sentence rather than a blank line — `repos/` is
-    // git-ignored, which is the whole point and also the surprise.
+    // An empty pewter is the normal first state, so the empty answer's one
+    // job is the next step. The clone-restore surprise — `repos/` is
+    // git-ignored, so projects do not travel with a pewter — belongs to the
+    // moment someone clones, and it lives in the scaffold's AGENTS.md and the
+    // narrative, not here (#188).
     if (repos.length === 0) {
-      return "no projects yet — repos/ is empty.\n  A cloned pewter starts this way: your extensions come back, your work does not.";
+      return "no projects yet — repos/ is empty.\n  Start one:   pewt repos create <name>\n  Clone one:   pewt repos clone <url>";
     }
     const width = Math.max(...repos.map((r) => r.name.length));
     return repos.map((r) => `  ${r.name.padEnd(width)}  ${r.git ? "git" : "(not a git repository)"}`).join("\n");
   },
+});
+
+export const reposCreate = define<{ name: string }, { repo: Project }>({
+  method: "repos.create",
+  cli: ["repos", "create"],
+  summary: "start a new project in repos/",
+  usage: "<name>",
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "repos create takes one project name");
+    return { name: argv[0] };
+  },
+  parse: (params) => ({ name: str(params, "name") }),
+  // No question. It is a mkdir and a `git init` in the folder the caller was
+  // already granted, and git init executes nothing — the same reasoning that
+  // left `ext.bundle` and `pewt check` unasked (#189).
+  run: async (p, { name }) => {
+    try {
+      return { repo: await createRepo(p, name) };
+    } catch (e) {
+      if (e instanceof ReposError) throw new OpError(e.code, e.message, e.hint);
+      throw e;
+    }
+  },
+  render: ({ repo }) => `${repo.name} → repos/${repo.name}/ — a git repository, ready to work in`,
 });
 
 export const extBundle = define<{ name: string }, Bundle>({
@@ -458,6 +484,7 @@ export const filesDrop = definePage<{ id: string }, { id: string; name: string; 
 
 export const OPERATIONS: Operation[] = [
   reposList,
+  reposCreate,
   extBundle,
   agentsList,
   grantsList,
@@ -572,7 +599,31 @@ export const agentProcess: ProcessOperation = {
   },
 };
 
-export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess];
+export const cloneProcess: ProcessOperation = {
+  method: "repos.clone",
+  cli: ["repos", "clone"],
+  summary: "clone a repository into repos/",
+  usage: "<url> [name]",
+  repo: false,
+  fromArgv: (argv) => {
+    if (argv.length < 1 || argv.length > 2 || !argv[0]) {
+      throw new OpError("usage", "repos clone takes a url and, optionally, a project name");
+    }
+    return { url: argv[0], ...(argv[1] ? { name: argv[1] } : {}) };
+  },
+  // The url and the name are checked against the disk when the clone is
+  // planned (clone.ts), which is the only check that means anything: what a
+  // url has to be is "something git can fetch", and git is the authority.
+  parse: (params) => {
+    const name = (params as Record<string, unknown> | null)?.["name"];
+    if (name !== undefined && (typeof name !== "string" || name === "")) {
+      throw new OpError("bad_params", "name must be a project name");
+    }
+    return { url: str(params, "url"), ...(name !== undefined ? { name } : {}) };
+  },
+};
+
+export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess, cloneProcess];
 
 export const processByMethod = (method: string): ProcessOperation | undefined =>
   PROCESSES.find((o) => o.method === method);

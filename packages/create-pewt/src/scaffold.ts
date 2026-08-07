@@ -177,7 +177,8 @@ the channel between this machine and the Pewter page at once.
   and a \`main.ts\`; it imports \`pewter\` for the API and is bundled into a
   single file when a tab opens it. There is no plugin API to learn.
 - Projects live in \`repos/\`, each its own git repository, and none of them
-  are committed here.
+  are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
+  clone <url>\` fetches one, and the Projects screen offers both.
 - \`npm run check\` compiles \`extensions/\` and says what is wrong. It needs no
   host and no browser, so it is the signal to use while writing — open a tab
   to see whether a screen is *right*, run this to know whether it *compiles*.
@@ -202,6 +203,18 @@ is code somebody can read, including you in six months.
     <p id="note">asking the host…</p>
   </header>
   <ul id="list"></ul>
+  <section id="verbs">
+    <form id="create">
+      <input id="create-name" placeholder="a name" autocomplete="off" spellcheck="false" />
+      <button>New project</button>
+    </form>
+    <form id="clone">
+      <input id="clone-url" placeholder="https://… or git@… or a path" autocomplete="off" spellcheck="false" />
+      <button>Clone</button>
+    </form>
+  </section>
+  <p id="error" hidden></p>
+  <pre id="progress" hidden></pre>
 </main>
 <script type="module" src="./main.ts"></script>
 `
@@ -227,6 +240,25 @@ li {
 }
 li .kind { opacity: 0.5; font-size: 0.8rem; }
 .empty { opacity: 0.7; }
+#verbs { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.6rem; }
+#verbs form { display: flex; gap: 0.4rem; flex: 1; min-width: 14rem; }
+#verbs input {
+  flex: 1; min-width: 0; font: inherit; padding: 0.35rem 0.6rem;
+  border-radius: 6px; border: 1px solid light-dark(#0003, #fff3);
+  background: transparent; color: inherit;
+}
+#verbs button {
+  font: inherit; font-size: 0.85rem; padding: 0.35rem 0.8rem; cursor: pointer;
+  border-radius: 6px; border: 1px solid light-dark(#0004, #fff4);
+  background: light-dark(#fff, #222228); color: inherit; white-space: nowrap;
+}
+#verbs button:disabled, #verbs input:disabled { opacity: 0.5; cursor: default; }
+#error { color: light-dark(#a3372e, #ff8f85); font-size: 0.85rem; white-space: pre-wrap; }
+#progress {
+  margin-top: 1rem; padding: 0.8rem 1rem; max-height: 14rem; overflow-y: auto;
+  font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  border-radius: 8px; background: light-dark(#0000000d, #ffffff0d);
+}
 `
   );
 
@@ -236,21 +268,30 @@ li .kind { opacity: 0.5; font-size: 0.8rem; }
 //
 // It is not part of the product. It is this file, in your pewter, and you can
 // read it, change it, or delete it. Nothing it uses is private to it: every
-// call below has a spelling on the command line too.
-import { pewt } from "pewter";
+// call below has a spelling on the command line too — \`pewt repos\`,
+// \`pewt repos create <name>\`, \`pewt repos clone <url>\`.
+import { pewt, PewtError } from "pewter";
 
 const list = document.getElementById("list")!;
 const note = document.getElementById("note")!;
+const error = document.getElementById("error")!;
+const progress = document.getElementById("progress")!;
+const createForm = document.getElementById("create") as HTMLFormElement;
+const createName = document.getElementById("create-name") as HTMLInputElement;
+const cloneForm = document.getElementById("clone") as HTMLFormElement;
+const cloneUrl = document.getElementById("clone-url") as HTMLInputElement;
 
-const { repos } = await pewt.repos.list();
-
-if (repos.length === 0) {
-  note.textContent = "nothing in repos/ yet";
-  const empty = document.createElement("li");
-  empty.className = "empty";
-  empty.textContent = "A cloned pewter starts this way: your extensions come back, your work does not.";
-  list.append(empty);
-} else {
+async function refresh(): Promise<void> {
+  const { repos } = await pewt.repos.list();
+  list.replaceChildren();
+  if (repos.length === 0) {
+    note.textContent = "nothing in repos/ yet";
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No projects yet — start one, or clone one, below.";
+    list.append(empty);
+    return;
+  }
   note.textContent = \`\${repos.length} in repos/, read through the folder you granted\`;
   for (const repo of repos) {
     const row = document.createElement("li");
@@ -263,6 +304,70 @@ if (repos.length === 0) {
     list.append(row);
   }
 }
+
+/** A refusal, in the operation's own words — the code and hint travel with
+ *  the error, so this screen never has to guess what went wrong. */
+function complain(e: unknown): void {
+  const known = e instanceof PewtError ? e : null;
+  error.textContent = known ? known.message + (known.hint ? \`\\n\${known.hint}\` : "") : String(e);
+  error.hidden = false;
+}
+
+const busy = (on: boolean): void => {
+  for (const el of [createName, cloneUrl, ...createForm.querySelectorAll("button"), ...cloneForm.querySelectorAll("button")]) {
+    (el as HTMLInputElement | HTMLButtonElement).disabled = on;
+  }
+};
+
+createForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = createName.value.trim();
+  if (!name) return;
+  error.hidden = true;
+  busy(true);
+  pewt.repos
+    .create({ name })
+    .then(async () => {
+      createName.value = "";
+      await refresh();
+    })
+    .catch(complain)
+    .finally(() => busy(false));
+});
+
+cloneForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const url = cloneUrl.value.trim();
+  if (!url) return;
+  error.hidden = true;
+  progress.textContent = \`git clone \${url}\\n\`;
+  progress.hidden = false;
+  busy(true);
+  pewt.repos
+    // git's own lines, throttled by the host. Everything it says — progress
+    // included — arrives on "err", which is git's convention, not a failure.
+    .clone(url, {
+      onOutput: (line) => {
+        progress.append(line + "\\n");
+        progress.scrollTop = progress.scrollHeight;
+      },
+    })
+    .then(async ({ exitCode }) => {
+      if (exitCode === 0) {
+        cloneUrl.value = "";
+        progress.hidden = true;
+        await refresh();
+      } else {
+        // The reason is already on screen in git's words; this line says how
+        // it ended. A failed clone leaves nothing behind.
+        progress.append(\`\\nclone failed (exit \${exitCode ?? "?"})\\n\`);
+      }
+    })
+    .catch(complain)
+    .finally(() => busy(false));
+});
+
+await refresh();
 `
   );
 

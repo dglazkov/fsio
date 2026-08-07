@@ -343,9 +343,16 @@ export async function callHost(method: string, params: unknown): Promise<unknown
  *  The host asks a human at its own terminal before it starts anything, so
  *  `ready` here can take as long as somebody takes to answer, and a refusal
  *  is a normal outcome rather than a failure. */
-export async function runOnHost(spec: Record<string, unknown>, onLine: (line: string, stream: "out" | "err") => void): Promise<{ exitCode: number | null }> {
+export async function runOnHost(
+  spec: Record<string, unknown>,
+  onLine: (line: string, stream: "out" | "err") => void,
+  // A clone is the same conversation with a different child (`repos.clone`,
+  // packages/pewt/src/clone.ts): frames in, exit code out. One reader here,
+  // so the two cannot drift.
+  kind: "run" | "repos.clone" = "run"
+): Promise<{ exitCode: number | null }> {
   if (!client) throw new ShellCallError("no_session", "the shell is not connected to a host", "start one in the pewter: npm start");
-  const run = client.createSession({ kind: "run", client: "pewter-shell", ...spec }, { pollMs: 15 });
+  const run = client.createSession({ kind, client: "pewter-shell", ...spec }, { pollMs: 15 });
 
   let settle: ((result: { exitCode: number | null }) => void) | null = null;
   const finished = new Promise<{ exitCode: number | null }>((resolve) => {

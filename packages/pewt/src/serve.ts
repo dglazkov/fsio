@@ -24,6 +24,7 @@ import path from "node:path";
 import { HostServer, type HostLogger } from "@fsio/host";
 import { agentKind } from "./agent.js";
 import { spawnGate, terminalAsker, type Asker } from "./ask.js";
+import { cloneKind } from "./clone.js";
 import { GRANTS_FILE, readGrants } from "./grants.js";
 import { pewtKind } from "./kind.js";
 import { hasClientDirs, openInChromium, pageIsWatching } from "./open.js";
@@ -109,6 +110,7 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
   server.registerKind("pewt", pewtKind(p, router, log));
   server.registerKind("run", runKind(p, log));
   server.registerKind("agent", agentKind(p, log));
+  server.registerKind("repos.clone", cloneKind(p, log));
   await server.start();
 
   console.log(`

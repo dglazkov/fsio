@@ -76,10 +76,38 @@ export class PewtError extends Error {
  *  price is that this interface and the host's operation table are two
  *  copies of one list; @fsio/pewt's test-api.ts fails the build when they
  *  disagree. */
+/** What a clone does while it runs, and what to call the result.
+ *
+ *  `onOutput` is git's own lines, throttled at the host: progress repaints
+ *  arrive a few times a second, real lines always. Everything a clone says —
+ *  progress included — is stderr, which is git's convention, not an error. */
+export interface CloneOptions {
+  /** the directory name under `repos/`. Derived from the url when absent. */
+  name?: string;
+  onOutput?: (line: string, stream: "out" | "err") => void;
+}
+
+/** A finished clone. `exitCode` 0 is a project in `repos/`; anything else
+ *  left nothing behind — a dead clone leaves no half-repo. */
+export interface CloneResult {
+  exitCode: number | null;
+}
+
 export interface PewtApi {
   repos: {
     /** Every project in this pewter, by name. */
     list(): Promise<{ repos: Project[] }>;
+    /** Start a new project: a directory under `repos/`, `git init` run in
+     *  it, nothing else. Refused if the name is taken. Asks nobody — it is a
+     *  mkdir in the folder this page was already granted. */
+    create(params: { name: string }): Promise<{ repo: Project }>;
+    /** Clone a repository into `repos/`, streaming git's own output.
+     *
+     *  Resolves when git exits. Asks nobody (#189): git fetches and executes
+     *  nothing it fetched. A url that needs credentials fails rather than
+     *  prompts — the host runs git with no terminal to ask on — and the
+     *  failure arrives in git's own words through `onOutput`. */
+    clone(url: string, options?: CloneOptions): Promise<CloneResult>;
   };
   ext: {
     /** Build an extension into one self-contained HTML file. The shell calls
@@ -232,7 +260,7 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export const METHODS = ["repos.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS] as const;
+export const METHODS = ["repos.list", "repos.create", "repos.clone", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS] as const;
 
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
@@ -328,6 +356,23 @@ export function apiFor(channel: Channel): PewtApi {
   return {
     repos: {
       list: () => channel.call("repos.list") as Promise<{ repos: Project[] }>,
+      create: (params) => channel.call("repos.create", params) as Promise<{ repo: Project }>,
+      // A clone is `run`'s shape with a different child: the call stays open
+      // while git works, its output arrives as events on the same id, and the
+      // answer is the exit code.
+      clone: (url, options = {}) => {
+        const { onOutput } = options;
+        return channel.call(
+          "repos.clone",
+          { url, ...(options.name !== undefined ? { name: options.name } : {}) },
+          onOutput &&
+            ((event: unknown) => {
+              const line = event as { o?: unknown; e?: unknown };
+              if (typeof line.o === "string") onOutput(line.o, "out");
+              else if (typeof line.e === "string") onOutput(line.e, "err");
+            })
+        ) as Promise<CloneResult>;
+      },
     },
     ext: {
       bundle: (params) => channel.call("ext.bundle", params) as Promise<Bundle>,

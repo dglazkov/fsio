@@ -38,7 +38,7 @@
       ]
     },
     "test": {
-      "command": "node --test --test-concurrency=1 dist/test-pewter.js dist/test-repos.js dist/test-bundle.js dist/test-ops.js dist/test-api.js dist/test-paths.js dist/test-router.js dist/test-grants.js dist/test-check.js dist/test-loop.js dist/test-run.js dist/test-shell.js dist/test-agent.js",
+      "command": "node --test --test-concurrency=1 dist/test-pewter.js dist/test-repos.js dist/test-bundle.js dist/test-ops.js dist/test-api.js dist/test-paths.js dist/test-router.js dist/test-grants.js dist/test-check.js dist/test-loop.js dist/test-run.js dist/test-clone.js dist/test-shell.js dist/test-agent.js",
       "files": [
         "../host/src/**",
         "../client/src/**"

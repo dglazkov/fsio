@@ -94,6 +94,15 @@ const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-a
 export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnPolicy {
   const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents };
   return async (spec, info) => {
+    // The one kind that starts a process and is not asked about, so it does
+    // not ride the "starts nothing" branch below unremarked. Settled in #189
+    // on `pewt check`'s precedent: git fetches and executes nothing it
+    // fetched, and it writes only inside repos/. Narrated by name, because a
+    // host that goes quiet about what it starts has no record of it.
+    if (info.kind === "repos.clone") {
+      log.info(`● repos.clone — git will fetch into repos/, executing nothing (${from(info.origin)})`);
+      return true;
+    }
     if (!(info.kind in STARTS)) {
       log.info(`● ${info.kind} session — origin: ${info.origin ?? "(none reported)"}`);
       return true;

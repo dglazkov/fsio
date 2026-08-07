@@ -127,7 +127,7 @@ for (const repo of await pewt.repos.list()) {
 }
 
 addButton.onclick = () =>
-  pewt.repos.create({ name: nameField.value, github: true });
+  pewt.repos.create({ name: nameField.value });
 ```
 
 There is no plugin API to learn. `pewt.repos.list()` is the same operation
@@ -441,7 +441,7 @@ there is nothing to run.
 
 ```
 PEWTER      serve · check · doctor · api   (doctor, api not built)
-PROJECTS    repos {new, clone, link, rm} · template {new, apply}
+PROJECTS    repos {create, clone, link, rm} · template {new, apply}   (link, rm, template not built)
 RUNNING     run · shell · agent · agents
 THE PAGE    tabs {list, add, update, close, focus} · open · fling
             files {list, show, drop}
@@ -468,7 +468,8 @@ operations. Neither is the real one:
 | From a terminal | From an extension |
 | --- | --- |
 | `pewt repos` | `await pewt.repos.list()` |
-| `pewt repos new site --github` | `await pewt.repos.create({ name: "site", github: true })` |
+| `pewt repos create site` | `await pewt.repos.create({ name: "site" })` |
+| `pewt repos clone https://…/site.git` | `await pewt.repos.clone("https://…/site.git")` |
 | `pewt run build --repo site` | `await pewt.run("build", { repo: "site" })` |
 | `pewt shell --repo site` | `await pewt.shell({ repo: "site" })` |
 | `pewt agents` | `await pewt.agents.list()` |
@@ -529,7 +530,13 @@ agent` all start something, and the host asks first:
 The question appears in the terminal, not in the page. The page is the
 thing asking for permission, so the page cannot be the thing granting it.
 
-Only commands that launch a process prompt. Sending a tab title does not.
+Sending a tab title does not prompt — and neither does `pewt repos clone`,
+which does start a process. The line is not "starts a process" but "runs
+something of yours or something fetched": git fetches and executes nothing
+it fetched, the same reasoning that leaves `pewt check`'s compiler and
+`ext bundle`'s esbuild unasked. What a clone widens — the host reaching a
+network address somebody chose — is said here rather than put behind a
+prompt with no scope to offer.
 
 ### What "always" remembers
 
