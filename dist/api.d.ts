@@ -195,11 +195,17 @@ export interface PewtApi {
         list(): Promise<TabsListing>;
         /** Open an extension in a new tab. Refused if it does not build — the
          *  compile error comes back as the refusal, so a caller learns what is
-         *  wrong without opening the tab it asked for. */
+         *  wrong without opening the tab it asked for.
+         *
+         *  `args` is delivered to the opened extension (`import { args } from
+         *  "pewter"`), uninterpreted: what it means is between the sender and
+         *  the screen it opened. The repos row's shell verb is the worked
+         *  example — `{ name: "terminal", args: { repo } }`. */
         add(params: {
             name: string;
             title?: string;
             activate?: boolean;
+            args?: unknown;
         }): Promise<{
             id: string;
             name: string;

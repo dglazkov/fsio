@@ -68,13 +68,20 @@ export type TabCommand = {
     params: Record<string, never>;
 }
 /** Open an extension in a new tab. Twice means two tabs: `add` is a verb
- *  about the strip, and the way to bring an open one forward is `focus`. */
+ *  about the strip, and the way to bring an open one forward is `focus`.
+ *
+ *  `args` is what the tab opens *with* — an opaque JSON value delivered to
+ *  the extension on its handshake and interpreted by nobody in between.
+ *  What `{repo: "fsio"}` means is between the screen that sent it and the
+ *  screen that reads it; the page passes it through and does not keep it,
+ *  because a tab is what the strip shows, not how it was launched. */
  | {
     method: "tabs.add";
     params: {
         name: string;
         title?: string;
         activate?: boolean;
+        args?: unknown;
     };
 } | {
     method: "tabs.update";

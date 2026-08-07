@@ -90,7 +90,10 @@ export function asTabCommand(method, params) {
             const rest = opening(p);
             if (!name || !rest)
                 return null;
-            return { method, params: { name, ...rest } };
+            // `args` rides through unread. It arrived as JSON so it is a JSON
+            // value; checking its shape here would make the page party to a
+            // contract that belongs to the two extensions on either end of it.
+            return { method, params: { name, ...rest, ...("args" in p ? { args: p["args"] } : {}) } };
         }
         case "tabs.update": {
             const id = str(p, "id");

@@ -61,6 +61,6 @@ export const event = (id, payload) => ({ v: WIRE_VERSION, id, type: "pewt:event"
 export const send = (id, body) => ({ v: WIRE_VERSION, id, type: "pewt:send", body });
 export const answer = (id, result) => ({ v: WIRE_VERSION, id, ok: true, result });
 export const refusal = (id, error) => ({ v: WIRE_VERSION, id, ok: false, error });
-export const connect = () => ({ v: WIRE_VERSION, type: "pewt:connect" });
+export const connect = (args) => ({ v: WIRE_VERSION, type: "pewt:connect", ...(args !== undefined ? { args } : {}) });
 export const hello = () => ({ v: WIRE_VERSION, type: "pewt:hello" });
 //# sourceMappingURL=wire.js.map

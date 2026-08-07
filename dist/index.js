@@ -29,11 +29,24 @@ export * from "./wire.js";
 // both import from, which is what keeps them agreeing about the payload.
 export * from "./control.js";
 const channel = new Channel();
+let openedWith;
+/** What this tab was opened with — `tabs.add`'s `args`, or `undefined` when
+ *  the tab was opened bare.
+ *
+ *  A promise rather than a value because an extension's first line runs
+ *  before the shell's handshake lands; it settles when the port does, which
+ *  is the same moment the first API call can be answered. It is not on
+ *  `pewt` because `pewt` mirrors the operation table and this is not an
+ *  operation — nothing is asked, it is what arrived with the tab. */
+export const args = new Promise((resolve) => {
+    openedWith = resolve;
+});
 /** Take the port the shell offers. Exported so the shell's own tests — and
  *  anything driving an extension outside a browser — can hand one over
  *  directly instead of staging a window message. */
-export function connectTo(port) {
+export function connectTo(port, openArgs) {
     channel.attach(port);
+    openedWith(openArgs);
 }
 // Both halves run at import, in a browser only: this package is compiled and
 // tested in Node too, where there is no window and nobody to talk to.
@@ -47,8 +60,10 @@ if (typeof window !== "undefined" && window.parent !== window) {
         if (!isConnect(event.data) || channel.attached)
             return;
         const port = event.ports[0];
-        if (port)
+        if (port) {
             channel.attach(port);
+            openedWith(event.data.args);
+        }
     });
     // "*" because this frame cannot name the shell's origin any more than the
     // shell can name its own opaque one. The shell answers the frame it

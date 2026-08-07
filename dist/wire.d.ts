@@ -33,10 +33,19 @@ export interface Hello {
  *
  *  The port IS the capability. The extension holds no origin it could check
  *  and needs none: a party that did not receive this port cannot talk to the
- *  shell at all, and one that did is whoever the shell handed it to. */
+ *  shell at all, and one that did is whoever the shell handed it to.
+ *
+ *  `args` is what the tab was opened with — `tabs.add`'s `args`, delivered
+ *  here because the handshake already happens at exactly the right moment
+ *  and a second message would buy nothing. Absent when the tab was opened
+ *  bare. Added without a version bump: absence means what it always meant,
+ *  and no old build exists to meet this one in a tab (nothing is published —
+ *  if the shell ever deploys ahead of installed `pewt`s, that disagreement
+ *  is #164 item 9's business, version agreement). */
 export interface Connect {
     v: number;
     type: "pewt:connect";
+    args?: unknown;
 }
 /** Extension → shell, on the port. */
 export interface Call {
@@ -115,6 +124,6 @@ export declare const event: (id: number, payload: unknown) => Event;
 export declare const send: (id: number, body: unknown) => Send;
 export declare const answer: (id: number, result: unknown) => Answer;
 export declare const refusal: (id: number, error: ApiError) => Answer;
-export declare const connect: () => Connect;
+export declare const connect: (args?: unknown) => Connect;
 export declare const hello: () => Hello;
 //# sourceMappingURL=wire.d.ts.map
