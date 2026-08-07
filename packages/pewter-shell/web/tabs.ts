@@ -146,7 +146,9 @@ interface Prepared {
 async function prepare(command: TabCommand): Promise<Prepared> {
   if (command.method === "tabs.add") {
     const bundle = await buildExtension(command.params.name);
-    return { bundle, mount: mount(bundle.html, command.params.name) };
+    // `args` goes to the frame and nowhere else — not into the tab's state,
+    // which is what the strip shows, not how a tab was launched.
+    return { bundle, mount: mount(bundle.html, command.params.name, command.params.args) };
   }
 
   if (command.method === "files.open") {

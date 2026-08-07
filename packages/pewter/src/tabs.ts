@@ -87,8 +87,14 @@ export interface TabsListing {
 export type TabCommand =
   | { method: "tabs.list"; params: Record<string, never> }
   /** Open an extension in a new tab. Twice means two tabs: `add` is a verb
-   *  about the strip, and the way to bring an open one forward is `focus`. */
-  | { method: "tabs.add"; params: { name: string; title?: string; activate?: boolean } }
+   *  about the strip, and the way to bring an open one forward is `focus`.
+   *
+   *  `args` is what the tab opens *with* — an opaque JSON value delivered to
+   *  the extension on its handshake and interpreted by nobody in between.
+   *  What `{repo: "fsio"}` means is between the screen that sent it and the
+   *  screen that reads it; the page passes it through and does not keep it,
+   *  because a tab is what the strip shows, not how it was launched. */
+  | { method: "tabs.add"; params: { name: string; title?: string; activate?: boolean; args?: unknown } }
   | { method: "tabs.update"; params: { id: string; title: string } }
   | { method: "tabs.close"; params: { id: string } }
   | { method: "tabs.focus"; params: { id: string } }
@@ -172,7 +178,10 @@ export function asTabCommand(method: string, params: unknown): TabCommand | null
       const name = str(p, "name");
       const rest = opening(p);
       if (!name || !rest) return null;
-      return { method, params: { name, ...rest } };
+      // `args` rides through unread. It arrived as JSON so it is a JSON
+      // value; checking its shape here would make the page party to a
+      // contract that belongs to the two extensions on either end of it.
+      return { method, params: { name, ...rest, ...("args" in p ? { args: p["args"] } : {}) } };
     }
     case "tabs.update": {
       const id = str(p, "id");

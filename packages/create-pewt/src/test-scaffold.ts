@@ -103,10 +103,22 @@ test("the terminal's emulator is the pewter's own dependency, not the shell's", 
   const main = read(root, "extensions/terminal/main.ts");
   assert.match(main, /import \{ Terminal \} from "@xterm\/xterm"/);
   assert.match(main, /pewt\.shell\(/);
-  // Self-sufficient on purpose (#195): `tabs.add` carries no arguments, so
-  // where the shell starts is this screen's own question, asked of the same
-  // list every front end reads.
+  // Self-sufficient (#195): opened bare, where the shell starts is this
+  // screen's own question, asked of the same list every front end reads.
   assert.match(main, /pewt\.repos\.list\(\)/);
+});
+
+test("the repos rows and the terminal agree about the shell verb (#198)", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The two ends of one argument: the row sends `{repo}`, the terminal
+  // reads it and skips its picker. The page between them carries it unread,
+  // so this agreement — the whole contract — lives in these two files.
+  const repos = read(root, "extensions/repos/main.ts");
+  assert.match(repos, /pewt\.tabs\.add\(\{ name: "terminal", title: repo, args: \{ repo \} \}\)/);
+  const terminal = read(root, "extensions/terminal/main.ts");
+  assert.match(terminal, /import \{ pewt, args, PewtError \} from "pewter"/);
+  assert.match(terminal, /await args/);
 });
 
 test("the stylesheet import compiles under the checker the scaffold declares", () => {

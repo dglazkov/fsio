@@ -35,6 +35,21 @@ test("adding an extension opens it and brings it forward", () => {
   assert.deepEqual(state, { tabs: [{ id: "tab-1", title: "repos", body: { kind: "extension", name: "repos" } }], activeId: "tab-1", held: [] });
 });
 
+test("what a tab opens with rides through the check untouched (#198)", () => {
+  // Any JSON value, unread: the page is not a party to the contract between
+  // the screen that sent it and the screen that reads it.
+  const pointed = asTabCommand("tabs.add", { name: "terminal", args: { repo: "site" } })!;
+  assert.deepEqual(pointed.params, { name: "terminal", args: { repo: "site" } });
+  assert.deepEqual(asTabCommand("tabs.add", { name: "t", args: 3 })!.params, { name: "t", args: 3 });
+  // Opened bare stays bare — absence is a meaning (`args` resolves to
+  // undefined in the extension), not a default to fill in.
+  assert.equal("args" in asTabCommand("tabs.add", { name: "terminal" })!.params, false);
+  // The tab it makes is the same tab either way: launch arguments are not
+  // state, and the strip does not remember them.
+  const { state } = applyTabs(fresh(), asTabCommand("tabs.add", { name: "terminal", args: { repo: "site" } })!, ids);
+  assert.deepEqual(state.tabs, [{ id: "tab-1", title: "terminal", body: { kind: "extension", name: "terminal" } }]);
+});
+
 test("the same extension twice is two tabs — `add` is a verb about the strip", () => {
   const state = add(add(fresh(), "repos"), "repos");
   assert.deepEqual(

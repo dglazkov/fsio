@@ -346,16 +346,26 @@ export const tabsList = definePage<Record<string, never>, TabsListing>({
   },
 });
 
-export const tabsAdd = definePage<{ name: string }, { id: string; name: string; title: string; active: boolean }>({
+export const tabsAdd = definePage<{ name: string; args?: unknown }, { id: string; name: string; title: string; active: boolean }>({
   method: "tabs.add",
   cli: ["tabs", "add"],
   summary: "open an extension in a new tab",
-  usage: "<extension>",
+  usage: "<extension> [args-json]",
   fromArgv: (argv) => {
-    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "tabs add takes one extension name");
-    return { name: argv[0] };
+    const [name, args, ...extra] = argv;
+    if (!name || extra.length > 0) {
+      throw new OpError("usage", "tabs add takes an extension name and, optionally, one JSON value the tab opens with");
+    }
+    if (args === undefined) return { name };
+    // The same value an extension would pass to `pewt.tabs.add` — parsed
+    // here so what travels is a JSON value, not a string that might be one.
+    try {
+      return { name, args: JSON.parse(args) };
+    } catch {
+      throw new OpError("usage", `${JSON.stringify(args)} is not JSON — quote it for your shell, like '{"repo":"fsio"}'`);
+    }
   },
-  parse: tabParams("tabs.add", "tabs add needs an extension name") as (params: unknown) => { name: string },
+  parse: tabParams("tabs.add", "tabs add needs an extension name") as (params: unknown) => { name: string; args?: unknown },
   // A tab twice is two tabs, so this says which one it made. The build that
   // had to happen first is the page's business and does not show up here —
   // when it fails, this operation is refused with the compile error instead.
