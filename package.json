@@ -1,6 +1,6 @@
 {
   "name": "pewter",
-  "version": "0.0.0-74eb2de75ab4",
+  "version": "0.0.0-6a5458294cd9",
   "description": "The API an extension imports: pewt.* over the message channel the shell hands it",
   "license": "MIT",
   "repository": "github:dglazkov/fsio",
