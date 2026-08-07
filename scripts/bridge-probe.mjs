@@ -47,7 +47,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -190,6 +190,21 @@ const drawing = screen(drawnInto, () => html\`<b>\${beat.get()}</b>\`);
 beat.set("second");
 await drawing.drawn();
 drawnInto.setAttribute("data-drew", drawnInto.textContent ?? "");
+
+// A view that throws must put its reason on screen. The bug this pins cost a
+// session: an extension called a helper declared below its own \`screen()\`
+// call, the first draw is synchronous, and the pane went blank — which looks
+// exactly like a frame that never mounted. The reason existed only in a
+// console an agent cannot open.
+//
+// Thrown from the first draw deliberately, which is the case that bit: the
+// view runs inside \`screen()\` before the line after it has been evaluated.
+const brokenInto = document.getElementById("broken")!;
+screen(brokenInto, () => {
+  throw new Error("this screen is meant to throw");
+});
+brokenInto.setAttribute("data-broke", brokenInto.textContent?.includes("could not draw") ? "said so" : "silent");
+brokenInto.setAttribute("data-stack", brokenInto.textContent?.includes("meant to throw") ? "kept" : "lost");
 
 document.title = "answered";
 `
@@ -361,6 +376,8 @@ let picked = "";
 let kitsaid = "";
 let kitdrew = "";
 let quietDisplay = "";
+let broke = "";
+let brokeStack = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -390,6 +407,8 @@ try {
   kitsaid = await frame.locator("pewter-status span").first().textContent();
   kitdrew = await frame.locator("#drawn").getAttribute("data-drew");
   quietDisplay = await frame.locator("#quiet").evaluate((el) => getComputedStyle(el).display);
+  broke = await frame.locator("#broken").getAttribute("data-broke");
+  brokeStack = await frame.locator("#broken").getAttribute("data-stack");
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -424,6 +443,8 @@ const checks = [
   ["the kit's status line spoke, offered, and acted", kitsaid === "kit acted"],
   ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
+  ["a view that throws puts its reason on screen instead of a blank pane", broke === "said so"],
+  ["and the stack goes with it, for the reader who cannot open a console", brokeStack === "kept"],
   ["nothing threw in the page", errors.length === 0],
 ];
 

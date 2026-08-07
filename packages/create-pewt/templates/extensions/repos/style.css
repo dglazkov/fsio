@@ -2,6 +2,23 @@
    frame, buttons and inputs, the error line — is pewter-ui/style.css,
    imported in main.ts; the tokens below are its custom properties. It lands
    after this sheet in the bundle, so overrides here are id-scoped. */
+/* The heading, and beside it the one verb that is about the pewter rather
+   than about a project in it. The note keeps the header's bottom spacing, so
+   the title and its note stay one block and the verb sits alongside both. */
+header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+header .verbs button {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 5px;
+  border-color: var(--pewter-line);
+  background: transparent;
+  white-space: nowrap;
+}
 ul {
   list-style: none;
   margin: 0;
