@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -57,7 +57,7 @@ fs.writeFileSync(
 // message in each direction.
 fs.writeFileSync(
   path.join(ext, "main.ts"),
-  `import { pewt } from "pewter";
+  `import { pewt, args } from "pewter";
 const { repos } = await pewt.repos.list();
 document.getElementById("out")!.textContent = repos.map((r) => r.name).join(", ");
 
@@ -125,6 +125,11 @@ document.getElementById("filed")!.textContent = \`\${view.path} → \${view.id} 
 // where the sandbox is not the interesting boundary — the terminal is.
 const { grants } = await pewt.grants.list();
 document.getElementById("granted")!.textContent = grants.map((g) => \`\${g.kind}/\${g.repo ?? "."}\`).join(", ");
+
+// What this tab was opened with (#198). It rode the connect message beside
+// the port, so by the time any call above was answered it had already
+// settled — awaiting it last is the lazy option, not a race.
+document.getElementById("opened")!.textContent = JSON.stringify(await args);
 
 document.title = "answered";
 `
@@ -245,7 +250,9 @@ const PARENT = `<!doctype html>
     // The version comes from the package rather than a literal: a stand-in
     // that silently speaks last year's wire would pass this probe while the
     // real shell failed.
-    frame.contentWindow.postMessage({ v: ${WIRE_VERSION}, type: "pewt:connect" }, "*", [channel.port2]);
+    // What the tab opens with rides beside the port (#198), so the probe
+    // opens its extension the way the repos row's shell verb would.
+    frame.contentWindow.postMessage({ v: ${WIRE_VERSION}, type: "pewt:connect", args: { repo: "site" } }, "*", [channel.port2]);
   });
 
   document.body.append(frame);
@@ -286,6 +293,7 @@ let acp = "";
 let tabbed = "";
 let filed = "";
 let granted = "";
+let opened = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -309,6 +317,7 @@ try {
   tabbed = await frame.locator("#tabbed").textContent();
   filed = await frame.locator("#filed").textContent();
   granted = await frame.locator("#granted").textContent();
+  opened = await frame.locator("#opened").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -337,6 +346,7 @@ const checks = [
   ["an extension asked for a file by path, and only the path crossed", result.calls.includes("files.open") && result.calls.includes("files.list")],
   ["and the tab it got back names the file", filed === "notes.md → tab-2 · 0 held"],
   ["an extension read what the host will start without asking", result.calls.includes("grants.list") && granted === "run/site"],
+  ["what the tab opened with arrived inside the sandbox", opened === '{"repo":"site"}'],
   ["nothing threw in the page", errors.length === 0],
 ];
 

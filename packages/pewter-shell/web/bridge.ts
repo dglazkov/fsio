@@ -42,7 +42,7 @@ import { log, reporter } from "./reporter";
  *
  *  Returns the frame, already loading. The caller owns where it goes in the
  *  document; everything about what it can reach is decided here. */
-export function mount(html: string, name: string): HTMLIFrameElement {
+export function mount(html: string, name: string, args?: unknown): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   // No `allow-same-origin`. Everything else an extension might want —
   // popups, top-level navigation — is absent for the same reason: this list
@@ -70,7 +70,7 @@ export function mount(html: string, name: string): HTMLIFrameElement {
     if (event.source !== frame.contentWindow || !isHello(event.data)) return;
     removeEventListener("message", listener);
     opaque.set(isOpaque(frame));
-    handshake(frame, name);
+    handshake(frame, name, args);
   };
   addEventListener("message", listener);
   // An extension that never imports `pewter` never says hello and never needs
@@ -94,7 +94,7 @@ function isOpaque(frame: HTMLIFrameElement): boolean {
   }
 }
 
-function handshake(frame: HTMLIFrameElement, name: string): void {
+function handshake(frame: HTMLIFrameElement, name: string, args?: unknown): void {
   const channel = new MessageChannel();
   // Calls that are still running and can still be sent to. One map per
   // extension, because one channel is one extension: a frame cannot reach
@@ -104,7 +104,9 @@ function handshake(frame: HTMLIFrameElement, name: string): void {
   channel.port1.start();
   // The frame is opaque, so "*" is the only target origin there is. See the
   // header note: the port is what carries the authority, not the origin.
-  frame.contentWindow?.postMessage(connect(), "*", [channel.port2]);
+  // What the tab was opened with rides the same message as the port — the
+  // shell delivers it and does not read it.
+  frame.contentWindow?.postMessage(connect(args), "*", [channel.port2]);
 }
 
 /** One call from an extension: check it, pass it to the host, answer it.

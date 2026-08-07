@@ -298,3 +298,17 @@ test("a channel takes one port, once", () => {
   port1.close();
   port2.close();
 });
+
+test("what the tab opened with arrives through the handshake (#198)", async () => {
+  // The singleton path an extension actually uses: `connectTo` is what a
+  // shell (or a test harness) calls, and `args` settles the moment the port
+  // lands — the same moment the first API call can be answered. One test
+  // owns this, because the module holds one channel.
+  const { args, connectTo } = await import("./index.js");
+  const { port1, port2 } = new MessageChannel();
+  shell(port2, () => ({}));
+  connectTo(port1, { repo: "site" });
+  assert.deepEqual(await args, { repo: "site" });
+  port1.close();
+  port2.close();
+});

@@ -11,7 +11,7 @@ import path from "node:path";
 import test from "node:test";
 import { FsioClient } from "@fsio/client";
 import { HostServer } from "@fsio/host";
-import { applyTabs, asCommand, asTabCommand, encodeControl, noTabs, receipt, receiptError, TabError, type TabsState } from "pewter";
+import { applyTabs, asCommand, asTabCommand, encodeControl, noTabs, receipt, receiptError, TabError, type TabCommand, type TabsState } from "pewter";
 import { call, CallError } from "./call.js";
 import { pewtKind } from "./kind.js";
 import { NodeDirectory } from "./node-fs.js";
@@ -60,6 +60,9 @@ interface FakePage {
   close(): Promise<void>;
   /** what the page is holding, as the page sees it. */
   state(): TabsState;
+  /** every command that arrived and passed the page's own check, in order —
+   *  what a browser would have acted on, for asserting what actually landed. */
+  commands(): TabCommand[];
 }
 
 /** A page, as the folder sees one.
@@ -75,6 +78,7 @@ async function attachPage(root: string): Promise<FakePage> {
   await client.connect();
   const session = client.createSession({ kind: "pewt", client: "fake-page", page: true }, { pollMs: 5 });
   let state = noTabs();
+  const arrived: TabCommand[] = [];
   let n = 0;
   let f = 0;
   /** What the page learns by opening the file, which here is `fs` and in a
@@ -91,6 +95,7 @@ async function attachPage(root: string): Promise<FakePage> {
     try {
       const parsed = asTabCommand(command.method, command.params);
       if (!parsed) throw new TabError("bad_params", `${command.method} did not get the parameters it needs`);
+      arrived.push(parsed);
       if (parsed.method === "files.open") measure(parsed.params.path);
       const applied = applyTabs(state, parsed, {
         makeId: () => `tab-${++n}`,
@@ -106,7 +111,7 @@ async function attachPage(root: string): Promise<FakePage> {
     }
   });
   await session.ready;
-  return { close: () => session.close().catch(() => {}), state: () => state };
+  return { close: () => session.close().catch(() => {}), state: () => state, commands: () => arrived };
 }
 
 test("repos.list travels the folder and comes back", async () => {
@@ -186,6 +191,18 @@ test("a tab command typed in a terminal is answered by the page", async () => {
     });
     const { tabs, activeId } = open.state();
     assert.deepEqual(await call("tabs.list"), { tabs, activeId });
+  });
+});
+
+test("what a tab opens with rides the folder to the page intact (#198)", async () => {
+  await withHost(async ({ call, page }) => {
+    const open = await page();
+    // Down one session, up another, and the value comes out the other end
+    // exactly as typed — the host forwards it and the page's check passes it
+    // through, because neither is a party to what `{repo}` means.
+    const added = (await call("tabs.add", { name: "terminal", args: { repo: "site" } })) as { id: string };
+    assert.equal(added.id, "tab-1");
+    assert.deepEqual(open.commands(), [{ method: "tabs.add", params: { name: "terminal", args: { repo: "site" } } }]);
   });
 });
 

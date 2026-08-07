@@ -142,6 +142,19 @@ test("pewt tabs lists them, and its verbs are longer matches", () => {
   assert.equal(parseArgs(["tabs", "update", "tab-9f2c"]).kind, "error");
 });
 
+test("tabs add takes what the tab opens with, as JSON (#198)", () => {
+  // The same value an extension passes to `pewt.tabs.add` — one operation,
+  // two front ends, so the terminal spelling exists too.
+  const pointed = parseArgs(["tabs", "add", "terminal", '{"repo":"fsio"}']);
+  assert.equal(pointed.kind === "op" && pointed.method, "tabs.add");
+  assert.deepEqual(pointed.kind === "op" && pointed.params, { name: "terminal", args: { repo: "fsio" } });
+
+  // Not JSON is a usage error naming the fix, not a string quietly passed on.
+  const broken = parseArgs(["tabs", "add", "terminal", "{repo: fsio}"]);
+  assert.equal(broken.kind, "error");
+  assert.match(broken.kind === "error" ? broken.message : "", /not JSON/);
+});
+
 test("a tab command's parameters are checked before they travel", () => {
   const add = byMethod("tabs.add")!;
   assert.deepEqual(add.parse({ name: "repos" }), { name: "repos" });
