@@ -83,7 +83,7 @@ test("it ships one extension, in the shape the bundler compiles", () => {
   // it reached for anything private, "there are no built-ins" would be a
   // claim rather than a demonstration.
   const main = read(root, "extensions/repos/main.ts");
-  assert.match(main, /import \{ pewt \} from "pewter"/);
+  assert.match(main, /import \{ pewt, PewtError \} from "pewter"/);
   assert.match(main, /pewt\.repos\.list\(\)/);
 });
 

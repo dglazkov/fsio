@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -67,6 +67,16 @@ const { exitCode } = await pewt.run("build", {
   onOutput: (line, stream) => log.append(\`\${stream}: \${line}\\n\`),
 });
 document.getElementById("code")!.textContent = \`exit \${exitCode}\`;
+
+// The two mutating repo verbs (#189), from the same sandbox. \`create\` is an
+// ordinary call; \`clone\` is \`run\`'s shape with a different child — events on
+// the call's id while git works, the exit code as the answer.
+const cprog = document.getElementById("cprog")!;
+const made = await pewt.repos.create({ name: "atlas2" });
+const clone = await pewt.repos.clone("https://example.test/things/atlas3.git", {
+  onOutput: (line) => cprog.append(line + "\\n"),
+});
+document.getElementById("cloned")!.textContent = \`\${made.repo.name} · clone exit \${clone.exitCode}\`;
 
 const term = document.getElementById("term")!;
 const shell = await pewt.shell({ repo: "site", onData: (chunk) => term.append(chunk) });
@@ -205,6 +215,18 @@ const PARENT = `<!doctype html>
         post({ ok: true, result: { exitCode: 0 } });
         return;
       }
+      if (call.method === "repos.create") {
+        post({ ok: true, result: { repo: { name: call.params.name, git: true } } });
+        return;
+      }
+      if (call.method === "repos.clone") {
+        // A clone rides run's rails: same event shape, same answer shape
+        // (packages/pewt/src/clone.ts). git narrates on stderr.
+        post({ type: "pewt:event", event: { e: "Cloning into 'atlas3'..." } });
+        post({ type: "pewt:event", event: { e: "Receiving objects: 100%, done." } });
+        post({ ok: true, result: { exitCode: 0 } });
+        return;
+      }
       post({ ok: true, result: { repos: [{ name: "atlas", git: false }, { name: "site", git: true }] } });
     };
     channel.port1.start();
@@ -243,6 +265,8 @@ let result = empty;
 let rendered = "";
 let streamed = "";
 let code = "";
+let cloned = "";
+let cprog = "";
 let terminal = "";
 let left = "";
 let acp = "";
@@ -263,6 +287,8 @@ try {
   rendered = await frame.locator("#out").textContent();
   streamed = await frame.locator("#log").textContent();
   code = await frame.locator("#code").textContent();
+  cloned = await frame.locator("#cloned").textContent();
+  cprog = await frame.locator("#cprog").textContent();
   terminal = await frame.locator("#term").textContent();
   left = await frame.locator("#left").textContent();
   acp = await frame.locator("#acp").textContent();
@@ -282,6 +308,9 @@ const checks = [
   ["it speaks this build's wire version", result.wire === WIRE_VERSION],
   ["a run's output reached the extension while the run was still going", streamed === "out: compiling site\nerr: one warning\n"],
   ["and its exit code arrived as the call's answer", code === "exit 0"],
+  ["an extension created a project and cloned one over the same channel", result.calls.includes("repos.create") && result.calls.includes("repos.clone")],
+  ["the clone's progress streamed while git worked", cprog === "Cloning into 'atlas3'...\nReceiving objects: 100%, done.\n"],
+  ["and both answers came back typed", cloned === "atlas2 · clone exit 0"],
   ["an extension held a live shell, and what it printed first was not lost", terminal.startsWith("$ ")],
   ["keystrokes left the sandbox after the call was made", JSON.stringify(result.typed) === JSON.stringify(["exit 0\n"])],
   ["so did a window size", JSON.stringify(result.sized) === JSON.stringify({ cols: 100, rows: 30 })],

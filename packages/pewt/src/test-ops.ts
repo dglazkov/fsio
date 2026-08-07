@@ -22,7 +22,9 @@ test("every operation has both spellings and a summary", () => {
 
 test("every process operation has both spellings too", () => {
   for (const op of PROCESSES) {
-    assert.match(op.method, /^[a-z]+$/, `${op.method} is not a wire name`);
+    // One word for the original three; `repos.clone` brought the table's
+    // dotted spelling to this family too, and the rule is hygiene, not arity.
+    assert.match(op.method, /^[a-z]+(\.[a-z]+)?$/, `${op.method} is not a wire name`);
     assert.ok(op.cli.length > 0, `${op.method} has no command-line spelling`);
     assert.ok(op.summary, `${op.method} has no summary`);
     assert.equal(processByMethod(op.method), op);

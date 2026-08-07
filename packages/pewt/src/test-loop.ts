@@ -160,7 +160,9 @@ test("bad parameters are refused by the host, not by the sender", async () => {
 
 test("a method this host does not serve is not a crash", async () => {
   await withHost(async ({ call }) => {
-    await assert.rejects(() => call("repos.create", { name: "x" }), (e: unknown) => e instanceof CallError);
+    // A spelling no version of this table will ever have — `repos.create`
+    // held this job until #189 made it real, which is the way this test ages.
+    await assert.rejects(() => call("no.such", { name: "x" }), (e: unknown) => e instanceof CallError);
   });
 });
 

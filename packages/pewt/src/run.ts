@@ -235,8 +235,9 @@ function childEnv(p: Pewter): NodeJS.ProcessEnv {
 
 /** Stop the child and whatever it started. The narrative's claim is that a
  *  process the host started stops with it, and a process group is what makes
- *  that true of the build tools npm launches. */
-function stopTree(child: ChildProcess, alreadyDone: boolean): void {
+ *  that true of the build tools npm launches. Exported for the other kind
+ *  that spawns (clone.ts), so D6 is one implementation. */
+export function stopTree(child: ChildProcess, alreadyDone: boolean): void {
   if (alreadyDone || child.pid === undefined) return;
   const signal = (sig: NodeJS.Signals): void => {
     try {

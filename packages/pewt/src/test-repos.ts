@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { pewterAt, type Pewter } from "./pewter.js";
-import { listRepos } from "./repos.js";
+import { createRepo, isProjectName, listRepos, ReposError } from "./repos.js";
 
 function pewter(): Pewter {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pewt-repos-"));
@@ -40,5 +40,31 @@ test("files and hidden entries under repos/ are not projects", async () => {
   fs.writeFileSync(path.join(p.repos, "notes.md"), "hello");
   fs.writeFileSync(path.join(p.repos, ".DS_Store"), "");
   fs.mkdirSync(path.join(p.repos, ".cache"));
+  assert.deepEqual(await listRepos(p), []);
+});
+
+// ---- repos.create (#189)
+
+test("create makes a directory under repos/ that is a git repository", async () => {
+  const p = pewter();
+  const made = await createRepo(p, "atlas");
+  assert.deepEqual(made, { name: "atlas", git: true });
+  assert.ok(fs.existsSync(path.join(p.repos, "atlas", ".git")), "git init ran in it");
+  assert.deepEqual(await listRepos(p), [{ name: "atlas", git: true }]);
+});
+
+test("create refuses a name that is taken, and touches nothing", async () => {
+  const p = pewter();
+  await createRepo(p, "site");
+  await assert.rejects(createRepo(p, "site"), (e: unknown) => e instanceof ReposError && e.code === "exists");
+  assert.deepEqual(await listRepos(p), [{ name: "site", git: true }]);
+});
+
+test("create refuses what is not a project name — the same rule --repo lives by", async () => {
+  const p = pewter();
+  for (const bad of ["", ".hidden", "a/b", "a\\b"]) {
+    assert.equal(isProjectName(bad), false, JSON.stringify(bad));
+    await assert.rejects(createRepo(p, bad), (e: unknown) => e instanceof ReposError && e.code === "bad_name");
+  }
   assert.deepEqual(await listRepos(p), []);
 });

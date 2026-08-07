@@ -31,6 +31,7 @@ import path from "node:path";
 import { parseArgs } from "./args.js";
 import { call, CallError } from "./call.js";
 import { check, CheckError, render as renderCheck } from "./check.js";
+import { planClone, CloneError, type CloneSpec } from "./clone.js";
 import { NodeDirectory } from "./node-fs.js";
 import { byMethod } from "./ops.js";
 import { planAgent, AgentError, type AgentSpec } from "./agent.js";
@@ -144,6 +145,25 @@ if (parsed.kind === "check") {
       );
       process.exit(0);
     }
+    if (parsed.method === "repos.clone") {
+      // Resolvable here: the name and the destination are two reads of this
+      // disk. Whether the url fetches is git's answer, and a dry run that
+      // fetched to find out would not be one.
+      try {
+        const plan = planClone(pewter, parsed.spec as unknown as CloneSpec);
+        console.log(
+          parsed.json
+            ? JSON.stringify({ dryRun: true, url: plan.url, name: plan.name, where: plan.where }, null, 2)
+            : `would clone  ${plan.url}\n       into  ${plan.where}/\n\n(nothing started — and nothing would be asked: a clone fetches and executes nothing)`
+        );
+        process.exit(0);
+      } catch (e) {
+        if (!(e instanceof CloneError)) throw e;
+        console.error(`pewt: ${e.message}`);
+        if (e.hint) console.error(`  ${e.hint}`);
+        process.exit(1);
+      }
+    }
     try {
       const plan = planRun(pewter, parsed.spec as unknown as RunSpec);
       console.log(
@@ -227,7 +247,12 @@ if (parsed.kind === "check") {
         const text = parsed.json ? JSON.stringify(stream === "out" ? { o: line } : { e: line }) : line;
         (stream === "out" || parsed.json ? process.stdout : process.stderr).write(`${text}\n`);
       },
-      onWaiting: () => process.stderr.write("pewt: waiting for the host to allow this run — it is asking on its own terminal\n"),
+      onWaiting: () =>
+        process.stderr.write(
+          parsed.method === "repos.clone"
+            ? "pewt: waiting for the host to start this clone\n" // nothing is asked (#189); a slow answer here is a busy host
+            : "pewt: waiting for the host to allow this run — it is asking on its own terminal\n"
+        ),
     });
     if (parsed.json) console.log(JSON.stringify({ end: outcome.exitCode }));
     if (outcome.ended === "host_gone") {
