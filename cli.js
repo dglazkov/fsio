@@ -183,6 +183,27 @@ async function bundleExtension(p, name) {
     // property of the source, so two people with the same pewter get the
     // same bundle.
     absWorkingDir: p.root,
+    // Resolve through a linked package as if it lived where it is linked.
+    //
+    // A pewter's own `node_modules` is the one copy of anything. That is
+    // free when every package came from npm, and it stops being free the
+    // moment one of them is a `file:` link into a checkout — `create-pewt
+    // --link`, which is how this repository is worked on. esbuild follows a
+    // symlink to its real path by default, so `pewter-ui`'s own `import
+    // "lit"` would resolve out of the *checkout's* node_modules while the
+    // extension beside it resolves out of the *pewter's*: two copies of lit
+    // and two of the signals graph in one bundle.
+    //
+    // Two copies is not a size problem, it is a silence problem. A signal
+    // written through one graph is not read by a computed in the other, so
+    // the screen renders once and then never again — no error, nothing in
+    // the console, just a page that stopped. Measured, not feared.
+    //
+    // Keeping the symlink path makes resolution walk up from where the
+    // package is *installed*, which is what a peer dependency means. It
+    // changes nothing for a pewter whose packages all came from npm: there
+    // are no symlinks in that tree to preserve.
+    preserveSymlinks: true,
     // The page is Chromium-only anyway — it needs the File System Access API
     // to exist at all — so there is nothing to transpile down to.
     target: "es2022",
@@ -214,7 +235,7 @@ async function inlineLinks(html, dir) {
     const text = await fs3.readFile(path3.join(dir, rel), "utf8").catch(() => null);
     if (text === null)
       continue;
-    out = out.replace(tag, `<style>
+    out = out.replace(tag, () => `<style>
 ${text}
 </style>`);
   }
@@ -229,7 +250,7 @@ ${css}
 ${escapeScript(js)}
 </script>`;
   const tag = /<script\b[^>]*\bsrc\s*=\s*["']\.?\/?main\.(ts|js)["'][^>]*>\s*<\/script>/i;
-  const withScript = tag.test(html) ? html.replace(tag, script) : insertBefore(html, "</body>", script);
+  const withScript = tag.test(html) ? html.replace(tag, () => script) : insertBefore(html, "</body>", script);
   return style ? insertBefore(withScript, "</head>", style) : withScript;
 }
 var escapeScript = (js) => js.replace(/<\/(script)/gi, "<\\/$1");
