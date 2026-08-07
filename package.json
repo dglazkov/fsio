@@ -1,0 +1,11 @@
+{
+  "name": "pewter-ui",
+  "version": "0.0.0-74eb2de75ab4",
+  "description": "The look the scaffolded screens share: tokens and base styles an extension imports",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "exports": {
+    "./style.css": "./style.css"
+  }
+}
