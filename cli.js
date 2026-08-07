@@ -4969,7 +4969,7 @@ var HostServer = class {
 
 // dist/ask.js
 import readline from "node:readline/promises";
-import { describeGrant as describeGrant2, grantId as grantId3 } from "pewter";
+import { describeGrant as describeGrant2 } from "pewter";
 
 // dist/shell.js
 import fs13 from "node:fs";
@@ -5075,7 +5075,7 @@ function spawnGate(p, opts, log) {
       log.info(`
 ${t}  ${header(plan, info.origin)}
 ${t}    \u2713 allowed \u2014 a standing grant: ${describeGrant2(standing)}
-${t}      take it back with \`pewt grants revoke ${grantId3(standing)}\``);
+${t}      take it back by removing it from ${GRANTS_FILE}`);
       return true;
     }
     return askToStart(p, opts.asker, plan, info.origin, log);
@@ -5181,7 +5181,7 @@ ${stamp()}      but not remembered: ${why}`);
       return { allow: true };
     }
     log.info(`${stamp()}    \u2713 standing grant ${recorded.already ? "already recorded in" : "recorded \u2192"} ${GRANTS_FILE}
-${stamp()}      ${describeGrant2(recorded.grant)} \u2014 take it back with \`pewt grants revoke ${grantId3(recorded.grant)}\``);
+${stamp()}      ${describeGrant2(recorded.grant)} \u2014 take it back by removing it from that file`);
     return { allow: true };
   }
   log.info(`${stamp()}    ${once ? "\u2713 allowed once" : "\u2717 denied"} \u2014 ${plan.label}`);
@@ -5450,47 +5450,47 @@ async function serve(p, opts = {}) {
   server.registerKind("repos.clone", cloneKind(p, log));
   server.registerKind("repos.install", installKind(p, log));
   await server.start();
-  console.log(`
-pewter \xB7 ${p.root}
-  ${countExtensions(p)}
-
-  in the page: pick this folder \u2014 ${p.name} \u2014 and allow it. Those clicks are
-  Chrome's own and cannot be automated (F15); they are also what stops the
-  page from reaching anything you did not choose.
-
-  from a terminal, in this folder:  pewt repos
-
-  ${runPolicy(p, opts, asker)}
-
-(Ctrl-C stops the host and sweeps .fsio)
+  const banner = [`
+pewter \xB7 ${p.root}`];
+  const missing = extensionsWarning(p);
+  if (missing)
+    banner.push(`  ${missing}`);
+  const unasked = unaskedPolicy(p, opts, asker);
+  if (unasked)
+    banner.push(`  ${unasked}`);
+  console.log(`${banner.join("\n")}
 `);
-  console.log(`  ${page.href}
-`);
+  const pick = `pick this folder \u2014 ${p.name} \u2014 and allow it`;
+  console.log(`  ${page.href}`);
   if (opts.open === false) {
-    console.log("--no-open: opening nothing. Paste that into a Chromium browser.\n");
+    console.log(`  --no-open: paste that into a Chromium browser, then ${pick}.
+`);
   } else if (folderHasSeenAPage && await pageIsWatching(p.fsio)) {
-    console.log("a page is already open on this pewter \u2014 not opening another tab.\n");
+    console.log("  a page is already open on this pewter \u2014 not opening another tab.\n");
   } else {
     const res = await openInChromium(page.href);
-    console.log(res.opened ? `opened in ${res.browser}.
-` : `${res.why} \u2014 open that URL yourself, in Chrome or another Chromium.
+    console.log(res.opened ? `  opened in ${res.browser} \u2014 ${pick}.
+` : `  ${res.why} \u2014 open that URL yourself, in Chrome or another Chromium, then ${pick}.
 `);
   }
   return server;
 }
-function runPolicy(p, opts, asker) {
+function unaskedPolicy(p, opts, asker) {
   const standing = grantLine(p);
   if (!asker.ask) {
-    const told = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null].filter(Boolean);
-    const list = told.length > 1 ? `${told.slice(0, -1).join(", ")} and ${told[told.length - 1]}` : told[0];
+    const told2 = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null].filter(Boolean);
+    const list = told2.length > 1 ? `${told2.slice(0, -1).join(", ")} and ${told2[told2.length - 1]}` : told2[0];
     const cannot = list ? `this host has no terminal to ask in. It allows ${list} because it was told to in advance, and denies everything else.` : "this host has no terminal to ask in, so it denies every run, shell and agent. Restart it with --allow-runs, --allow-shells or --allow-agents to allow them.";
     return standing ? `${cannot}
   ${standing}` : cannot;
   }
-  const runs = opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : "a `pewt run` asks here first, and starts nothing until you answer.";
-  const shells = opts.allowShells ? "--allow-shells: every `pewt shell` starts without asking." : "a `pewt shell` asks here too, and what it starts is unconfined.";
-  const agents = opts.allowAgents ? "--allow-agents: every `pewt agent` starts without asking." : "a `pewt agent` asks here too, and that question says whether the agent will ask you back.";
-  return [runs, shells, agents, ...standing ? [standing] : []].join("\n  ");
+  const told = [
+    opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : null,
+    opts.allowShells ? "--allow-shells: every `pewt shell` starts without asking." : null,
+    opts.allowAgents ? "--allow-agents: every `pewt agent` starts without asking." : null,
+    standing
+  ].filter((line) => line !== null);
+  return told.length ? told.join("\n  ") : null;
 }
 function grantLine(p) {
   let grants;
@@ -5501,16 +5501,16 @@ function grantLine(p) {
   }
   if (grants.length === 0)
     return null;
-  return `${grants.length} standing grant${grants.length === 1 ? "" : "s"} \u2014 these start without asking. \`pewt grants\` lists them.`;
+  return `${grants.length} standing grant${grants.length === 1 ? "" : "s"} \u2014 these start without asking. They are in ${GRANTS_FILE}.`;
 }
-function countExtensions(p) {
+function extensionsWarning(p) {
   let names;
   try {
     names = fs15.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
   } catch {
     return "no extensions/ directory \u2014 the page will have nothing to show.";
   }
-  return names.length ? `extensions: ${names.join(", ")}` : "extensions/ is empty \u2014 the page will have nothing to show.";
+  return names.length ? null : "extensions/ is empty \u2014 the page will have nothing to show.";
 }
 async function stop(server, p, signal) {
   console.log(`
