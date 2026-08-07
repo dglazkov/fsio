@@ -3100,6 +3100,12 @@ function agentKind(p, log) {
         asks: plan.adapter.asks,
         unmeasured: plan.unmeasured,
         where: plan.where,
+        // The cwd, absolute — ACP's `session/new` requires one, and whoever
+        // holds the other end is the ACP client, so it has to have it. The
+        // same deliberate exception `acp-demo`'s `acp/info` makes to "names,
+        // never paths": the path is a label for the folder the page was
+        // already granted, not a disclosure of anything beyond it.
+        cwd: plan.cwd,
         // The host stamps `pid` with its own (D13: kinds run in-process), so
         // the child's needs its own name.
         agentPid: child.pid ?? null
