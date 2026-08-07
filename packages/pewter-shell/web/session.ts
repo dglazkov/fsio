@@ -349,7 +349,7 @@ export async function runOnHost(
   // A clone is the same conversation with a different child (`repos.clone`,
   // packages/pewt/src/clone.ts): frames in, exit code out. One reader here,
   // so the two cannot drift.
-  kind: "run" | "repos.clone" = "run"
+  kind: "run" | "repos.clone" | "repos.install" = "run"
 ): Promise<{ exitCode: number | null }> {
   if (!client) throw new ShellCallError("no_session", "the shell is not connected to a host", "start one in the pewter: npm start");
   const run = client.createSession({ kind, client: "pewter-shell", ...spec }, { pollMs: 15 });

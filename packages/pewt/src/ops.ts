@@ -138,7 +138,13 @@ export const reposList = define<Record<string, never>, { repos: Project[] }>({
       return "no projects yet — repos/ is empty.\n  Start one:   pewt repos create <name>\n  Clone one:   pewt repos clone <url>";
     }
     const width = Math.max(...repos.map((r) => r.name.length));
-    return repos.map((r) => `  ${r.name.padEnd(width)}  ${r.git ? "git" : "(not a git repository)"}`).join("\n");
+    const state = (r: Project): string => (r.git ? (r.branch ?? "detached") : "(not a git repository)");
+    const stateWidth = Math.max(...repos.map((r) => state(r).length));
+    // The scripts are the row's verbs: what `pewt run <name> --repo <repo>`
+    // can start, straight from that project's own package.json.
+    return repos
+      .map((r) => `  ${r.name.padEnd(width)}  ${state(r).padEnd(stateWidth)}  ${r.scripts.length ? r.scripts.join(", ") : "(no scripts)"}`)
+      .join("\n");
   },
 });
 
@@ -163,7 +169,7 @@ export const reposCreate = define<{ name: string }, { repo: Project }>({
       throw e;
     }
   },
-  render: ({ repo }) => `${repo.name} → repos/${repo.name}/ — a git repository, ready to work in`,
+  render: ({ repo }) => `${repo.name} → repos/${repo.name}/ — a git repository${repo.branch ? ` on ${repo.branch}` : ""}, ready to work in`,
 });
 
 export const extBundle = define<{ name: string }, Bundle>({
@@ -623,7 +629,23 @@ export const cloneProcess: ProcessOperation = {
   },
 };
 
-export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess, cloneProcess];
+export const installProcess: ProcessOperation = {
+  method: "repos.install",
+  cli: ["repos", "install"],
+  summary: "npm install in a project — asked first, unlike clone",
+  usage: "<name>",
+  repo: false,
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "repos install takes one project name — `pewt repos` lists them");
+    return { name: argv[0] };
+  },
+  // The name is checked against the disk when the install is planned
+  // (install.ts) — a project that is not there, or has no manifest, is
+  // refused before any question is asked.
+  parse: (params) => ({ name: str(params, "name") }),
+};
+
+export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess, cloneProcess, installProcess];
 
 export const processByMethod = (method: string): ProcessOperation | undefined =>
   PROCESSES.find((o) => o.method === method);

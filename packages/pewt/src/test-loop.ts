@@ -115,8 +115,8 @@ test("repos.list travels the folder and comes back", async () => {
     fs.mkdirSync(path.join(p.repos, "atlas"), { recursive: true });
     assert.deepEqual(await call("repos.list"), {
       repos: [
-        { name: "atlas", git: false },
-        { name: "site", git: true },
+        { name: "atlas", git: false, branch: null, scripts: [], installed: null },
+        { name: "site", git: true, branch: null, scripts: [], installed: null },
       ],
     });
   });

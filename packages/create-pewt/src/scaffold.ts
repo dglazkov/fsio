@@ -239,6 +239,15 @@ li {
   border-bottom: 1px solid light-dark(#0001, #fff2);
 }
 li .kind { opacity: 0.5; font-size: 0.8rem; }
+li .branch { font-style: normal; opacity: 0.5; font-size: 0.8rem; margin-left: 0.5rem; }
+li .verbs { display: flex; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; }
+li .verbs button {
+  font: inherit; font-size: 0.75rem; padding: 0.15rem 0.55rem; cursor: pointer;
+  border-radius: 5px; border: 1px solid light-dark(#0003, #fff3);
+  background: transparent; color: inherit;
+}
+li .verbs button:disabled { opacity: 0.5; cursor: default; }
+li .verbs button.install { border-style: dashed; }
 .empty { opacity: 0.7; }
 #verbs { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.6rem; }
 #verbs form { display: flex; gap: 0.4rem; flex: 1; min-width: 14rem; }
@@ -297,12 +306,103 @@ async function refresh(): Promise<void> {
     const row = document.createElement("li");
     const name = document.createElement("span");
     name.textContent = repo.name;
-    const kind = document.createElement("span");
-    kind.className = "kind";
-    kind.textContent = repo.git ? "git" : "not a git repository";
-    row.append(name, kind);
+    if (repo.branch) {
+      const branch = document.createElement("em");
+      branch.className = "branch";
+      branch.textContent = repo.branch;
+      name.append(branch);
+    }
+    row.append(name);
+    // The row's verbs: this project's own scripts, each one click from
+    // running. The set is the project's package.json, not anything this
+    // screen invents — an extension cannot make a script runnable by
+    // drawing a button for it. \`install\` leads when node_modules is
+    // missing (every fresh clone), because the scripts will not run
+    // without it — and unlike clone, install is asked about (#193).
+    if (repo.scripts.length > 0 || repo.installed === false) {
+      const verbs = document.createElement("span");
+      verbs.className = "verbs";
+      if (repo.installed === false) {
+        const install = document.createElement("button");
+        install.className = "install";
+        install.textContent = "install";
+        install.addEventListener("click", () => installRepo(repo.name));
+        verbs.append(install);
+      }
+      for (const script of repo.scripts) {
+        const verb = document.createElement("button");
+        verb.textContent = script;
+        verb.addEventListener("click", () => runScript(repo.name, script));
+        verbs.append(verb);
+      }
+      row.append(verbs);
+    } else {
+      const kind = document.createElement("span");
+      kind.className = "kind";
+      kind.textContent = repo.git ? "no scripts" : "not a git repository";
+      row.append(kind);
+    }
     list.append(row);
   }
+}
+
+/** \`npm install\`, asked first: it runs lifecycle scripts, which makes it
+ *  the first execution of what a clone fetched. The question rides the run
+ *  rung, so \`--allow-runs\` or a standing \`run/<project>\` grant covers it. */
+function installRepo(repo: string): void {
+  error.hidden = true;
+  progress.textContent = \`npm install — in \${repo}\\n\`;
+  progress.hidden = false;
+  busy(true);
+  const waiting = setTimeout(() => {
+    progress.append("(waiting — the host asks on its own terminal before it starts anything)\\n");
+  }, 1200);
+  pewt.repos
+    .install(repo, {
+      onOutput: (line) => {
+        clearTimeout(waiting);
+        progress.append(line + "\\n");
+        progress.scrollTop = progress.scrollHeight;
+      },
+    })
+    .then(async ({ exitCode }) => {
+      progress.append(\`\\nexit \${exitCode ?? "?"}\\n\`);
+      if (exitCode === 0) await refresh();
+    })
+    .catch(complain)
+    .finally(() => {
+      clearTimeout(waiting);
+      busy(false);
+    });
+}
+
+/** Run one script, output streaming into the shared pane. The host asks a
+ *  human at its own terminal before starting anything, so the call can sit
+ *  a while — the pane says so rather than looking hung — and a refusal is a
+ *  normal outcome that arrives in the operation's own words. */
+function runScript(repo: string, script: string): void {
+  error.hidden = true;
+  progress.textContent = \`npm run \${script} — in \${repo}\\n\`;
+  progress.hidden = false;
+  busy(true);
+  const waiting = setTimeout(() => {
+    progress.append("(waiting — the host asks on its own terminal before it starts anything)\\n");
+  }, 1200);
+  pewt
+    .run(script, {
+      repo,
+      onOutput: (line) => {
+        clearTimeout(waiting);
+        progress.append(line + "\\n");
+        progress.scrollTop = progress.scrollHeight;
+      },
+    })
+    .then(({ exitCode }) => progress.append(\`\\nexit \${exitCode ?? "?"}\\n\`))
+    .catch(complain)
+    .finally(() => {
+      clearTimeout(waiting);
+      busy(false);
+    });
 }
 
 /** A refusal, in the operation's own words — the code and hint travel with
@@ -313,10 +413,10 @@ function complain(e: unknown): void {
   error.hidden = false;
 }
 
+/** One thing runs at a time on this screen, and the screen says so: every
+ *  button and field on it, including the row verbs, goes quiet together. */
 const busy = (on: boolean): void => {
-  for (const el of [createName, cloneUrl, ...createForm.querySelectorAll("button"), ...cloneForm.querySelectorAll("button")]) {
-    (el as HTMLInputElement | HTMLButtonElement).disabled = on;
-  }
+  for (const el of document.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")) el.disabled = on;
 };
 
 createForm.addEventListener("submit", (e) => {

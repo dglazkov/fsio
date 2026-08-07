@@ -33,8 +33,10 @@ test("a grant is named by what it covers, so the same answer twice is one row", 
   assert.equal(grantId({ kind: "agent", adapter: "pi-acp", repo: "site" }), "agent/pi-acp/site");
   assert.equal(grantId({ kind: "agent", adapter: "pi-acp" }), "agent/pi-acp/.");
 
-  assert.equal(describeGrant({ kind: "run", repo: "fsio" }), "any run in fsio");
-  assert.equal(describeGrant({ kind: "run" }), "any run in the pewter itself");
+  // "npm install included" since #193: an install question records this
+  // grant, so the sentence a human reads must say what it covers.
+  assert.equal(describeGrant({ kind: "run", repo: "fsio" }), "any run in fsio, npm install included");
+  assert.equal(describeGrant({ kind: "run" }), "any run in the pewter itself, npm install included");
   assert.equal(describeGrant({ kind: "agent", adapter: "pi-acp", repo: "site" }), "pi-acp in site");
 });
 

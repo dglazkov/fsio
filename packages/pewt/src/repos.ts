@@ -20,6 +20,21 @@ export interface Project {
    *  one is still listed: the folder is the user's, and a screen that hides
    *  what is actually there would be lying about their own disk. */
   git: boolean;
+  /** the branch it is on, or null — detached, not a repository, or a HEAD
+   *  this build cannot read. Read from `.git/HEAD` directly rather than by
+   *  spawning git: a list is painted on every screen refresh, and the file
+   *  is the format git itself documents. */
+  branch: string | null;
+  /** the script names its `package.json` declares, in declaration order —
+   *  the set of runnable things is a file (NARRATIVE.md), and this is that
+   *  file's table of contents. Empty when there is no manifest. */
+  scripts: string[];
+  /** null: no manifest, so nothing to install. false: a manifest and no
+   *  `node_modules` — the state every fresh clone is in, and the reason a
+   *  row offers its install verb (#193). true: `node_modules` exists. A
+   *  directory-exists read, honestly named: staleness against the lockfile
+   *  is not this field's claim. */
+  installed: boolean | null;
 }
 
 /** Every project, by name. Sorted, so two calls a second apart do not
@@ -37,12 +52,61 @@ export async function listRepos(p: Pewter): Promise<Project[]> {
     // Not a directory, or hidden: `repos/` holds projects, and a stray
     // `.DS_Store` is not one.
     if (!e.isDirectory() || e.name.startsWith(".")) continue;
-    found.push({
-      name: e.name,
-      git: await isGitRepo(path.join(p.repos, e.name)),
-    });
+    found.push(await projectAt(p, e.name));
   }
   return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** One project's facts, read fresh. The same shape whether it is being
+ *  listed or was just made, so a new row is never a special case. */
+export async function projectAt(p: Pewter, name: string): Promise<Project> {
+  const dir = path.join(p.repos, name);
+  const git = await isGitRepo(dir);
+  const manifest = await exists(path.join(dir, "package.json"));
+  return {
+    name,
+    git,
+    branch: git ? await branchOf(dir) : null,
+    scripts: await scriptsOf(dir),
+    installed: manifest ? await exists(path.join(dir, "node_modules")) : null,
+  };
+}
+
+const exists = (at: string): Promise<boolean> =>
+  fs
+    .stat(at)
+    .then(() => true)
+    .catch(() => false);
+
+/** The branch `.git/HEAD` names, following a worktree's `.git` *file* to the
+ *  real directory first. A detached HEAD is a sha, not a ref, and answers
+ *  null — "which branch" has no true answer there and a made-up one would be
+ *  worse than none. */
+async function branchOf(dir: string): Promise<string | null> {
+  try {
+    let gitDir = path.join(dir, ".git");
+    if ((await fs.stat(gitDir)).isFile()) {
+      // A worktree or a submodule: `gitdir: <path>`, possibly relative.
+      const pointer = (await fs.readFile(gitDir, "utf8")).trim();
+      if (!pointer.startsWith("gitdir:")) return null;
+      gitDir = path.resolve(dir, pointer.slice("gitdir:".length).trim());
+    }
+    const head = (await fs.readFile(path.join(gitDir, "HEAD"), "utf8")).trim();
+    return head.startsWith("ref: refs/heads/") ? head.slice("ref: refs/heads/".length) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The scripts a manifest declares, in declaration order — a screen showing
+ *  them out of order would un-say what the author put first on purpose. */
+async function scriptsOf(dir: string): Promise<string[]> {
+  try {
+    const pkg = JSON.parse(await fs.readFile(path.join(dir, "package.json"), "utf8")) as { scripts?: Record<string, unknown> };
+    return Object.keys(pkg.scripts ?? {});
+  } catch {
+    return []; // no manifest, or one that does not parse: nothing runnable either way
+  }
 }
 
 /** `.git` present, as a file or a directory: a worktree and a submodule both
@@ -101,5 +165,5 @@ export async function createRepo(p: Pewter, name: string): Promise<Project> {
     const why = e instanceof Error ? e.message.split("\n")[0] : String(e);
     throw new ReposError("git_failed", `git init failed — ${why}`, "is git installed on this machine?");
   }
-  return { name, git: true };
+  return projectAt(p, name);
 }

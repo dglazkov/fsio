@@ -32,6 +32,7 @@ import { parseArgs } from "./args.js";
 import { call, CallError } from "./call.js";
 import { check, CheckError, render as renderCheck } from "./check.js";
 import { planClone, CloneError, type CloneSpec } from "./clone.js";
+import { planInstall, InstallError, type InstallSpec } from "./install.js";
 import { NodeDirectory } from "./node-fs.js";
 import { byMethod } from "./ops.js";
 import { planAgent, AgentError, type AgentSpec } from "./agent.js";
@@ -145,6 +146,22 @@ if (parsed.kind === "check") {
       );
       process.exit(0);
     }
+    if (parsed.method === "repos.install") {
+      try {
+        const plan = planInstall(pewter, parsed.spec as unknown as InstallSpec);
+        console.log(
+          parsed.json
+            ? JSON.stringify({ dryRun: true, name: plan.name, where: plan.where }, null, 2)
+            : `would run  npm install\n      cwd  ${plan.where}/\n\n(nothing started — the host asks first: an install runs lifecycle scripts)`
+        );
+        process.exit(0);
+      } catch (e) {
+        if (!(e instanceof InstallError)) throw e;
+        console.error(`pewt: ${e.message}`);
+        if (e.hint) console.error(`  ${e.hint}`);
+        process.exit(1);
+      }
+    }
     if (parsed.method === "repos.clone") {
       // Resolvable here: the name and the destination are two reads of this
       // disk. Whether the url fetches is git's answer, and a dry run that
@@ -251,7 +268,9 @@ if (parsed.kind === "check") {
         process.stderr.write(
           parsed.method === "repos.clone"
             ? "pewt: waiting for the host to start this clone\n" // nothing is asked (#189); a slow answer here is a busy host
-            : "pewt: waiting for the host to allow this run — it is asking on its own terminal\n"
+            : parsed.method === "repos.install"
+              ? "pewt: waiting for the host to allow this install — it is asking on its own terminal\n"
+              : "pewt: waiting for the host to allow this run — it is asking on its own terminal\n"
         ),
     });
     if (parsed.json) console.log(JSON.stringify({ end: outcome.exitCode }));

@@ -32,6 +32,7 @@ import { describeGrant, grantId, type Grant, type GrantKey } from "pewter";
 import type { Pewter } from "./pewter.js";
 import { asAgentSpec, AgentError, planAgent, type AgentPlan } from "./agent.js";
 import { GRANTS_FILE, GrantsError, readGrants, recordGrant, standingGrant } from "./grants.js";
+import { asInstallSpec, planInstall, InstallError, type InstallPlan } from "./install.js";
 import { asRunSpec, planRun, RunError, type RunPlan } from "./run.js";
 import { planShell, ShellError, type ShellPlan } from "./shell.js";
 
@@ -82,7 +83,7 @@ export interface GateOptions {
 
 /** The kinds that start something, and the flag that answers yes to each in
  *  advance. Everything else is the API, which starts nothing. */
-const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents" } as const;
+const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents", "repos.install": "--allow-runs" } as const;
 
 /** The host's spawn policy (D12): consulted for every session, and the only
  *  thing standing between a page and a process on this machine.
@@ -92,7 +93,10 @@ const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-a
  *  are resolved first (a human should never be asked about a script that does
  *  not exist, or a project that is not there) and then asked about. */
 export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnPolicy {
-  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents };
+  // `repos.install` shares run's flag and run's grant on purpose (#193): the
+  // question wears install's own words, but what is being trusted is the same
+  // project whose code a run executes.
+  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents, "repos.install": opts.allowRuns };
   return async (spec, info) => {
     // The one kind that starts a process and is not asked about, so it does
     // not ride the "starts nothing" branch below unremarked. Settled in #189
@@ -110,10 +114,17 @@ export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnP
     const kind = info.kind as keyof typeof STARTS;
     let plan: Question;
     try {
-      plan = kind === "run" ? runQuestion(p, spec) : kind === "shell" ? shellQuestion(p, spec, info) : agentQuestion(p, spec);
+      plan =
+        kind === "run"
+          ? runQuestion(p, spec)
+          : kind === "shell"
+            ? shellQuestion(p, spec, info)
+            : kind === "agent"
+              ? agentQuestion(p, spec)
+              : installQuestion(p, spec);
     } catch (e) {
       const message =
-        e instanceof RunError || e instanceof ShellError || e instanceof AgentError
+        e instanceof RunError || e instanceof ShellError || e instanceof AgentError || e instanceof InstallError
           ? [e.message, e.hint].filter(Boolean).join(" — ")
           : e instanceof Error
             ? e.message
@@ -189,6 +200,22 @@ function runQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Questi
     // The project, not the script: what you are being asked to trust is a
     // package.json you can read, and the next script in it is a line away.
     grant: { kind: "run", ...(plan.repo !== undefined ? { repo: plan.repo } : {}) },
+  };
+}
+
+function installQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Question {
+  const asked = asInstallSpec(spec);
+  if (!asked) throw new InstallError("bad_params", "an install needs a project name");
+  const plan: InstallPlan = planInstall(p, asked);
+  return {
+    label: plan.label,
+    // The middle line is the whole reason this asks when a clone did not:
+    // install is the first execution of what a clone fetched.
+    lines: ["npm install", "runs this project's lifecycle scripts, and its dependencies' postinstalls", `cwd ${plan.where}/`],
+    flag: STARTS["repos.install"],
+    // The run grant, deliberately: answering `a` here records run/<project>,
+    // and an existing run/<project> answers this question too.
+    grant: { kind: "run", repo: plan.name },
   };
 }
 

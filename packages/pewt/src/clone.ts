@@ -226,9 +226,10 @@ export function cloneKind(p: Pewter, log: HostLogger): KindHandler {
 }
 
 /** Bytes in; whole lines out one way, `\r` repaints the other. run.ts's
- *  splitter with one more boundary, local to clone because git is the one
- *  child that paints. */
-function crSplitter(onLine: (line: string) => void, onRepaint: (line: string) => void): { push(chunk: Buffer): void; flush(): void } {
+ *  splitter with one more boundary. Exported for the other child that
+ *  paints: npm's spinner rides `\r` exactly as git's progress does
+ *  (install.ts). */
+export function crSplitter(onLine: (line: string) => void, onRepaint: (line: string) => void): { push(chunk: Buffer): void; flush(): void } {
   let buf = "";
   return {
     push(chunk: Buffer): void {
