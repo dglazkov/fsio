@@ -2,7 +2,7 @@
 // pewt — generated bundle; source: packages/pewt (github.com/dglazkov/fsio)
 
 // dist/cli.js
-import path15 from "node:path";
+import path16 from "node:path";
 
 // dist/ops.js
 import { asTabCommand, bodyLabel, describeGrant, grantId as grantId2, shellSpec, sizeText } from "pewter";
@@ -368,12 +368,45 @@ async function listRepos(p) {
   for (const e of entries) {
     if (!e.isDirectory() || e.name.startsWith("."))
       continue;
-    found.push({
-      name: e.name,
-      git: await isGitRepo(path4.join(p.repos, e.name))
-    });
+    found.push(await projectAt(p, e.name));
   }
   return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+async function projectAt(p, name) {
+  const dir = path4.join(p.repos, name);
+  const git = await isGitRepo(dir);
+  const manifest = await exists2(path4.join(dir, "package.json"));
+  return {
+    name,
+    git,
+    branch: git ? await branchOf(dir) : null,
+    scripts: await scriptsOf(dir),
+    installed: manifest ? await exists2(path4.join(dir, "node_modules")) : null
+  };
+}
+var exists2 = (at) => fs5.stat(at).then(() => true).catch(() => false);
+async function branchOf(dir) {
+  try {
+    let gitDir = path4.join(dir, ".git");
+    if ((await fs5.stat(gitDir)).isFile()) {
+      const pointer = (await fs5.readFile(gitDir, "utf8")).trim();
+      if (!pointer.startsWith("gitdir:"))
+        return null;
+      gitDir = path4.resolve(dir, pointer.slice("gitdir:".length).trim());
+    }
+    const head = (await fs5.readFile(path4.join(gitDir, "HEAD"), "utf8")).trim();
+    return head.startsWith("ref: refs/heads/") ? head.slice("ref: refs/heads/".length) : null;
+  } catch {
+    return null;
+  }
+}
+async function scriptsOf(dir) {
+  try {
+    const pkg = JSON.parse(await fs5.readFile(path4.join(dir, "package.json"), "utf8"));
+    return Object.keys(pkg.scripts ?? {});
+  } catch {
+    return [];
+  }
 }
 async function isGitRepo(dir) {
   return await fs5.stat(path4.join(dir, ".git")).then(() => true).catch(() => false);
@@ -407,7 +440,7 @@ async function createRepo(p, name) {
     const why = e instanceof Error ? e.message.split("\n")[0] : String(e);
     throw new ReposError("git_failed", `git init failed \u2014 ${why}`, "is git installed on this machine?");
   }
-  return { name, git: true };
+  return projectAt(p, name);
 }
 
 // dist/ops.js
@@ -461,7 +494,9 @@ var reposList = define({
       return "no projects yet \u2014 repos/ is empty.\n  Start one:   pewt repos create <name>\n  Clone one:   pewt repos clone <url>";
     }
     const width = Math.max(...repos.map((r) => r.name.length));
-    return repos.map((r) => `  ${r.name.padEnd(width)}  ${r.git ? "git" : "(not a git repository)"}`).join("\n");
+    const state = (r) => r.git ? r.branch ?? "detached" : "(not a git repository)";
+    const stateWidth = Math.max(...repos.map((r) => state(r).length));
+    return repos.map((r) => `  ${r.name.padEnd(width)}  ${state(r).padEnd(stateWidth)}  ${r.scripts.length ? r.scripts.join(", ") : "(no scripts)"}`).join("\n");
   }
 });
 var reposCreate = define({
@@ -487,7 +522,7 @@ var reposCreate = define({
       throw e;
     }
   },
-  render: ({ repo }) => `${repo.name} \u2192 repos/${repo.name}/ \u2014 a git repository, ready to work in`
+  render: ({ repo }) => `${repo.name} \u2192 repos/${repo.name}/ \u2014 a git repository${repo.branch ? ` on ${repo.branch}` : ""}, ready to work in`
 });
 var extBundle = define({
   method: "ext.bundle",
@@ -679,7 +714,7 @@ var filesOpen = definePage({
   // Whether a window was already on it is the half nobody asks for and
   // everybody wants next: `pewt open` twice is one tab, on purpose, and a
   // second id would be the more surprising answer to report.
-  render: ({ id, path: path16, reused }) => `${path16} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
+  render: ({ id, path: path17, reused }) => `${path17} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
 });
 var filesFling = definePage({
   method: "files.fling",
@@ -838,7 +873,23 @@ var cloneProcess = {
     return { url: str(params, "url"), ...name !== void 0 ? { name } : {} };
   }
 };
-var PROCESSES = [runProcess, shellProcess, agentProcess, cloneProcess];
+var installProcess = {
+  method: "repos.install",
+  cli: ["repos", "install"],
+  summary: "npm install in a project \u2014 asked first, unlike clone",
+  usage: "<name>",
+  repo: false,
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0])
+      throw new OpError("usage", "repos install takes one project name \u2014 `pewt repos` lists them");
+    return { name: argv[0] };
+  },
+  // The name is checked against the disk when the install is planned
+  // (install.ts) — a project that is not there, or has no manifest, is
+  // refused before any question is asked.
+  parse: (params) => ({ name: str(params, "name") })
+};
+var PROCESSES = [runProcess, shellProcess, agentProcess, cloneProcess, installProcess];
 var COMMAND_LIST = [
   ...OPERATIONS.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: false })),
   ...PROCESSES.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: o.repo }))
@@ -902,6 +953,11 @@ nothing it fetched, and it lands inside repos/. It streams git's own output
 and exits with git's code. A url that needs credentials fails in git's words
 rather than prompting \u2014 the host runs git with no terminal to ask on, so use
 an ssh url if your keys are set up, or a public one.
+
+\`pewt repos install\` is the other half, and it IS asked: npm install runs
+lifecycle scripts, which is the first execution of what a clone fetched. The
+question rides the run rung \u2014 \`--allow-runs\` covers it, and a standing
+\`run/<project>\` grant answers it.
 
 \`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
 stdin, the agent's own messages out on stdout. Whatever is on the other end
@@ -1349,8 +1405,8 @@ var FsioClient = class {
         const readJson2 = async (f) => JSON.parse(await (await (await dir.getFileHandle(f)).getFile()).text());
         const entry = { id: name, kind: null, status: null };
         try {
-          const spawn4 = await readJson2("spawn.json");
-          const p = spawn4.params ?? spawn4;
+          const spawn5 = await readJson2("spawn.json");
+          const p = spawn5.params ?? spawn5;
           entry.kind = p.kind ?? "echo";
           entry.client = p.client;
           entry.origin = p.origin;
@@ -2614,9 +2670,113 @@ function crSplitter(onLine, onRepaint) {
   };
 }
 
-// dist/node-fs.js
-import fs9 from "node:fs/promises";
+// dist/install.js
+import { spawn as spawn3 } from "node:child_process";
+import fs9 from "node:fs";
 import path8 from "node:path";
+var InstallError = class extends Error {
+  code;
+  hint;
+  constructor(code, message, hint) {
+    super(message);
+    this.code = code;
+    this.hint = hint;
+    this.name = "InstallError";
+  }
+};
+function planInstall(p, spec) {
+  const name = spec.name;
+  if (typeof name !== "string" || !isProjectName(name)) {
+    throw new InstallError("bad_name", `${JSON.stringify(String(name))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
+  }
+  const cwd = path8.join(p.repos, name);
+  if (!fs9.existsSync(cwd)) {
+    throw new InstallError("no_repo", `no project named ${name} in this pewter`, "`pewt repos` lists them");
+  }
+  if (!fs9.existsSync(path8.join(cwd, "package.json"))) {
+    throw new InstallError("no_manifest", `${name} has no package.json, so there is nothing to install`, "a manifest is what declares dependencies");
+  }
+  return { name, cwd, label: `install --repo ${name}`, where: path8.join("repos", name) };
+}
+function asInstallSpec(spec) {
+  const name = spec["name"];
+  return typeof name === "string" ? { name } : null;
+}
+var PROGRESS_MS2 = 200;
+function installKind(p, log) {
+  return (ctx) => {
+    const spec = asInstallSpec(ctx.spec);
+    if (!spec)
+      throw new InstallError("bad_params", "an install session needs a project name in its spec");
+    let plan;
+    try {
+      plan = planInstall(p, spec);
+    } catch (e) {
+      throw e instanceof InstallError && e.hint ? new InstallError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
+    }
+    const child = spawn3("npm", ["install", "--no-audit", "--no-fund"], {
+      cwd: plan.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so the host can stop the whole tree (D6) —
+      // npm spawns lifecycle scripts, and they go with it.
+      detached: true
+    });
+    const say = (frame) => ctx.write(JSON.stringify(frame));
+    let pendingProgress = null;
+    let timer = null;
+    const flushProgress = () => {
+      timer = null;
+      if (pendingProgress === null)
+        return;
+      say({ e: pendingProgress });
+      pendingProgress = null;
+    };
+    const repaint = (line) => {
+      pendingProgress = line;
+      if (!timer) {
+        timer = setTimeout(flushProgress, PROGRESS_MS2);
+        timer.unref();
+      }
+    };
+    const out = crSplitter((line) => say({ o: line }), repaint);
+    const err = crSplitter((line) => {
+      pendingProgress = null;
+      say({ e: line });
+    }, repaint);
+    child.stdout?.on("data", (chunk) => out.push(chunk));
+    child.stderr?.on("data", (chunk) => err.push(chunk));
+    let done = false;
+    const finish = (code, signal) => {
+      if (done)
+        return;
+      done = true;
+      if (timer)
+        clearTimeout(timer);
+      flushProgress();
+      out.flush();
+      err.flush();
+      const exitCode = code ?? (signal ? 128 : null);
+      say({ end: exitCode });
+      log.info(`${plan.label} \u2192 exit ${exitCode ?? "?"}${signal ? ` (${signal})` : ""}`);
+      ctx.exit(exitCode);
+    };
+    child.on("close", (code, signal) => finish(code, signal));
+    child.on("error", (e) => {
+      say({ e: `pewt: could not start npm \u2014 ${e.message}` });
+      finish(127, null);
+    });
+    log.info(`${plan.label} \u2192 npm install in ${plan.where}/ (pid ${child.pid ?? "?"})`);
+    return {
+      result: { name: plan.name, where: plan.where, childPid: child.pid ?? null },
+      onClose: () => stopTree(child, done)
+    };
+  };
+}
+
+// dist/node-fs.js
+import fs10 from "node:fs/promises";
+import path9 from "node:path";
 var NamedError = class extends Error {
   constructor(name, msg) {
     super(msg);
@@ -2629,28 +2789,28 @@ var NodeDirectory = class _NodeDirectory {
     this.dirPath = dirPath;
   }
   async getDirectoryHandle(name, options) {
-    const p = path8.join(this.dirPath, name);
+    const p = path9.join(this.dirPath, name);
     if (options?.create) {
-      await fs9.mkdir(p, { recursive: true });
+      await fs10.mkdir(p, { recursive: true });
     } else {
-      const st = await fs9.stat(p).catch(() => null);
+      const st = await fs10.stat(p).catch(() => null);
       if (!st?.isDirectory())
         throw new NamedError("NotFoundError", `no directory ${name}`);
     }
     return new _NodeDirectory(p);
   }
   async getFileHandle(name, options) {
-    const p = path8.join(this.dirPath, name);
-    const st = await fs9.stat(p).catch(() => null);
+    const p = path9.join(this.dirPath, name);
+    const st = await fs10.stat(p).catch(() => null);
     if (!st?.isFile()) {
       if (!options?.create)
         throw new NamedError("NotFoundError", `no file ${name}`);
-      await (await fs9.open(p, "a")).close();
+      await (await fs10.open(p, "a")).close();
     }
     return new NodeFile(p, name);
   }
   async *keys() {
-    yield* await fs9.readdir(this.dirPath);
+    yield* await fs10.readdir(this.dirPath);
   }
 };
 var NodeFile = class {
@@ -2661,12 +2821,12 @@ var NodeFile = class {
     this.name = name;
   }
   async getFile() {
-    const [st, buf] = await Promise.all([fs9.stat(this.filePath), fs9.readFile(this.filePath)]);
+    const [st, buf] = await Promise.all([fs10.stat(this.filePath), fs10.readFile(this.filePath)]);
     return new File([buf], this.name, { lastModified: Math.round(st.mtimeMs) });
   }
   async createWritable() {
     const tmp = `${this.filePath}.${Math.random().toString(36).slice(2, 8)}.crswap`;
-    const fh = await fs9.open(tmp, "w");
+    const fh = await fs10.open(tmp, "w");
     const target = this.filePath;
     return {
       async write(data) {
@@ -2674,17 +2834,17 @@ var NodeFile = class {
       },
       async close() {
         await fh.close();
-        await fs9.rename(tmp, target);
+        await fs10.rename(tmp, target);
       }
     };
   }
 };
 
 // dist/agent.js
-import { spawn as spawn3 } from "node:child_process";
-import fs10 from "node:fs";
+import { spawn as spawn4 } from "node:child_process";
+import fs11 from "node:fs";
 import os from "node:os";
-import path9 from "node:path";
+import path10 from "node:path";
 
 // dist/framing.js
 var MAX_LINE_BYTES = 1 << 20;
@@ -2798,8 +2958,8 @@ function planAgent(p, spec) {
     if (typeof repo !== "string" || !isSegment2(repo)) {
       throw new AgentError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
     }
-    cwd = path9.join(p.repos, repo);
-    if (!fs10.existsSync(cwd)) {
+    cwd = path10.join(p.repos, repo);
+    if (!fs11.existsSync(cwd)) {
       throw new AgentError("no_repo", `no project named ${repo} in this pewter`, "`pewt repos` lists them");
     }
   }
@@ -2832,7 +2992,7 @@ function planAgent(p, spec) {
   };
 }
 function where2(p, dir) {
-  const rel = path9.relative(p.root, dir);
+  const rel = path10.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 function asAgentSpec(spec) {
@@ -2853,9 +3013,9 @@ function agentEnv(p, from2 = process.env) {
   }
   env["HOME"] ??= os.homedir();
   env["TERM"] = "dumb";
-  const bin = path9.join(p.root, "node_modules", ".bin");
+  const bin = path10.join(p.root, "node_modules", ".bin");
   const current = env["PATH"] ?? "";
-  env["PATH"] = current.includes(bin) ? current : `${bin}${path9.delimiter}${current}`;
+  env["PATH"] = current.includes(bin) ? current : `${bin}${path10.delimiter}${current}`;
   return env;
 }
 function agentKind(p, log) {
@@ -2866,7 +3026,7 @@ function agentKind(p, log) {
     } catch (e) {
       throw e instanceof AgentError && e.hint ? new AgentError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
     }
-    const child = spawn3(plan.bin, [], { cwd: plan.cwd, env: agentEnv(p), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn4(plan.bin, [], { cwd: plan.cwd, env: agentEnv(p), stdio: ["pipe", "pipe", "pipe"] });
     const counters = { messagesOut: 0, messagesIn: 0, junkLines: 0, nonRpc: 0, refusedIn: 0, overflows: 0 };
     const stderr = [];
     const keep = (line) => {
@@ -2969,16 +3129,16 @@ function agentKind(p, log) {
 }
 
 // dist/paths.js
-import path10 from "node:path";
+import path11 from "node:path";
 import { safeRelPath } from "pewter";
 function inPewter(typed, root, cwd) {
-  const landed = path10.resolve(cwd, typed);
-  const rel = path10.relative(root, landed);
-  if (rel !== "" && !rel.startsWith("..") && !path10.isAbsolute(rel))
-    return { path: rel.split(path10.sep).join("/") };
-  const here = path10.relative(root, path10.resolve(cwd));
-  const away = here.startsWith("..") || path10.isAbsolute(here);
-  if (away && !path10.isAbsolute(typed) && safeRelPath(typed))
+  const landed = path11.resolve(cwd, typed);
+  const rel = path11.relative(root, landed);
+  if (rel !== "" && !rel.startsWith("..") && !path11.isAbsolute(rel))
+    return { path: rel.split(path11.sep).join("/") };
+  const here = path11.relative(root, path11.resolve(cwd));
+  const away = here.startsWith("..") || path11.isAbsolute(here);
+  if (away && !path11.isAbsolute(typed) && safeRelPath(typed))
     return { path: safeRelPath(typed) };
   return { outside: landed };
 }
@@ -3218,13 +3378,13 @@ async function pipeAgent(dir, spec, streams, opts = {}) {
 }
 
 // dist/serve.js
-import fs14 from "node:fs";
+import fs15 from "node:fs";
 import os2 from "node:os";
-import path14 from "node:path";
+import path15 from "node:path";
 
 // ../host/dist/host-server.js
-import fs11 from "node:fs";
-import path11 from "node:path";
+import fs12 from "node:fs";
+import path12 from "node:path";
 import { spawn as cpSpawn } from "node:child_process";
 var errMsg2 = (e) => e instanceof Error ? e.message : String(e);
 var SILENT_LOGGER = { info() {
@@ -3255,9 +3415,9 @@ var DEFAULT_TRANSCRIPTS = {
 var CLIENT_DIR = "client";
 var CLIENT_DIR_CAP = 8;
 function writeFileAtomic(file, data) {
-  const tmp = path11.join(path11.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
-  fs11.writeFileSync(tmp, data);
-  fs11.renameSync(tmp, file);
+  const tmp = path12.join(path12.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  fs12.writeFileSync(tmp, data);
+  fs12.renameSync(tmp, file);
 }
 function writeJsonAtomic(file, obj) {
   writeFileAtomic(file, JSON.stringify(obj, null, 2));
@@ -3284,21 +3444,21 @@ function canonServices(d) {
 var isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 var echoSafe = (s) => s.replace(new RegExp("\\p{C}", "gu"), "").slice(0, 64);
 var within = (root, p) => {
-  const rel = path11.relative(root, p);
-  return rel === "" || !rel.startsWith("..") && !path11.isAbsolute(rel);
+  const rel = path12.relative(root, p);
+  return rel === "" || !rel.startsWith("..") && !path12.isAbsolute(rel);
 };
 function contains(root, p) {
   if (!within(root, p))
     return false;
   try {
-    return within(fs11.realpathSync(root), fs11.realpathSync(p));
+    return within(fs12.realpathSync(root), fs12.realpathSync(p));
   } catch {
     return true;
   }
 }
 function readJson(file) {
   try {
-    return JSON.parse(fs11.readFileSync(file, "utf8"));
+    return JSON.parse(fs12.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -3374,12 +3534,12 @@ var Session = class {
   constructor(host, id) {
     this.host = host;
     this.id = id;
-    this.dir = path11.join(host.sessionsDir, id);
+    this.dir = path12.join(host.sessionsDir, id);
   }
   /** Current writer's uplink dir (D18): `in/` for epoch 0, `in.<epoch>/`
    *  after an attach takeover. Only this dir is ever consumed. */
   get inDir() {
-    return path11.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
+    return path12.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
   }
   get pty() {
     return this.usesPty ? this.proc : null;
@@ -3388,7 +3548,7 @@ var Session = class {
     return this.usesPty || !this.proc ? null : this.proc;
   }
   segPath(gen) {
-    return path11.join(this.dir, segName(gen));
+    return path12.join(this.dir, segName(gen));
   }
   // Append with open/write/close per call, then bump a rename-committed
   // doorbell file. Rationale (measured, spec/FINDINGS.md F1): on macOS,
@@ -3398,9 +3558,9 @@ var Session = class {
   // appends), so every segment is independently parseable.
   appendFrame(type, payload) {
     const bytes = encodeFrame(type, payload);
-    const fd = fs11.openSync(this.segPath(this.outGen), "a");
-    fs11.writeSync(fd, bytes);
-    fs11.closeSync(fd);
+    const fd = fs12.openSync(this.segPath(this.outGen), "a");
+    fs12.writeSync(fd, bytes);
+    fs12.closeSync(fd);
     this.segBytes += bytes.length;
     this.outTotal += bytes.length;
     if (this.segBytes >= this.host.limits.segMax) {
@@ -3411,7 +3571,7 @@ var Session = class {
       this.gcSegments();
     }
     const sig = { gen: this.outGen, size: this.segBytes, prevFinal: this.prevFinal, total: this.outTotal };
-    writeFileAtomic(path11.join(this.dir, "out.sig"), JSON.stringify(sig));
+    writeFileAtomic(path12.join(this.dir, "out.sig"), JSON.stringify(sig));
     this.checkWindow();
   }
   ack(total) {
@@ -3423,7 +3583,7 @@ var Session = class {
     while (this.doneSegs.length > 0 && this.ackTotal >= this.doneSegs[0].endTotal) {
       const seg = this.doneSegs.shift();
       try {
-        fs11.unlinkSync(this.segPath(seg.gen));
+        fs12.unlinkSync(this.segPath(seg.gen));
       } catch {
       }
     }
@@ -3465,7 +3625,7 @@ var Session = class {
   setStatus(obj) {
     const { detached: _, ...base } = obj;
     this.statusBase = base;
-    writeJsonAtomic(path11.join(this.dir, "status.json"), { t: now(), ...obj });
+    writeJsonAtomic(path12.join(this.dir, "status.json"), { t: now(), ...obj });
   }
   /** Toggle the D17 detached marker in status.json (no-op until the first
    *  setStatus, and when already in the requested state). */
@@ -3589,10 +3749,10 @@ var HostServer = class {
   scanning = false;
   rescan = false;
   constructor(opts) {
-    this.sharedDir = path11.resolve(opts.root);
-    this.fsioDir = path11.join(this.sharedDir, ".fsio");
-    this.sessionsDir = path11.join(this.fsioDir, "sessions");
-    this.transcriptsDir = path11.join(this.fsioDir, "transcripts");
+    this.sharedDir = path12.resolve(opts.root);
+    this.fsioDir = path12.join(this.sharedDir, ".fsio");
+    this.sessionsDir = path12.join(this.fsioDir, "sessions");
+    this.transcriptsDir = path12.join(this.fsioDir, "transcripts");
     this.allowShell = opts.allowShell ?? false;
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
     const ownName = opts.workspaceName;
@@ -3712,12 +3872,12 @@ var HostServer = class {
     }
     this.servicesRev = prev + 1;
     this.servicesBody = body;
-    writeJsonAtomic(path11.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
+    writeJsonAtomic(path12.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
     return true;
   }
   readServices() {
     try {
-      const parsed2 = JSON.parse(fs11.readFileSync(path11.join(this.fsioDir, "services.json"), "utf8"));
+      const parsed2 = JSON.parse(fs12.readFileSync(path12.join(this.fsioDir, "services.json"), "utf8"));
       return parsed2 && typeof parsed2 === "object" ? parsed2 : null;
     } catch {
       return null;
@@ -3748,11 +3908,11 @@ var HostServer = class {
       this.log.warn("no pty (node-pty not installed): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
     if (this.fresh)
       this.cleanServiceDir();
-    fs11.mkdirSync(this.sessionsDir, { recursive: true });
+    fs12.mkdirSync(this.sessionsDir, { recursive: true });
     this.sweepTranscripts();
     this.ensureGitignore();
     const manifest = { protocol: PROTOCOL_VERSION };
-    writeJsonAtomic(path11.join(this.fsioDir, "fsio.json"), manifest);
+    writeJsonAtomic(path12.join(this.fsioDir, "fsio.json"), manifest);
     this.publishServices();
     this.heartbeat();
     this.timers.push(setInterval(() => this.heartbeat(), this.timings.heartbeatMs));
@@ -3819,7 +3979,7 @@ var HostServer = class {
     this.rootWatcher?.close();
     this.rootWatcher = null;
     try {
-      fs11.unlinkSync(path11.join(this.fsioDir, "host.json"));
+      fs12.unlinkSync(path12.join(this.fsioDir, "host.json"));
     } catch {
     }
     return Promise.all(reaps).then(() => {
@@ -3872,10 +4032,10 @@ var HostServer = class {
   // lifecycle), and `takeover` skips the refusal for a killed host whose
   // last beat hasn't gone stale yet.
   refuseLiveHost() {
-    const hostJson = path11.join(this.fsioDir, "host.json");
+    const hostJson = path12.join(this.fsioDir, "host.json");
     let ageMs;
     try {
-      ageMs = Date.now() - fs11.statSync(hostJson).mtimeMs;
+      ageMs = Date.now() - fs12.statSync(hostJson).mtimeMs;
     } catch {
       return;
     }
@@ -3902,24 +4062,24 @@ var HostServer = class {
       return;
     let dir = this.sharedDir;
     for (; ; ) {
-      if (fs11.existsSync(path11.join(dir, ".git")))
+      if (fs12.existsSync(path12.join(dir, ".git")))
         break;
-      const up = path11.dirname(dir);
+      const up = path12.dirname(dir);
       if (up === dir)
         return;
       dir = up;
     }
-    const file = path11.join(this.sharedDir, ".gitignore");
+    const file = path12.join(this.sharedDir, ".gitignore");
     try {
       let text = "";
       try {
-        text = fs11.readFileSync(file, "utf8");
+        text = fs12.readFileSync(file, "utf8");
       } catch {
       }
       if (text.split("\n").some((l) => /^\/?\.fsio\/?$/.test(l.trim())))
         return;
       const sep = text.length > 0 && !text.endsWith("\n") ? "\n" : "";
-      fs11.appendFileSync(file, `${sep}# fsio transport state \u2014 session scrollback lives here
+      fs12.appendFileSync(file, `${sep}# fsio transport state \u2014 session scrollback lives here
 .fsio/
 `);
       this.log.info(`added .fsio/ to ${file} (scrollback must never be committed)`);
@@ -3931,7 +4091,7 @@ var HostServer = class {
     if (!this.watchEnabled)
       return null;
     try {
-      const w = fs11.watch(p, cb);
+      const w = fs12.watch(p, cb);
       w.on("error", () => {
       });
       return w;
@@ -3956,7 +4116,7 @@ var HostServer = class {
       // the service directory; hub clients read `capabilities`.
       servicesRev: this.servicesRev
     };
-    writeJsonAtomic(path11.join(this.fsioDir, "host.json"), info);
+    writeJsonAtomic(path12.join(this.fsioDir, "host.json"), info);
   }
   idleSweep() {
     for (const s of this.sessions.values()) {
@@ -3991,10 +4151,10 @@ var HostServer = class {
   // staleGraceMs — a live reporter flushes at least every 5 s, so a live
   // page's dir never looks stale.
   sweepClientDirs() {
-    const root = path11.join(this.fsioDir, CLIENT_DIR);
+    const root = path12.join(this.fsioDir, CLIENT_DIR);
     let entries;
     try {
-      entries = fs11.readdirSync(root, { withFileTypes: true });
+      entries = fs12.readdirSync(root, { withFileTypes: true });
     } catch {
       return;
     }
@@ -4003,10 +4163,10 @@ var HostServer = class {
       if (!e.isDirectory())
         continue;
       try {
-        const p = path11.join(root, e.name);
-        let mtime2 = fs11.statSync(p).mtimeMs;
+        const p = path12.join(root, e.name);
+        let mtime2 = fs12.statSync(p).mtimeMs;
         try {
-          mtime2 = Math.max(mtime2, fs11.statSync(path11.join(p, "report.json")).mtimeMs);
+          mtime2 = Math.max(mtime2, fs12.statSync(path12.join(p, "report.json")).mtimeMs);
         } catch {
         }
         dirs.push({ name: e.name, mtime: mtime2 });
@@ -4020,7 +4180,7 @@ var HostServer = class {
       if (Date.now() - d.mtime < this.timings.staleGraceMs)
         continue;
       try {
-        fs11.rmSync(path11.join(root, d.name), { recursive: true, force: true });
+        fs12.rmSync(path12.join(root, d.name), { recursive: true, force: true });
         this.log.info(`client dir ${d.name}: over cap (${CLIENT_DIR_CAP}) and stale, removed`);
       } catch {
       }
@@ -4054,26 +4214,26 @@ var HostServer = class {
       return;
     let logs;
     try {
-      logs = fs11.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
+      logs = fs12.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
     } catch {
       return;
     }
     if (!logs.length)
       return;
-    const dir = path11.join(this.transcriptsDir, s.id);
+    const dir = path12.join(this.transcriptsDir, s.id);
     try {
-      fs11.mkdirSync(dir, { recursive: true });
+      fs12.mkdirSync(dir, { recursive: true });
       let bytes = 0;
       for (const name of logs) {
-        const to = path11.join(dir, name);
-        fs11.renameSync(path11.join(s.dir, name), to);
-        bytes += fs11.statSync(to).size;
+        const to = path12.join(dir, name);
+        fs12.renameSync(path12.join(s.dir, name), to);
+        bytes += fs12.statSync(to).size;
       }
       try {
-        fs11.copyFileSync(path11.join(s.dir, "spawn.json"), path11.join(dir, "spawn.json"));
+        fs12.copyFileSync(path12.join(s.dir, "spawn.json"), path12.join(dir, "spawn.json"));
       } catch {
       }
-      const st = readJson(path11.join(s.dir, "status.json"));
+      const st = readJson(path12.join(s.dir, "status.json"));
       const first = OUT_LOG_RE.exec(logs[0]);
       const meta = {
         id: s.id,
@@ -4087,7 +4247,7 @@ var HostServer = class {
         total: s.outTotal,
         bytes
       };
-      writeJsonAtomic(path11.join(dir, "meta.json"), meta);
+      writeJsonAtomic(path12.join(dir, "meta.json"), meta);
       this.log.info(`session ${s.id}: transcript kept (${why}, ${bytes} B)`);
     } catch (e) {
       this.log.warn(`session ${s.id}: transcript not kept: ${errMsg2(e)}`);
@@ -4104,7 +4264,7 @@ var HostServer = class {
       return;
     let entries;
     try {
-      entries = fs11.readdirSync(this.transcriptsDir, { withFileTypes: true });
+      entries = fs12.readdirSync(this.transcriptsDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -4112,13 +4272,13 @@ var HostServer = class {
     for (const e of entries) {
       if (!e.isDirectory())
         continue;
-      const dir = path11.join(this.transcriptsDir, e.name);
+      const dir = path12.join(this.transcriptsDir, e.name);
       let bytes = 0;
       let ended = 0;
       try {
-        for (const f of fs11.readdirSync(dir))
-          bytes += fs11.statSync(path11.join(dir, f)).size;
-        ended = readJson(path11.join(dir, "meta.json"))?.ended ?? fs11.statSync(dir).mtimeMs;
+        for (const f of fs12.readdirSync(dir))
+          bytes += fs12.statSync(path12.join(dir, f)).size;
+        ended = readJson(path12.join(dir, "meta.json"))?.ended ?? fs12.statSync(dir).mtimeMs;
       } catch {
         continue;
       }
@@ -4133,7 +4293,7 @@ var HostServer = class {
       if (!over)
         continue;
       try {
-        fs11.rmSync(path11.join(this.transcriptsDir, t.name), { recursive: true, force: true });
+        fs12.rmSync(path12.join(this.transcriptsDir, t.name), { recursive: true, force: true });
         this.log.info(`transcript ${t.name}: removed (${over})`);
       } catch {
       }
@@ -4163,12 +4323,12 @@ var HostServer = class {
   cleanServiceDir(keepClient = false) {
     const keep = /* @__PURE__ */ new Set();
     if (this.transcripts)
-      keep.add(path11.basename(this.transcriptsDir));
+      keep.add(path12.basename(this.transcriptsDir));
     if (keepClient)
       keep.add(CLIENT_DIR);
     let entries;
     try {
-      entries = fs11.readdirSync(this.fsioDir, { withFileTypes: true });
+      entries = fs12.readdirSync(this.fsioDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -4176,12 +4336,12 @@ var HostServer = class {
       if (keep.has(e.name))
         continue;
       try {
-        fs11.rmSync(path11.join(this.fsioDir, e.name), { recursive: true, force: true });
+        fs12.rmSync(path12.join(this.fsioDir, e.name), { recursive: true, force: true });
       } catch {
       }
     }
     try {
-      fs11.rmdirSync(this.fsioDir);
+      fs12.rmdirSync(this.fsioDir);
     } catch {
     }
   }
@@ -4209,7 +4369,7 @@ var HostServer = class {
   scanOnce() {
     let entries;
     try {
-      entries = fs11.readdirSync(this.sessionsDir, { withFileTypes: true });
+      entries = fs12.readdirSync(this.sessionsDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -4233,7 +4393,7 @@ var HostServer = class {
   adoptSession(id) {
     const s = new Session(this, id);
     this.sessions.set(id, s);
-    const status = readJson(path11.join(s.dir, "status.json"));
+    const status = readJson(path12.join(s.dir, "status.json"));
     if (status && status.state === "exited") {
       s.done = true;
       if (now() - (status.t ?? 0) > this.timings.staleGraceMs)
@@ -4245,7 +4405,7 @@ var HostServer = class {
     this.log.info(`session ${id}: adopted`);
   }
   tryStart(s) {
-    const raw = readJson(path11.join(s.dir, "spawn.json"));
+    const raw = readJson(path12.join(s.dir, "spawn.json"));
     if (!raw)
       return;
     if (raw.jsonrpc === "2.0" && raw.method === "spawn") {
@@ -4254,7 +4414,7 @@ var HostServer = class {
     } else {
       s.spawn = raw;
     }
-    const prior = readJson(path11.join(s.dir, "status.json"));
+    const prior = readJson(path12.join(s.dir, "status.json"));
     if (prior?.writer)
       s.epoch = prior.writer.epoch;
     s.started = true;
@@ -4406,7 +4566,7 @@ var HostServer = class {
     const name = r.name ?? asked;
     if (name)
       info.workspace = s.workspace = name;
-    return path11.resolve(r.root);
+    return path12.resolve(r.root);
   }
   /** The exact thing a shell spec would run — shared by the policy hook's
    *  info and startShell so the judged command can't drift from the
@@ -4417,7 +4577,7 @@ var HostServer = class {
     return {
       cmd: spec.cmd || process.env.SHELL || "/bin/bash",
       args: spec.args ?? [],
-      cwd: spec.cwd ? path11.resolve(root, spec.cwd) : root,
+      cwd: spec.cwd ? path12.resolve(root, spec.cwd) : root,
       pty: !!this.ptyMod && spec.pty !== false
     };
   }
@@ -4501,17 +4661,17 @@ var HostServer = class {
   processAttach(s) {
     let names;
     try {
-      names = fs11.readdirSync(s.dir);
+      names = fs12.readdirSync(s.dir);
     } catch {
       return;
     }
     for (const name of names.sort()) {
       if (!/^attach\.[A-Za-z0-9_-]+\.json$/.test(name))
         continue;
-      const p = path11.join(s.dir, name);
+      const p = path12.join(s.dir, name);
       const raw = readJson(p);
       try {
-        fs11.unlinkSync(p);
+        fs12.unlinkSync(p);
       } catch {
         continue;
       }
@@ -4568,7 +4728,7 @@ var HostServer = class {
     s.epoch += 1;
     s.nextInSeq = null;
     try {
-      fs11.mkdirSync(s.inDir, { recursive: true });
+      fs12.mkdirSync(s.inDir, { recursive: true });
     } catch {
     }
     s.watchers.push(this.watchDir(s.inDir, () => this.scheduleScan()));
@@ -4592,7 +4752,7 @@ var HostServer = class {
   processIncoming(s) {
     let names;
     try {
-      names = fs11.readdirSync(s.inDir);
+      names = fs12.readdirSync(s.inDir);
     } catch {
       return;
     }
@@ -4610,13 +4770,13 @@ var HostServer = class {
       s.nextInSeq = Math.min(...chunks.keys());
     while (chunks.has(s.nextInSeq)) {
       const chunk = chunks.get(s.nextInSeq);
-      const p = path11.join(s.inDir, chunk.name);
+      const p = path12.join(s.inDir, chunk.name);
       let bytes;
       if (chunk.data !== void 0) {
         bytes = b64urlDecode(chunk.data);
       } else {
         try {
-          bytes = fs11.readFileSync(p);
+          bytes = fs12.readFileSync(p);
         } catch {
           return;
         }
@@ -4638,9 +4798,9 @@ var HostServer = class {
       for (const f of frames)
         this.handleFrame(s, f, t1);
       if (chunk.data !== void 0)
-        fs11.rmdirSync(p);
+        fs12.rmdirSync(p);
       else
-        fs11.unlinkSync(p);
+        fs12.unlinkSync(p);
       s.nextInSeq++;
     }
   }
@@ -4763,7 +4923,7 @@ var HostServer = class {
   removeSessionDir(s, why) {
     try {
       this.archiveTranscript(s, why);
-      fs11.rmSync(s.dir, { recursive: true, force: true });
+      fs12.rmSync(s.dir, { recursive: true, force: true });
       this.sessions.delete(s.id);
       this.log.info(`session ${s.id}: removed (${why})`);
     } catch (e) {
@@ -4777,8 +4937,8 @@ import readline from "node:readline/promises";
 import { describeGrant as describeGrant2, grantId as grantId3 } from "pewter";
 
 // dist/shell.js
-import fs12 from "node:fs";
-import path12 from "node:path";
+import fs13 from "node:fs";
+import path13 from "node:path";
 import { repoOfCwd } from "pewter";
 var ShellError = class extends Error {
   code;
@@ -4796,7 +4956,7 @@ function planShell(p, spec, resolved) {
   const repo = repoOfCwd(asked);
   let stat;
   try {
-    stat = fs12.statSync(cwd);
+    stat = fs13.statSync(cwd);
   } catch {
     throw new ShellError(repo ? "no_repo" : "no_cwd", repo ? `no project named ${repo} in this pewter` : `${where3(p, cwd)} is not a directory in this pewter`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
   }
@@ -4816,7 +4976,7 @@ function planShell(p, spec, resolved) {
   };
 }
 function where3(p, dir) {
-  const rel = path12.relative(p.root, dir);
+  const rel = path13.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 
@@ -4842,9 +5002,9 @@ function terminalAsker() {
   };
 }
 var stamp = () => (/* @__PURE__ */ new Date()).toTimeString().slice(0, 8);
-var STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents" };
+var STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents", "repos.install": "--allow-runs" };
 function spawnGate(p, opts, log) {
-  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents };
+  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents, "repos.install": opts.allowRuns };
   return async (spec, info) => {
     if (info.kind === "repos.clone") {
       log.info(`\u25CF repos.clone \u2014 git will fetch into repos/, executing nothing (${from(info.origin)})`);
@@ -4857,9 +5017,9 @@ function spawnGate(p, opts, log) {
     const kind = info.kind;
     let plan;
     try {
-      plan = kind === "run" ? runQuestion(p, spec) : kind === "shell" ? shellQuestion(p, spec, info) : agentQuestion(p, spec);
+      plan = kind === "run" ? runQuestion(p, spec) : kind === "shell" ? shellQuestion(p, spec, info) : kind === "agent" ? agentQuestion(p, spec) : installQuestion(p, spec);
     } catch (e) {
-      const message = e instanceof RunError || e instanceof ShellError || e instanceof AgentError ? [e.message, e.hint].filter(Boolean).join(" \u2014 ") : e instanceof Error ? e.message : String(e);
+      const message = e instanceof RunError || e instanceof ShellError || e instanceof AgentError || e instanceof InstallError ? [e.message, e.hint].filter(Boolean).join(" \u2014 ") : e instanceof Error ? e.message : String(e);
       log.warn(`\u2717 ${message}`);
       return { allow: false, reason: message };
     }
@@ -4900,6 +5060,22 @@ function runQuestion(p, spec) {
     // The project, not the script: what you are being asked to trust is a
     // package.json you can read, and the next script in it is a line away.
     grant: { kind: "run", ...plan.repo !== void 0 ? { repo: plan.repo } : {} }
+  };
+}
+function installQuestion(p, spec) {
+  const asked = asInstallSpec(spec);
+  if (!asked)
+    throw new InstallError("bad_params", "an install needs a project name");
+  const plan = planInstall(p, asked);
+  return {
+    label: plan.label,
+    // The middle line is the whole reason this asks when a clone did not:
+    // install is the first execution of what a clone fetched.
+    lines: ["npm install", "runs this project's lifecycle scripts, and its dependencies' postinstalls", `cwd ${plan.where}/`],
+    flag: STARTS["repos.install"],
+    // The run grant, deliberately: answering `a` here records run/<project>,
+    // and an existing run/<project> answers this question too.
+    grant: { kind: "run", repo: plan.name }
   };
 }
 function shellQuestion(p, spec, info) {
@@ -5163,8 +5339,8 @@ function asRpcError(e, method, log) {
 
 // dist/open.js
 import { execFile as execFile3 } from "node:child_process";
-import fs13 from "node:fs";
-import path13 from "node:path";
+import fs14 from "node:fs";
+import path14 from "node:path";
 var CHROMIUMS = [
   { id: "com.google.Chrome", name: "Google Chrome" },
   { id: "com.microsoft.edgemac", name: "Microsoft Edge" },
@@ -5186,7 +5362,7 @@ async function openInChromium(url, platform = process.platform) {
 }
 function hasClientDirs(fsioDir) {
   try {
-    return fs13.readdirSync(path13.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
+    return fs14.readdirSync(path14.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
   } catch {
     return false;
   }
@@ -5214,7 +5390,7 @@ async function serve(p, opts = {}) {
     throw new Error(`--url ${JSON.stringify(base)} is not a URL`);
   }
   page.searchParams.set("dir", p.name);
-  const tmpReal = fs14.realpathSync(os2.tmpdir());
+  const tmpReal = fs15.realpathSync(os2.tmpdir());
   if (p.root.startsWith("/private/tmp") || p.root.startsWith(tmpReal)) {
     throw new Error(`refusing to serve a pewter under a temp dir (${p.root}) \u2014 Chrome's file observers break there (F9)`);
   }
@@ -5237,6 +5413,7 @@ async function serve(p, opts = {}) {
   server.registerKind("run", runKind(p, log));
   server.registerKind("agent", agentKind(p, log));
   server.registerKind("repos.clone", cloneKind(p, log));
+  server.registerKind("repos.install", installKind(p, log));
   await server.start();
   console.log(`
 pewter \xB7 ${p.root}
@@ -5294,7 +5471,7 @@ function grantLine(p) {
 function countExtensions(p) {
   let names;
   try {
-    names = fs14.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
+    names = fs15.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
   } catch {
     return "no extensions/ directory \u2014 the page will have nothing to show.";
   }
@@ -5305,8 +5482,8 @@ async function stop(server, p, signal) {
 ${signal} \u2014 closing sessions\u2026`);
   await server.close();
   server.cleanServiceDir(true);
-  const clientDir = path14.join(p.fsio, "client");
-  const reports = fs14.existsSync(clientDir) ? fs14.readdirSync(clientDir).length : 0;
+  const clientDir = path15.join(p.fsio, "client");
+  const reports = fs15.existsSync(clientDir) ? fs15.readdirSync(clientDir).length : 0;
   console.log(reports ? `done; .fsio swept, ${reports} page report${reports === 1 ? "" : "s"} kept.` : "done; .fsio removed.");
 }
 
@@ -5430,12 +5607,29 @@ if (parsed.kind === "check") {
     }
     if (parsed.method === "shell") {
       const cwd = typeof parsed.spec["cwd"] === "string" ? parsed.spec["cwd"] : ".";
-      const where4 = path15.join(pewter.name, cwd);
+      const where4 = path16.join(pewter.name, cwd);
       console.log(parsed.json ? JSON.stringify({ dryRun: true, cwd, where: where4 }, null, 2) : `would open  a shell
        cwd  ${where4}/
 
 (nothing started \u2014 the host was not asked, and which shell it runs is its own)`);
       process.exit(0);
+    }
+    if (parsed.method === "repos.install") {
+      try {
+        const plan = planInstall(pewter, parsed.spec);
+        console.log(parsed.json ? JSON.stringify({ dryRun: true, name: plan.name, where: plan.where }, null, 2) : `would run  npm install
+      cwd  ${plan.where}/
+
+(nothing started \u2014 the host asks first: an install runs lifecycle scripts)`);
+        process.exit(0);
+      } catch (e) {
+        if (!(e instanceof InstallError))
+          throw e;
+        console.error(`pewt: ${e.message}`);
+        if (e.hint)
+          console.error(`  ${e.hint}`);
+        process.exit(1);
+      }
     }
     if (parsed.method === "repos.clone") {
       try {
@@ -5518,7 +5712,7 @@ if (parsed.kind === "check") {
         (stream === "out" || parsed.json ? process.stdout : process.stderr).write(`${text}
 `);
       },
-      onWaiting: () => process.stderr.write(parsed.method === "repos.clone" ? "pewt: waiting for the host to start this clone\n" : "pewt: waiting for the host to allow this run \u2014 it is asking on its own terminal\n")
+      onWaiting: () => process.stderr.write(parsed.method === "repos.clone" ? "pewt: waiting for the host to start this clone\n" : parsed.method === "repos.install" ? "pewt: waiting for the host to allow this install \u2014 it is asking on its own terminal\n" : "pewt: waiting for the host to allow this run \u2014 it is asking on its own terminal\n")
     });
     if (parsed.json)
       console.log(JSON.stringify({ end: outcome.exitCode }));

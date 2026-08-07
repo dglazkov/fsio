@@ -1,6 +1,6 @@
 {
   "name": "pewt",
-  "version": "0.0.0-e731bad981f8",
+  "version": "0.0.0-96c23de84121",
   "description": "Pewter's host and command line. Installed in a pewter, never globally: `npm start` finds it in node_modules/.bin, and a machine without a pewter has no pewt on it.",
   "license": "MIT",
   "repository": "github:dglazkov/fsio",
