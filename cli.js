@@ -82,9 +82,20 @@ function scaffold(opts) {
     // choosing happens: an ordinary dependency of your pewter, like an
     // ACP adapter. `npm rm` both and put another in their place — and
     // `pewter-ui` is swappable the same way.
+    //
+    // `lit` and its signals are what the scaffolded screens are written
+    // in, and they are declared here rather than inside `pewter-ui` on
+    // purpose: the kit lists them as *peers*, so there is exactly one
+    // copy of lit in a pewter and therefore one in each bundle. Two
+    // copies would each register their own custom elements and neither
+    // half would react to the other. Declared here, they are also
+    // ordinarily yours — a screen imports `lit` directly, and lit's own
+    // documentation is about the thing you are actually holding.
     dependencies: {
+      "@lit-labs/signals": "^0.1.3",
       "@xterm/addon-fit": "^0.10.0",
       "@xterm/xterm": "^5.5.0",
+      lit: "^3.3.0",
       ...dependencies(root2, source2)
     }
   }, null, 2) + "\n");
@@ -99,7 +110,13 @@ function scaffold(opts) {
       strict: true,
       noUncheckedIndexedAccess: true,
       noEmit: true,
-      skipLibCheck: true
+      skipLibCheck: true,
+      // Lit's `static properties` installs accessors on the prototype,
+      // and an ES2022 class field would define an own property over the
+      // top of them — an element that silently stops reacting. Nothing
+      // scaffolded here declares a component, so this is a door held
+      // open rather than a door in use: the first one you write works.
+      useDefineForClassFields: false
     },
     include: ["extensions"]
   }, null, 2) + "\n");
@@ -138,9 +155,34 @@ the channel between this machine and the Pewter page at once.
   The elements are the kit's API: the package's \`.d.ts\` names its tags,
   so your editor completes them and \`pewt check\` fails a misuse. Before
   styling or building a screen, read \`node_modules/pewter-ui\` \u2014 one
-  stylesheet and one module, short enough to read whole. Restyle a screen
-  by overriding (its own \`style.css\` wins by specificity), or drop the
+  stylesheet and a handful of short modules. Restyle a screen by
+  overriding (its own \`style.css\` wins by specificity), or drop the
   imports and start from nothing.
+- **Screens are written in lit, and their state is signals.** Both are
+  this pewter's own dependencies, so lit's documentation is about the
+  thing you are holding. The shape is one description of the screen and
+  one place each fact lives:
+
+  \`\`\`ts
+  import { html } from "lit";
+  import { signal } from "@lit-labs/signals";
+  import { screen } from "pewter-ui";
+
+  const repos = signal<Repo[] | null>(null);
+
+  screen(document.body, () => html\`
+    <h1>Projects</h1>
+    <ul>\${repos.get()?.map((r) => html\`<li>\${r.name}</li>\`)}</ul>
+  \`);
+
+  repos.set((await pewt.repos.list()).repos);   // the screen follows
+  \`\`\`
+
+  \`screen()\` renders into the light DOM, so \`style.css\` beside it styles
+  what you see with ordinary selectors. The kit's own elements are lit
+  components with shadow roots \u2014 restyle those through the
+  \`--pewter-*\` properties or their \`part\` names, both listed at the top
+  of \`node_modules/pewter-ui/style.css\`.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
   clone <url>\` fetches one, and the Projects screen offers both.
