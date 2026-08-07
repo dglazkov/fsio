@@ -18,8 +18,8 @@ import type { TemplateResult } from "lit";
 import { SignalWatcher } from "@lit-labs/signals";
 import { tokens, panel } from "@fsio/ui";
 import { bodyLabel } from "pewter";
-import { grantPending, pickFolder } from "../session";
-import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, served, tabs } from "../state";
+import { forgetFolder, grantPending, pickFolder, regrant } from "../session";
+import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, reconnectTo, served, tabs } from "../state";
 import { answer, chipsOf, openFirst, setStage } from "../tabs";
 
 /** The extension a fresh pewter opens with. The project list is not part of
@@ -58,6 +58,8 @@ class PewterShell extends SignalWatcher(LitElement) {
       }
       button:hover { border-color: var(--fsio-control-hover); }
       button:focus-visible { outline: 2px solid var(--fsio-accent); outline-offset: 2px; }
+      .row { display: flex; gap: 0.6rem; }
+      button.quiet { color: var(--fsio-dim); border-color: var(--fsio-line); }
       .bad { color: var(--fsio-bad-bright); white-space: pre-wrap; font-size: 0.8rem; line-height: 1.6; }
       footer {
         flex: none; display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
@@ -106,24 +108,48 @@ class PewterShell extends SignalWatcher(LitElement) {
     ></fsio-tab-strip>`;
   }
 
+  /** Three faces, in precedence order: a drop waiting for its allow, the
+   *  folder this page held last time (revisit — one click back, F15), and
+   *  the picker. A drop outranks the offer: it is the fresher gesture. */
   #setup(): TemplateResult {
     const waiting = pending.get();
+    const remembered = reconnectTo.get();
+    if (waiting) {
+      return this.#panel(
+        `Allow ${waiting.name}/`,
+        html`Dropping the folder handed this page a reference to it. Reading and writing it is a
+          second answer, and only you can give it — which is what stops the page from reaching
+          anything you did not choose.`,
+        html`<button id="grant" @click=${() => void grantPending()}>Allow this folder</button>`
+      );
+    }
+    if (remembered) {
+      return this.#panel(
+        `Reconnect to ${remembered.name}/?`,
+        html`This page held that pewter last time. Chrome remembers the folder, but reading and
+          writing it again is a fresh answer, and only you can give it.`,
+        html`<span class="row">
+          <button id="reconnect" @click=${() => void regrant()}>Reconnect</button>
+          <button class="quiet" @click=${() => void forgetFolder()}>Not this folder</button>
+        </span>`
+      );
+    }
+    return this.#panel(
+      "Pick your pewter",
+      html`A pewter is one folder on your machine that is a git repository, an npm project, and
+        the channel to this page at once. Start its host with <code>npm start</code>, then hand
+        the folder over: drag it onto this page, or pick it below.`,
+      html`<button @click=${() => void pickFolder()}>Pick a folder</button>`
+    );
+  }
+
+  #panel(title: string, prose: TemplateResult, action: TemplateResult): TemplateResult {
     return html`
       <main>
         <article>
-          <h1>${waiting ? `Allow ${waiting.name}/` : "Pick your pewter"}</h1>
-          <p>
-            ${waiting
-              ? html`Dropping the folder handed this page a reference to it. Reading and writing it is a
-                  second answer, and only you can give it — which is what stops the page from reaching
-                  anything you did not choose.`
-              : html`A pewter is one folder on your machine that is a git repository, an npm project, and
-                  the channel to this page at once. Start its host with <code>npm start</code>, then hand
-                  the folder over: drag it onto this page, or pick it below.`}
-          </p>
-          ${waiting
-            ? html`<button id="grant" @click=${() => void grantPending()}>Allow this folder</button>`
-            : html`<button @click=${() => void pickFolder()}>Pick a folder</button>`}
+          <h1>${title}</h1>
+          <p>${prose}</p>
+          ${action}
           ${pickError.get() ? html`<p class="bad">${pickError.get()}</p>` : nothing}
         </article>
       </main>

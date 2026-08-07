@@ -20,9 +20,11 @@
 import type { HeldFile } from "pewter";
 
 const DB_NAME = "pewter-shell";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const CATALOG_STORE = "catalog";
 const BLOB_STORE = "blobs";
+/** Small singular facts, keyed by name — the folder handle lives here. */
+const KEEP_STORE = "keep";
 
 function req<T>(r: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -35,7 +37,7 @@ async function open(): Promise<IDBDatabase> {
   const request = indexedDB.open(DB_NAME, DB_VERSION);
   request.onupgradeneeded = () => {
     const db = request.result;
-    for (const name of [CATALOG_STORE, BLOB_STORE]) {
+    for (const name of [CATALOG_STORE, BLOB_STORE, KEEP_STORE]) {
       if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
     }
   };
@@ -49,6 +51,27 @@ async function store(name: string, mode: IDBTransactionMode): Promise<IDBObjectS
 /** A blob's key. Prefixed with the pewter so a sweep can tell one folder's
  *  bytes from another's without opening either. */
 const blobKey = (pewter: string, fileId: string): string => `${pewter}/${fileId}`;
+
+// ---------------------------------------------------------------- the folder
+//
+// Chrome keeps a FileSystemDirectoryHandle alive across visits; what it does
+// with the *grant* is a separate question the page asks on every load (F15).
+// One slot, not one per pewter: the last folder this page held is the only
+// one worth offering back, and the same mechanism, shape and store name as
+// acp-demo/web/store.ts (#58) — this is the revisit half of the lifecycle
+// #160 counts copies of.
+
+export async function savedHandle(): Promise<FileSystemDirectoryHandle | null> {
+  return ((await req((await store(KEEP_STORE, "readonly")).get("root"))) as FileSystemDirectoryHandle | undefined) ?? null;
+}
+
+export async function saveHandle(h: FileSystemDirectoryHandle): Promise<void> {
+  await req((await store(KEEP_STORE, "readwrite")).put(h, "root"));
+}
+
+export async function forgetHandle(): Promise<void> {
+  await req((await store(KEEP_STORE, "readwrite")).delete("root"));
+}
 
 /** The copies this pewter's page holds, from the last time it held any.
  *

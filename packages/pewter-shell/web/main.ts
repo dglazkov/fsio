@@ -11,11 +11,17 @@ import "@fsio/ui"; // registers the shared chrome's custom elements
 import "./components/app-shell";
 import "./components/file-view"; // the one screen the shell draws itself
 import { step } from "./reporter";
-import { acceptDrop, checkGates, closeOnPagehide } from "./session";
+import { acceptDrop, checkGates, closeOnPagehide, revisit } from "./session";
 
 checkGates();
 step("waiting for a folder");
 document.body.dataset["fsioState"] = "setup";
+
+// A reload does not start from zero: the folder this page held last time is
+// offered back, or reconnected outright if its grant survived (#185). The
+// host that opened this page may name the folder it serves (`?dir=`, from
+// `pewt serve`), and that hint outranks the memory.
+void revisit(new URLSearchParams(location.search).get("dir"));
 
 // Drag a pewter onto the page — a picker-free path for a human, and the only
 // path a script can take at all: a drop can be synthesized (F14) and the
