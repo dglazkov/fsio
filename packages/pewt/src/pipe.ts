@@ -9,7 +9,7 @@
 // Settled with the owner (2026-08-05) against the two alternatives, both of
 // which needed an ACP client in the command line — a one-shot `pewt agent
 // "fix the test"`, and a full terminal chat. A chat surface is what
-// `extensions/chat/` is for, and a pipe is the thing a terminal can do that a
+// `extensions/agent/` is for, and a pipe is the thing a terminal can do that a
 // tab cannot: be driven by another program.
 //
 // **The agent's stderr does not come out here, and that is a known gap rather

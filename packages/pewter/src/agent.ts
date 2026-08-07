@@ -13,7 +13,7 @@
 //
 // So what this hands over is messages. Correlating ids, answering requests,
 // and drawing whatever a permission question should look like are the
-// extension's, and a chat tab is where they belong.
+// extension's, and the agent tab is where they belong.
 
 /** What to ask for. */
 export interface AgentOptions {
