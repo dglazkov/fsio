@@ -118,8 +118,8 @@ the channel between this machine and the Pewter page at once.
   and a \`main.ts\`; it imports \`pewter\` for the API and is bundled into a
   single file when a tab opens it. There is no plugin API to learn. Three
   are scaffolded: \`repos/\` is the first tab, \`terminal/\` is a shell on
-  this machine, and \`chat/\` is a conversation with a coding agent \u2014
-  \`pewt tabs add terminal\` or \`pewt tabs add chat\` opens one.
+  this machine, and \`agent/\` is a conversation with a coding agent \u2014
+  \`pewt tabs add terminal\` or \`pewt tabs add agent\` opens one.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
   clone <url>\` fetches one, and the Projects screen offers both.
@@ -295,12 +295,12 @@ function openShell(repo: string): void {
   pewt.tabs.add({ name: "terminal", title: repo, args: { repo } }).catch(complain);
 }
 
-/** Open the chat extension in a new tab, pointed at this project. The same
+/** Open the agent extension in a new tab, pointed at this project. The same
  *  arrangement as the shell verb: the argument opens a screen, not a
  *  process \u2014 the host asks before the agent itself starts. */
 function openAgent(repo: string): void {
   error.hidden = true;
-  pewt.tabs.add({ name: "chat", title: repo, args: { repo } }).catch(complain);
+  pewt.tabs.add({ name: "agent", title: repo, args: { repo } }).catch(complain);
 }
 
 /** \`npm install\`, asked first: it runs lifecycle scripts, which makes it
@@ -636,13 +636,13 @@ if (openedWith && typeof openedWith.repo === "string") {
   await offer();
 }
 `);
-  write("extensions/chat/index.html", `<!doctype html>
+  write("extensions/agent/index.html", `<!doctype html>
 <meta charset="utf-8" />
-<title>Chat</title>
+<title>Agent</title>
 <link rel="stylesheet" href="./style.css" />
 <p id="status" hidden><span id="said"></span><button id="again" hidden>new conversation</button></p>
 <section id="picker">
-  <h1>Chat</h1>
+  <h1>Agent</h1>
   <p id="note">asking the host\u2026</p>
   <ul id="places"></ul>
 </section>
@@ -657,7 +657,7 @@ if (openedWith && typeof openedWith.repo === "string") {
 </section>
 <script type="module" src="./main.ts"></script>
 `);
-  write("extensions/chat/style.css", `:root { color-scheme: light dark; }
+  write("extensions/agent/style.css", `:root { color-scheme: light dark; }
 html, body { height: 100%; }
 body {
   margin: 0; display: flex; flex-direction: column;
@@ -722,7 +722,7 @@ body {
 }
 #composer button:disabled, #composer textarea:disabled { opacity: 0.5; cursor: default; }
 `);
-  write("extensions/chat/main.ts", `// Where you talk to an agent \u2014 and this tab, not the host, is the ACP client.
+  write("extensions/agent/main.ts", `// Where you talk to an agent \u2014 and this tab, not the host, is the ACP client.
 //
 // \`pewt.agent()\` hands over a live wire carrying whole ACP messages, and no
 // opinion about them. Everything that makes it a conversation is this file:
@@ -733,7 +733,7 @@ body {
 // yours to change \u2014 it is this file, in your pewter.
 //
 // One tab is one conversation with one agent. For a second one, open another
-// tab: \`pewt tabs add chat\`.
+// tab: \`pewt tabs add agent\`.
 import { pewt, args, PewtError, type Agent } from "pewter";
 
 const status = document.getElementById("status")!;
