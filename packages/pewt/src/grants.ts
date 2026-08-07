@@ -10,10 +10,26 @@
 // next host rather than on the next question, which is not what "take it back"
 // means to whoever typed it.
 //
-// **One writer.** The host asks the question, so the host owns the answer:
-// both `pewt grants` and `pewt grants revoke` are operations on this host
-// (ops.ts) rather than the command line editing the file behind its back. The
-// same rule the channel follows for a different reason (D6).
+// **One writer among the programs.** The host asks the question, so the host
+// owns the answer: both `pewt grants` and `pewt grants revoke` are operations
+// on this host (ops.ts) rather than the command line editing the file behind
+// its back. The same rule the channel follows for a different reason (D6).
+//
+// A person editing it by hand is not covered by that rule, and the host now
+// sends them here to do it: every message about a grant that prints on the
+// host's terminal names this file instead of `pewt grants revoke` (ask.ts,
+// serve.ts). `pewt` is on `PATH` for the scripts and agents that call back in
+// (run.ts's `childEnv`, agent.ts's `agentEnv`), not at the terminal
+// `pewt serve` prints to — so pointing a human at a command they cannot run
+// was the alternative, and it was worse.
+//
+// Nothing enforces the rule and nothing has to. The list is re-read at every
+// question, so a hand-edit lands on the next one; `writeGrants` renames over
+// the file, so a reader never sees half of either version. What is unhandled
+// is the lost update — a hand-edit and a recorded `a` in the same instant,
+// where one silently wins. That is #164's "just a file in your pewter" and
+// "ask the host" disagreeing about the same bytes, and it is now leaned on
+// rather than merely noted.
 //
 // **A file this cannot read is a refusal, not an empty list.** Silently
 // forgetting every answer would make the host ask about things it was told

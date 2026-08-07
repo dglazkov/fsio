@@ -28,7 +28,7 @@
 // a restart.
 import readline from "node:readline/promises";
 import type { HostLogger, SpawnPolicy } from "@fsio/host";
-import { describeGrant, grantId, type Grant, type GrantKey } from "pewter";
+import { describeGrant, type Grant, type GrantKey } from "pewter";
 import type { Pewter } from "./pewter.js";
 import { asAgentSpec, AgentError, planAgent, type AgentPlan } from "./agent.js";
 import { GRANTS_FILE, GrantsError, readGrants, recordGrant, standingGrant } from "./grants.js";
@@ -153,8 +153,14 @@ export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnP
       // Narrated even though nobody is asked. A host that goes quiet about
       // what it starts is a host with no record of what it started, and the
       // way to take this one back is on the same line as the fact it was used.
+      //
+      // The file rather than `pewt grants revoke`, for the reason serve.ts's
+      // banner names: this prints on the host's terminal, which is the one
+      // place `pewt` is not on `PATH`, and the person reading it is not who
+      // the command line is for. `describeGrant` is what identifies the row —
+      // the id is a rendering and appears nowhere in the file.
       const t = stamp();
-      log.info(`\n${t}  ${header(plan, info.origin)}\n${t}    ✓ allowed — a standing grant: ${describeGrant(standing)}\n${t}      take it back with \`pewt grants revoke ${grantId(standing)}\``);
+      log.info(`\n${t}  ${header(plan, info.origin)}\n${t}    ✓ allowed — a standing grant: ${describeGrant(standing)}\n${t}      take it back by removing it from ${GRANTS_FILE}`);
       return true;
     }
 
@@ -308,7 +314,7 @@ export async function askToStart(p: Pewter, asker: Asker, plan: Question, origin
     }
     log.info(
       `${stamp()}    ✓ standing grant ${recorded.already ? "already recorded in" : "recorded →"} ${GRANTS_FILE}\n` +
-        `${stamp()}      ${describeGrant(recorded.grant)} — take it back with \`pewt grants revoke ${grantId(recorded.grant)}\``
+        `${stamp()}      ${describeGrant(recorded.grant)} — take it back by removing it from that file`
     );
     return { allow: true };
   }
