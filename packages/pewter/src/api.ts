@@ -22,6 +22,12 @@ export interface Project {
    *  listed: the folder is the user's, and hiding what is in it would be a
    *  lie about their own disk. */
   git: boolean;
+  /** the branch it is on, or null — detached, or not a repository. */
+  branch: string | null;
+  /** the script names its `package.json` declares, in declaration order.
+   *  These are what `pewt.run(name, { repo })` can start — the set of
+   *  runnable things is a file, and this is that file's table of contents. */
+  scripts: string[];
 }
 
 /** One extension, built. `path` is folder-relative — the shell reads it

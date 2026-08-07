@@ -229,5 +229,9 @@ test("what arrives on the wire is checked, whichever front end sent it", () => {
 test("an empty pewter's project list explains itself", () => {
   const rendered = byMethod("repos.list")!.render({ repos: [] });
   assert.match(rendered, /no projects yet/);
-  assert.match(byMethod("repos.list")!.render({ repos: [{ name: "site", git: true }] }), /site/);
+  const row = byMethod("repos.list")!.render({ repos: [{ name: "site", git: true, branch: "main", scripts: ["dev", "build"] }] });
+  assert.match(row, /site/);
+  // The row says where it is and what it can run (#191).
+  assert.match(row, /main/);
+  assert.match(row, /dev, build/);
 });

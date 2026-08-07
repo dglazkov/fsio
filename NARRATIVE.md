@@ -104,8 +104,10 @@ the `pewt` API. What fills a tab is an extension: a small TypeScript app
 that lives in your pewter.
 
 The first screen proves it. Open a new pewter and you get a list of
-projects with a button to add one. That screen is not part of the product.
-It is `extensions/repos/`, and you can read it, change it, or delete it.
+projects with a button to add one — and each project's row knows its
+branch and its scripts, every script one click from running. That screen
+is not part of the product. It is `extensions/repos/`, and you can read
+it, change it, or delete it.
 
 ```
 extensions/
