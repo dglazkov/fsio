@@ -243,38 +243,51 @@ async function refresh(): Promise<void> {
       branch.textContent = repo.branch;
       name.append(branch);
     }
+    if (!repo.git) {
+      const kind = document.createElement("em");
+      kind.className = "branch";
+      kind.textContent = "not a git repository";
+      name.append(kind);
+    }
     row.append(name);
-    // The row's verbs: this project's own scripts, each one click from
-    // running. The set is the project's package.json, not anything this
+    // The row's verbs. \`shell\` is on every row (#198): it opens the
+    // terminal extension pointed here, and the host asks before the shell
+    // itself exists \u2014 the argument opens a screen, not a process. The
+    // scripts are this project's own \`package.json\`, not anything this
     // screen invents \u2014 an extension cannot make a script runnable by
     // drawing a button for it. \`install\` leads when node_modules is
     // missing (every fresh clone), because the scripts will not run
     // without it \u2014 and unlike clone, install is asked about (#193).
-    if (repo.scripts.length > 0 || repo.installed === false) {
-      const verbs = document.createElement("span");
-      verbs.className = "verbs";
-      if (repo.installed === false) {
-        const install = document.createElement("button");
-        install.className = "install";
-        install.textContent = "install";
-        install.addEventListener("click", () => installRepo(repo.name));
-        verbs.append(install);
-      }
-      for (const script of repo.scripts) {
-        const verb = document.createElement("button");
-        verb.textContent = script;
-        verb.addEventListener("click", () => runScript(repo.name, script));
-        verbs.append(verb);
-      }
-      row.append(verbs);
-    } else {
-      const kind = document.createElement("span");
-      kind.className = "kind";
-      kind.textContent = repo.git ? "no scripts" : "not a git repository";
-      row.append(kind);
+    const verbs = document.createElement("span");
+    verbs.className = "verbs";
+    if (repo.installed === false) {
+      const install = document.createElement("button");
+      install.className = "install";
+      install.textContent = "install";
+      install.addEventListener("click", () => installRepo(repo.name));
+      verbs.append(install);
     }
+    const shell = document.createElement("button");
+    shell.textContent = "shell";
+    shell.addEventListener("click", () => openShell(repo.name));
+    verbs.append(shell);
+    for (const script of repo.scripts) {
+      const verb = document.createElement("button");
+      verb.textContent = script;
+      verb.addEventListener("click", () => runScript(repo.name, script));
+      verbs.append(verb);
+    }
+    row.append(verbs);
     list.append(row);
   }
+}
+
+/** Open the terminal extension in a new tab, pointed at this project. The
+ *  tab opens with \`{repo}\` (#198) \u2014 an argument to a screen, not a grant:
+ *  the host still asks before the shell itself starts. */
+function openShell(repo: string): void {
+  error.hidden = true;
+  pewt.tabs.add({ name: "terminal", title: repo, args: { repo } }).catch(complain);
 }
 
 /** \`npm install\`, asked first: it runs lifecycle scripts, which makes it
@@ -465,7 +478,7 @@ body {
 //
 // One tab is one shell. For a second one, open another tab:
 // \`pewt tabs add terminal\`.
-import { pewt, PewtError } from "pewter";
+import { pewt, args, PewtError } from "pewter";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -599,7 +612,16 @@ function say(text: string): void {
 const words = (e: unknown): string =>
   e instanceof PewtError ? e.message + (e.hint ? \`\\n\${e.hint}\` : "") : String(e);
 
-await offer();
+// Opened with \`{repo}\` \u2014 the repos row's shell verb (#198) \u2014 this screen
+// skips its picker and goes straight there. Opened bare, it offers the
+// choice. Either way the host asks before anything starts: the argument
+// opened a screen, not a process.
+const openedWith = (await args) as { repo?: unknown } | undefined;
+if (openedWith && typeof openedWith.repo === "string") {
+  await open(openedWith.repo);
+} else {
+  await offer();
+}
 `);
   fs.mkdirSync(path.join(root2, "repos"), { recursive: true });
   return written2;
