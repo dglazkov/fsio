@@ -22,6 +22,14 @@ export const gate = signal<{ msg: string; hint: string } | null>(null);
 export const folder = signal<string>("");
 export const pickError = signal<string>("");
 
+/** The folder this page held last time, when its grant needs one click back.
+ *
+ *  Set by `revisit()` when the remembered handle's permission is `prompt` —
+ *  the usual answer on a reload, because `requestPermission` needs a user
+ *  activation (F15). The setup panel turns it into a reconnect offer with a
+ *  button, and "not this folder" clears it and forgets the handle. */
+export const reconnectTo = signal<FileSystemDirectoryHandle | null>(null);
+
 /** A folder that arrived by drag-and-drop and has not been allowed yet.
  *
  *  A dropped handle is real but starts at `prompt` for writing, and

@@ -13,7 +13,8 @@
 // library's shape as a side effect of building something else.
 import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
 import { asCommand, encodeControl, receipt, receiptError, safeRelPath } from "pewter";
-import { folder, gate, host, pending, phase, pickError } from "./state";
+import { forgetHandle, saveHandle, savedHandle } from "./db";
+import { folder, gate, host, pending, phase, pickError, reconnectTo } from "./state";
 import { adoptCatalog, answer } from "./tabs";
 import { watchOpenFiles } from "./files";
 import { log, reporter, step } from "./reporter";
@@ -101,6 +102,66 @@ export async function pickFolder(): Promise<void> {
   await connectTo(picked);
 }
 
+/** On load: the folder this page held last time, offered back (#185).
+ *
+ *  Identical in shape to acp-demo's `revisit()` (#58), which is the point:
+ *  `granted` reconnects with zero clicks, `prompt` — the usual answer on a
+ *  reload — becomes a one-click offer, because `requestPermission` needs a
+ *  user activation (F15), and `denied` forgets the handle and falls back to
+ *  the picker.
+ *
+ *  `expected` is the folder the host that opened this page serves (`?dir=`,
+ *  set by `pewt serve`), and it outranks the memory (#124's lesson):
+ *  reconnecting to yesterday's pewter because its grant is still good would
+ *  flash the wrong folder's tabs before discovering the host is elsewhere.
+ *  The handle is kept rather than forgotten — deferring changes which panel
+ *  opens, never where the page can get to. */
+export async function revisit(expected: string | null): Promise<void> {
+  if (gate.get()) return; // non-Chrome: the gate panel already speaks
+  let saved: FileSystemDirectoryHandle | null = null;
+  try {
+    saved = await savedHandle();
+  } catch {} // IndexedDB unavailable (private mode etc.) — the picker still works
+  if (!saved) return;
+  if (expected && saved.name !== expected) {
+    step(`remembering ${saved.name}/, but this page was opened for ${expected}/ — asking`);
+    return;
+  }
+  let perm: FsaPermissionState;
+  try {
+    perm = await saved.queryPermission({ mode: "readwrite" });
+  } catch {
+    return;
+  }
+  step(`remembered folder ${saved.name}/ — permission on load: ${perm}`);
+  if (perm === "granted") {
+    await connectTo(saved);
+  } else if (perm === "prompt") {
+    reconnectTo.set(saved);
+  } else {
+    await forgetHandle().catch(() => {});
+  }
+}
+
+/** The reconnect offer's button ("prompt" → one click, F15). A refusal keeps
+ *  the offer on screen: Chrome's own dialog was dismissed, and the next click
+ *  can still take it. */
+export async function regrant(): Promise<void> {
+  const h = reconnectTo.get();
+  if (!h) return;
+  step("asking Chrome to re-grant the folder");
+  if ((await h.requestPermission({ mode: "readwrite" })) !== "granted") return;
+  reconnectTo.set(null);
+  await connectTo(h);
+}
+
+/** "Not this folder" on the reconnect offer: forget it and start over. */
+export async function forgetFolder(): Promise<void> {
+  reconnectTo.set(null);
+  await forgetHandle().catch(() => {});
+  step("forgot the remembered folder");
+}
+
 async function connectTo(dir: FileSystemDirectoryHandle): Promise<void> {
   step(`connecting to ${dir.name}/`);
   pickError.set("");
@@ -120,7 +181,7 @@ async function connectTo(dir: FileSystemDirectoryHandle): Promise<void> {
     // outstanding would be wrong on screen and wrong to anything reading it.
     markState("setup");
     pickError.set(
-      `No host in ${dir.name}/. Is this a pewter, with \`npm start\` running in it? A host creates a .fsio directory there and we do not see one — nothing was written to the folder you just picked.`
+      `No host in ${dir.name}/. Is this a pewter, with \`npm start\` running in it? A host creates a .fsio directory there and we do not see one — nothing was written to the folder.`
     );
     log(`no .fsio in ${dir.name}/ — no host running there`);
     return;
@@ -140,6 +201,9 @@ async function connectTo(dir: FileSystemDirectoryHandle): Promise<void> {
 
   rootHandle = dir;
   folder.set(dir.name);
+  // Remembered only once the folder connected: a mispick must not become the
+  // next visit's reconnect offer (acp-demo learned this order).
+  void saveHandle(dir).catch(() => {});
   hostWasAlive = false;
   await refreshHost();
   hostTimer = setInterval(() => void refreshHost(), 2000);

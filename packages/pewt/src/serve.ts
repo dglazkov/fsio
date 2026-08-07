@@ -60,11 +60,17 @@ export interface ServeOptions {
 export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostServer> {
   const log = opts.log ?? console;
   const base = opts.url ?? process.env["PEWT_SHELL"] ?? DEFAULT_SHELL;
+  let page: URL;
   try {
-    new URL(base);
+    page = new URL(base);
   } catch {
     throw new Error(`--url ${JSON.stringify(base)} is not a URL`);
   }
+  // Which folder this host serves, named in the URL. The shell remembers the
+  // last folder it held (#185), and this hint is what keeps that memory from
+  // outranking the host that opened the page: a remembered folder that is not
+  // this one defers to the picker instead of auto-connecting (#124's lesson).
+  page.searchParams.set("dir", p.name);
 
   // F9: FileSystemObserver dies with InvalidModificationError under temp
   // directories, and a pewter run from there looks broken in ways nobody
@@ -120,13 +126,13 @@ pewter · ${p.root}
 (Ctrl-C stops the host and sweeps .fsio)
 `);
 
-  console.log(`  ${base}\n`);
+  console.log(`  ${page.href}\n`);
   if (opts.open === false) {
     console.log("--no-open: opening nothing. Paste that into a Chromium browser.\n");
   } else if (folderHasSeenAPage && (await pageIsWatching(p.fsio))) {
     console.log("a page is already open on this pewter — not opening another tab.\n");
   } else {
-    const res = await openInChromium(base);
+    const res = await openInChromium(page.href);
     console.log(res.opened ? `opened in ${res.browser}.\n` : `${res.why} — open that URL yourself, in Chrome or another Chromium.\n`);
   }
 
