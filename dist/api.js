@@ -219,16 +219,30 @@ export function apiFor(channel) {
                 started = resolve;
                 failed = reject;
             });
+            // Unlike a shell's bare `started: true`, an agent's start carries what
+            // the host said it started (AgentStarted) — captured here so the
+            // handle can answer `info` without a second question.
+            let info = null;
             const { id, answer } = channel.open("agent", agentSpec(options), (payload) => {
                 const e = payload;
-                if (e.started)
+                if (e.started) {
+                    info = e.started;
                     started?.(agent);
+                }
                 else if ("m" in e)
                     options.onMessage?.(e.m);
             });
             const agent = {
                 send: (message) => channel.send(id, { m: message }),
                 close: () => channel.send(id, { close: true }),
+                // Read after `running` resolves, and set by the same event that
+                // resolves it, so the null never shows — but a reader poking earlier
+                // deserves a sentence rather than an undefined field.
+                get info() {
+                    if (!info)
+                        throw new PewtError({ code: "not_started", message: "the agent has not started yet — await pewt.agent() first" });
+                    return info;
+                },
                 exit: new Promise((resolve) => {
                     answer.then((result) => resolve(result.exitCode), () => resolve(null));
                 }),
