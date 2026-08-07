@@ -1,0 +1,25 @@
+/* What is this screen's own — the terminal slab. Everything else it shows
+   (the status line, the picker) is pewter-ui/style.css, imported in
+   main.ts. */
+html,
+body {
+  height: 100%;
+}
+body {
+  display: flex;
+  flex-direction: column;
+}
+/* The terminal takes everything under the status line, on the same slab the
+   theme in main.ts is set against — it does not invert with the page,
+   because a terminal that flips colours under running output is worse than
+   one that commits. The padding goes on .xterm rather than on this box: the
+   fit addon measures the box and reads the padding off .xterm itself, so
+   this is the arrangement it sizes correctly. */
+#term {
+  flex: 1;
+  min-height: 0;
+  background: #17191c;
+}
+#term .xterm {
+  padding: 0.65rem 0.8rem;
+}

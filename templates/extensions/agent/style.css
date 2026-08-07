@@ -1,0 +1,124 @@
+/* What is this screen's own — the transcript and its composer. The status
+   line, the picker and the base controls are pewter-ui/style.css, imported
+   in main.ts; the tokens below are its custom properties. It lands after
+   this sheet in the bundle, so overrides here are id-scoped. */
+html,
+body {
+  height: 100%;
+}
+body {
+  display: flex;
+  flex-direction: column;
+}
+#places li.hint {
+  padding: 0.6rem 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  border-bottom: none;
+}
+#chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 0 1rem 1rem;
+  box-sizing: border-box;
+}
+#who {
+  margin: 0.6rem 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+#log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.4rem 0.2rem;
+}
+.entry {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.entry.user {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.45rem 0.7rem;
+  border-radius: 10px;
+  background: light-dark(#e4e0da, #24242b);
+}
+.entry.thought {
+  opacity: 0.55;
+  font-size: 0.85rem;
+}
+.entry.note {
+  opacity: 0.65;
+  font-size: 0.85rem;
+}
+.entry.error {
+  color: var(--pewter-error);
+  font-size: 0.9rem;
+}
+.entry.tool {
+  font-size: 0.85rem;
+  opacity: 0.85;
+  padding: 0.35rem 0.6rem;
+  border-left: 2px solid var(--pewter-line);
+}
+.tool-status {
+  margin-left: 0.6rem;
+  opacity: 0.6;
+  font-style: italic;
+}
+.tool-detail {
+  opacity: 0.7;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+.entry.permission {
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--pewter-line-strong);
+  border-radius: 8px;
+}
+.entry.permission p {
+  margin: 0 0 0.4rem;
+}
+.entry.permission pre {
+  margin: 0 0 0.6rem;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  opacity: 0.8;
+  max-height: 10rem;
+  overflow-y: auto;
+}
+.choices {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.choices button {
+  padding: 0.25rem 0.8rem;
+}
+.choices em {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+#composer {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+#composer textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  padding: 0.45rem 0.6rem;
+}
+#composer button {
+  align-self: flex-end;
+}
