@@ -463,6 +463,10 @@ export async function shellOnHost(spec: Record<string, unknown>, onData: (chunk:
 export interface AgentHandle {
   send(message: unknown): void;
   close(): void;
+  /** the spawn's result, verbatim — what the host said it started. The
+   *  bridge sends it to the extension as the `started` event, so a tab can
+   *  draw a header and name a cwd without asking a second question. */
+  readonly info: Record<string, unknown>;
   readonly exit: Promise<{ exitCode: number | null }>;
 }
 
@@ -506,8 +510,9 @@ export async function agentOnHost(spec: Record<string, unknown>, onMessage: (mes
     grace = setTimeout(() => settle?.({ exitCode: status.exitCode ?? null }), 500);
   });
 
+  let info: Record<string, unknown>;
   try {
-    await session.ready;
+    info = (await session.ready) as unknown as Record<string, unknown>;
   } catch (e) {
     await session.close().catch(() => {});
     if (e instanceof RpcError) {
@@ -523,6 +528,7 @@ export async function agentOnHost(spec: Record<string, unknown>, onMessage: (mes
       void session.close().catch(() => {});
       settle?.({ exitCode: null });
     },
+    info,
     exit: exit.finally(() => void session.close().catch(() => {})),
   };
 }

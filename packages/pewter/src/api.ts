@@ -8,7 +8,7 @@
 // should not have to think about: calls made before the shell hands over the
 // port are queued rather than lost, every call gets exactly one answer, and
 // a refusal arrives as a thrown error carrying the operation's own code.
-import { agentSpec, type Agent, type AgentEntry, type AgentOptions } from "./agent.js";
+import { agentSpec, type Agent, type AgentEntry, type AgentOptions, type AgentStarted } from "./agent.js";
 import type { HeldFile } from "./files.js";
 import type { Grant } from "./grants.js";
 import { shellSpec, type Shell, type ShellOptions, type ShellResult } from "./shell.js";
@@ -484,15 +484,28 @@ export function apiFor(channel: Channel): PewtApi {
         failed = reject;
       });
 
+      // Unlike a shell's bare `started: true`, an agent's start carries what
+      // the host said it started (AgentStarted) — captured here so the
+      // handle can answer `info` without a second question.
+      let info: AgentStarted | null = null;
       const { id, answer } = channel.open("agent", agentSpec(options), (payload) => {
         const e = payload as { m?: unknown; started?: unknown };
-        if (e.started) started?.(agent);
-        else if ("m" in e) options.onMessage?.(e.m);
+        if (e.started) {
+          info = e.started as AgentStarted;
+          started?.(agent);
+        } else if ("m" in e) options.onMessage?.(e.m);
       });
 
       const agent: Agent = {
         send: (message) => channel.send(id, { m: message }),
         close: () => channel.send(id, { close: true }),
+        // Read after `running` resolves, and set by the same event that
+        // resolves it, so the null never shows — but a reader poking earlier
+        // deserves a sentence rather than an undefined field.
+        get info(): AgentStarted {
+          if (!info) throw new PewtError({ code: "not_started", message: "the agent has not started yet — await pewt.agent() first" });
+          return info;
+        },
         exit: new Promise<number | null>((resolve) => {
           answer.then(
             (result) => resolve((result as { exitCode: number | null }).exitCode),
