@@ -502,7 +502,7 @@ declare module "*.css";
 <meta charset="utf-8" />
 <title>Terminal</title>
 <link rel="stylesheet" href="./style.css" />
-<p id="status" hidden></p>
+<p id="status" hidden><span id="said"></span><button id="again" hidden>new shell</button></p>
 <section id="picker">
   <h1>Terminal</h1>
   <p id="note">asking the host…</p>
@@ -524,6 +524,11 @@ body {
   color: light-dark(#1b1b1f, #e8e6e3);
 }
 #status { margin: 0; padding: 0.5rem 1rem; font-size: 0.85rem; opacity: 0.75; white-space: pre-wrap; }
+#status button {
+  font: inherit; font-size: 0.8rem; margin-left: 0.6rem; padding: 0.1rem 0.6rem; cursor: pointer;
+  border-radius: 5px; border: 1px solid light-dark(#0003, #fff3);
+  background: transparent; color: inherit;
+}
 #picker { width: 100%; max-width: 40rem; margin: 0 auto; padding: 2.5rem 2rem; box-sizing: border-box; }
 #picker h1 { font-size: 1.6rem; margin: 0 0 0.2rem; }
 #note { margin: 0 0 1.6rem; opacity: 0.6; font-size: 0.85rem; }
@@ -563,6 +568,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 const status = document.getElementById("status")!;
+const said = document.getElementById("said")!;
+const again = document.getElementById("again") as HTMLButtonElement;
 const picker = document.getElementById("picker")!;
 const note = document.getElementById("note")!;
 const places = document.getElementById("places")!;
@@ -627,6 +634,7 @@ async function offer(): Promise<void> {
 async function open(repo: string | null): Promise<void> {
   picker.hidden = true;
   host.hidden = false;
+  again.hidden = true;
   // The emulator first and fitted first, so the pty is born at the size the
   // tab actually has rather than resized into it a moment later.
   const term = new Terminal({
@@ -659,18 +667,29 @@ async function open(repo: string | null): Promise<void> {
     term.focus();
     const code = await shell.exit;
     watch.disconnect();
-    say(code === null ? "the shell ended without an exit code — a signal, or the host went away" : \`exit \${code}\`);
+    // What the shell printed before it ended is often the reason it ended,
+    // so the terminal stays on screen — dead but readable — until you ask
+    // for the next one.
+    say(code === null ? "the shell ended without an exit code — a signal, or the host went away" : \`the shell ended — exit \${code}\`);
+    again.hidden = false;
+    again.onclick = () => {
+      again.hidden = true;
+      term.dispose();
+      void offer();
+    };
   } catch (e) {
     // A refusal is a normal ending: the human at the host's terminal said
-    // no, or there is no host. It arrives in the operation's own words.
+    // no, or there is no host. It arrives in the operation's own words —
+    // and a shell that never started leaves nothing on screen worth
+    // keeping, so the picker comes straight back under the reason.
     say(words(e));
+    term.dispose();
+    await offer();
   }
-  term.dispose();
-  await offer();
 }
 
 function say(text: string): void {
-  status.textContent = text;
+  said.textContent = text;
   status.hidden = false;
 }
 
