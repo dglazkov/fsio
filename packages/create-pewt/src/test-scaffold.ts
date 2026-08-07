@@ -40,19 +40,20 @@ test("a new pewter is a pewter — the host can find it", () => {
 // itself tells you to run. Declared is the entire fix, and it is a property
 // of the written file rather than of anything that runs, so it is checkable
 // here with no network and no npm.
-test("pewt and pewter are declared, which is what stops npm pruning them", () => {
+test("pewt, pewter and pewter-ui are declared, which is what stops npm pruning them", () => {
   const root = path.join(into(), "p");
   scaffold({ root });
   const pkg = JSON.parse(read(root, "package.json"));
   assert.equal(pkg.dependencies.pewt, "github:dglazkov/fsio#pewt");
   assert.equal(pkg.dependencies.pewter, "github:dglazkov/fsio#pewter");
+  assert.equal(pkg.dependencies["pewter-ui"], "github:dglazkov/fsio#pewter-ui");
 });
 
 test("--link spells them as relative file: paths, with no home directory in them", () => {
   const root = path.join(into(), "p");
   scaffold({ root, source: { kind: "checkout", path: repo } });
   const pkg = JSON.parse(read(root, "package.json"));
-  for (const name of ["pewt", "pewter"]) {
+  for (const name of ["pewt", "pewter", "pewter-ui"]) {
     const spec = pkg.dependencies[name];
     assert.match(spec, /^file:\.\./, `${name} is relative`);
     // The cost the old comment worried about, and the reason this is
@@ -69,7 +70,29 @@ test("both spellings name the directory node_modules will hold", () => {
   // end calls itself — which is why an extension's `import … from "pewter"`
   // resolves with no registry name anywhere in the story.
   for (const source of [{ kind: "git" } as const, { kind: "checkout", path: repo } as const]) {
-    assert.deepEqual(Object.keys(dependencies("/p", source)).sort(), ["pewt", "pewter"]);
+    assert.deepEqual(Object.keys(dependencies("/p", source)).sort(), ["pewt", "pewter", "pewter-ui"]);
+  }
+});
+
+test("the extensions are the templates, byte for byte", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The whole arrangement: extensions are real files in this repository,
+  // and a pewter gets copies, not renderings. Nothing escaped, nothing
+  // interpolated — so what CI typechecks under templates/ is exactly what
+  // `pewt check` compiles in the pewter.
+  const templates = path.resolve(import.meta.dirname, "../templates");
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(path.join(templates, dir), { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${dir}/${entry.name}`);
+      else files.push(`${dir}/${entry.name}`);
+    }
+  };
+  walk("extensions");
+  assert.ok(files.length >= 10, `templates hold the extensions (${files.length} files)`);
+  for (const rel of files) {
+    assert.equal(read(root, rel), fs.readFileSync(path.join(templates, rel), "utf8"), `${rel} is a verbatim copy`);
   }
 });
 
@@ -85,8 +108,19 @@ test("it ships three extensions, in the shape the bundler compiles", () => {
   // it reached for anything private, "there are no built-ins" would be a
   // claim rather than a demonstration.
   const main = read(root, "extensions/repos/main.ts");
-  assert.match(main, /import \{ pewt, PewtError \} from "pewter"/);
+  assert.match(main, /import \{ explain, pewt \} from "pewter"/);
   assert.match(main, /pewt\.repos\.list\(\)/);
+});
+
+test("the shared look is pewter-ui, and every screen imports it", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The extraction (#164's rule-6 shape): three screens had written the same
+  // palette and blocks, so the shared half moved to a package — declared
+  // like the emulator, imported like a stylesheet, swappable like both.
+  for (const ext of ["repos", "terminal", "agent"]) {
+    assert.match(read(root, `extensions/${ext}/main.ts`), /import "pewter-ui\/style\.css"/, `${ext} imports the shared look`);
+  }
 });
 
 test("the terminal's emulator is the pewter's own dependency, not the shell's", () => {
@@ -117,7 +151,7 @@ test("the repos rows and the terminal agree about the shell verb (#198)", () => 
   const repos = read(root, "extensions/repos/main.ts");
   assert.match(repos, /pewt\.tabs\.add\(\{ name: "terminal", title: repo, args: \{ repo \} \}\)/);
   const terminal = read(root, "extensions/terminal/main.ts");
-  assert.match(terminal, /import \{ pewt, args, PewtError \} from "pewter"/);
+  assert.match(terminal, /import \{ pewt, args, explain \} from "pewter"/);
   assert.match(terminal, /await args/);
 });
 

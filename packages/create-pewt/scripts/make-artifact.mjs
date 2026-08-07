@@ -2,8 +2,10 @@
 // #106 template — the no-native-addon case, and the simplest of the four.
 //
 // Everything bundles: this package depends on nothing, and its source
-// imports node builtins and its own scaffold.ts. So the artifact is two
-// files, one of them the package.json.
+// imports node builtins and its own scaffold.ts. So the artifact is the
+// bundled cli.js, the package.json, and templates/ copied verbatim — the
+// extension files the scaffolder lays into a new pewter, shipped as the
+// files they are so `templatesDir()` finds them beside the bundle.
 //
 // Run as `npx github:dglazkov/fsio#create-pewt <dir>`. It is not `npm create
 // pewt`, and cannot be until this publishes to a registry — `npm create X`
@@ -12,7 +14,7 @@
 // `pewt` and `pewter` as ordinary dependencies (#181), so it restores with
 // `git clone && npm i` and needs no fsio checkout at all.
 import { build } from "esbuild";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,6 +40,8 @@ await build({
   },
   logLevel: "warning",
 });
+
+cpSync(join(pkgRoot, "templates"), join(out, "templates"), { recursive: true });
 
 // Version: base from the template, prerelease tag from the commit — so a
 // colleague's `npm ls` names the exact build they're running.

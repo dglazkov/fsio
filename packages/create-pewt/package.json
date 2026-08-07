@@ -10,6 +10,7 @@
   "scripts": {
     "build": "wireit",
     "test": "wireit",
+    "check-templates": "wireit",
     "bundle": "wireit"
   },
   "wireit": {
@@ -21,15 +22,25 @@
     },
     "test": {
       "command": "node --test --test-concurrency=1 dist/test-scaffold.js",
-      "files": [],
+      "files": ["templates/**"],
       "output": [],
-      "dependencies": ["build"]
+      "dependencies": ["build", "check-templates"]
+    },
+    "check-templates": {
+      "command": "tsc --pretty -p tsconfig.templates.json",
+      "files": ["templates/**", "tsconfig.templates.json"],
+      "output": [],
+      "dependencies": ["../pewter:build"]
     },
     "bundle": {
       "command": "node scripts/make-artifact.mjs",
-      "files": ["scripts/make-artifact.mjs", "artifact/**"],
+      "files": ["scripts/make-artifact.mjs", "artifact/**", "templates/**"],
       "output": ["artifact-dist/**"],
       "dependencies": ["build"]
     }
+  },
+  "devDependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
   }
 }

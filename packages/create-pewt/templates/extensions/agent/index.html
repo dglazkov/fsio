@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Agent</title>
+<link rel="stylesheet" href="./style.css" />
+<p id="status" class="status" hidden><span id="said"></span><button id="again" hidden>new conversation</button></p>
+<section id="picker" class="screen">
+  <h1>Agent</h1>
+  <p id="note" class="note">asking the host…</p>
+  <ul id="places" class="menu"></ul>
+</section>
+<section id="chat" hidden>
+  <p id="who"></p>
+  <div id="log"></div>
+  <form id="composer">
+    <textarea id="say" rows="2" placeholder="ask for something" disabled></textarea>
+    <button id="send" disabled>send</button>
+    <button id="stop" type="button" hidden>stop</button>
+  </form>
+</section>
+<script type="module" src="./main.ts"></script>
