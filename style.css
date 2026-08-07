@@ -12,17 +12,34 @@
  * imports, and style your screens yourself — and nothing outside your
  * extensions/ notices.
  *
- * The elements render ordinary light-DOM markup into themselves — the same
- * rows a hand-written screen has — so the selectors below cover both
- * spellings, and your overrides work the same on either.
+ * **What is in here, and what is not.** The elements are lit components with
+ * shadow roots: each carries its own look, so nothing below styles their
+ * insides and none of it can be broken by a selector you write. This file is
+ * the page *around* them — the palette they read, the body, the controls a
+ * screen writes by hand, and the frame a screen sits in.
  *
- * Everything here was extracted from the three scaffolded extensions, which
- * had each written it: the palette all three repeated, the status line and
- * choice list the terminal and agent had byte-identical. One thing to know
- * before overriding: the bundler places imported CSS *after* an extension's
- * own <style>, so a screen's stylesheet wins by being more specific (its
- * selectors are id-scoped; these are element and class rules), not by
- * coming later.
+ * The bundler places imported CSS *after* an extension's own <style>, so a
+ * screen's stylesheet wins by being more specific (its selectors are
+ * id-scoped; these are element and class rules), not by coming later.
+ *
+ * ## Restyling an element
+ *
+ * Two hooks, both deliberate. **The custom properties below cross the shadow
+ * boundary**: set one anywhere above an element and its insides follow.
+ *
+ *   :root { --pewter-line: #c00; }        every element, and this page
+ *   #picker pewter-menu { --pewter-wash: #0002; }   one menu's hover
+ *
+ * **And the markup inside carries `part` names**, for the rest:
+ *
+ *   pewter-status::part(button) { text-transform: uppercase; }
+ *   pewter-menu::part(row)      { border-bottom-style: dashed; }
+ *   pewter-menu::part(hint)     { font-style: italic; }
+ *
+ * `<pewter-status>` has `said` and `button`; `<pewter-menu>` has `list`,
+ * `row`, `hint` and `button`. If you want more than those two hooks give
+ * you, the element is fifty lines in node_modules/pewter-ui — read it, and
+ * write your own.
  */
 
 :root {
@@ -41,6 +58,11 @@
   --pewter-raised: light-dark(#fff, #222228);
   --pewter-wash: light-dark(#0000000d, #ffffff0d);
 }
+
+/* The elements read these five from here — src/tokens.ts spells each one
+ * `var(--pewter-x, <default>)`, so the values above win while this sheet is
+ * imported and the defaults carry the elements when it is not. Change a line
+ * above and both sides of every shadow boundary change with it. */
 
 body {
   margin: 0;
@@ -79,36 +101,6 @@ textarea:disabled {
   cursor: default;
 }
 
-/* The elements are block boxes — but `hidden` must keep meaning hidden.
- * The browser's own `[hidden] { display: none }` lives in the UA stylesheet,
- * which ANY author rule outranks, so a bare `display: block` here would
- * silently defeat the attribute the scaffolded markup starts with. */
-pewter-status[hidden],
-pewter-menu[hidden] {
-  display: none;
-}
-
-/* One quiet line above a screen, for what just happened — "the shell ended",
- * "waiting on the host". The element spelling is <pewter-status>. */
-.status,
-pewter-status {
-  display: block;
-  margin: 0;
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
-  opacity: 0.75;
-  white-space: pre-wrap;
-}
-.status button,
-pewter-status button {
-  font-size: 0.8rem;
-  margin-left: 0.6rem;
-  padding: 0.1rem 0.6rem;
-  border-radius: 5px;
-  border: 1px solid var(--pewter-line);
-  background: transparent;
-}
-
 /* A screen: one centered column with a heading and a quiet note under it. */
 .screen {
   width: 100%;
@@ -126,41 +118,6 @@ pewter-status button {
   opacity: 0.6;
   font-size: 0.85rem;
   white-space: pre-wrap;
-}
-
-/* A list of choices, each row one full-width button. The element spelling
- * is <pewter-menu>, which renders a real ul.menu inside itself — one set of
- * selectors covers both. */
-pewter-menu {
-  display: block;
-}
-.menu {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.menu li {
-  border-bottom: 1px solid var(--pewter-hairline);
-}
-/* A row that is not a choice: nothing to pick, and this line says why. */
-.menu li.hint {
-  padding: 0.6rem 0.2rem;
-  font-size: 0.85rem;
-  opacity: 0.8;
-  border-bottom: none;
-}
-.menu li button {
-  font: inherit;
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 0.6rem 0.2rem;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-}
-.menu li button:hover {
-  background: var(--pewter-wash);
 }
 
 /* A refusal, in the operation's own words. */
