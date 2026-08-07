@@ -2,7 +2,7 @@
 // pewt — generated bundle; source: packages/pewt (github.com/dglazkov/fsio)
 
 // dist/cli.js
-import path14 from "node:path";
+import path15 from "node:path";
 
 // dist/ops.js
 import { asTabCommand, bodyLabel, describeGrant, grantId as grantId2, shellSpec, sizeText } from "pewter";
@@ -352,8 +352,11 @@ function revokeGrant(p, id) {
 }
 
 // dist/repos.js
+import { execFile } from "node:child_process";
 import fs5 from "node:fs/promises";
 import path4 from "node:path";
+import { promisify } from "node:util";
+var run = promisify(execFile);
 async function listRepos(p) {
   let entries;
   try {
@@ -374,6 +377,37 @@ async function listRepos(p) {
 }
 async function isGitRepo(dir) {
   return await fs5.stat(path4.join(dir, ".git")).then(() => true).catch(() => false);
+}
+var isProjectName = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
+var ReposError = class extends Error {
+  code;
+  hint;
+  constructor(code, message, hint) {
+    super(message);
+    this.code = code;
+    this.hint = hint;
+    this.name = "ReposError";
+  }
+};
+async function createRepo(p, name) {
+  if (!isProjectName(name)) {
+    throw new ReposError("bad_name", `${JSON.stringify(name)} is not a project name`, "a project is a directory under repos/ \u2014 one path segment, not hidden");
+  }
+  await fs5.mkdir(p.repos, { recursive: true });
+  const dest = path4.join(p.repos, name);
+  try {
+    await fs5.mkdir(dest);
+  } catch {
+    throw new ReposError("exists", `there is already a project named ${name} in this pewter`, "`pewt repos` lists them");
+  }
+  try {
+    await run("git", ["init", "--quiet"], { cwd: dest });
+  } catch (e) {
+    await fs5.rm(dest, { recursive: true, force: true });
+    const why = e instanceof Error ? e.message.split("\n")[0] : String(e);
+    throw new ReposError("git_failed", `git init failed \u2014 ${why}`, "is git installed on this machine?");
+  }
+  return { name, git: true };
 }
 
 // dist/ops.js
@@ -424,11 +458,36 @@ var reposList = define({
   run: async (p) => ({ repos: await listRepos(p) }),
   render: ({ repos }) => {
     if (repos.length === 0) {
-      return "no projects yet \u2014 repos/ is empty.\n  A cloned pewter starts this way: your extensions come back, your work does not.";
+      return "no projects yet \u2014 repos/ is empty.\n  Start one:   pewt repos create <name>\n  Clone one:   pewt repos clone <url>";
     }
     const width = Math.max(...repos.map((r) => r.name.length));
     return repos.map((r) => `  ${r.name.padEnd(width)}  ${r.git ? "git" : "(not a git repository)"}`).join("\n");
   }
+});
+var reposCreate = define({
+  method: "repos.create",
+  cli: ["repos", "create"],
+  summary: "start a new project in repos/",
+  usage: "<name>",
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0])
+      throw new OpError("usage", "repos create takes one project name");
+    return { name: argv[0] };
+  },
+  parse: (params) => ({ name: str(params, "name") }),
+  // No question. It is a mkdir and a `git init` in the folder the caller was
+  // already granted, and git init executes nothing — the same reasoning that
+  // left `ext.bundle` and `pewt check` unasked (#189).
+  run: async (p, { name }) => {
+    try {
+      return { repo: await createRepo(p, name) };
+    } catch (e) {
+      if (e instanceof ReposError)
+        throw new OpError(e.code, e.message, e.hint);
+      throw e;
+    }
+  },
+  render: ({ repo }) => `${repo.name} \u2192 repos/${repo.name}/ \u2014 a git repository, ready to work in`
 });
 var extBundle = define({
   method: "ext.bundle",
@@ -620,7 +679,7 @@ var filesOpen = definePage({
   // Whether a window was already on it is the half nobody asks for and
   // everybody wants next: `pewt open` twice is one tab, on purpose, and a
   // second id would be the more surprising answer to report.
-  render: ({ id, path: path15, reused }) => `${path15} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
+  render: ({ id, path: path16, reused }) => `${path16} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
 });
 var filesFling = definePage({
   method: "files.fling",
@@ -676,6 +735,7 @@ var filesDrop = definePage({
 });
 var OPERATIONS = [
   reposList,
+  reposCreate,
   extBundle,
   agentsList,
   grantsList,
@@ -755,7 +815,30 @@ var agentProcess = {
     return { ...agent !== void 0 ? { agent } : {}, ...repoOf(params) };
   }
 };
-var PROCESSES = [runProcess, shellProcess, agentProcess];
+var cloneProcess = {
+  method: "repos.clone",
+  cli: ["repos", "clone"],
+  summary: "clone a repository into repos/",
+  usage: "<url> [name]",
+  repo: false,
+  fromArgv: (argv) => {
+    if (argv.length < 1 || argv.length > 2 || !argv[0]) {
+      throw new OpError("usage", "repos clone takes a url and, optionally, a project name");
+    }
+    return { url: argv[0], ...argv[1] ? { name: argv[1] } : {} };
+  },
+  // The url and the name are checked against the disk when the clone is
+  // planned (clone.ts), which is the only check that means anything: what a
+  // url has to be is "something git can fetch", and git is the authority.
+  parse: (params) => {
+    const name = params?.["name"];
+    if (name !== void 0 && (typeof name !== "string" || name === "")) {
+      throw new OpError("bad_params", "name must be a project name");
+    }
+    return { url: str(params, "url"), ...name !== void 0 ? { name } : {} };
+  }
+};
+var PROCESSES = [runProcess, shellProcess, agentProcess, cloneProcess];
 var COMMAND_LIST = [
   ...OPERATIONS.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: false })),
   ...PROCESSES.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: o.repo }))
@@ -813,6 +896,12 @@ adapter in one project, and a shell gets none at all \u2014 it is unconfined, so
 The file is in .pewter/, which a pewter git-ignores, so a grant does not
 travel with a clone. It does travel to a host with no terminal: a background
 \`pewt serve\` cannot ask, but it can still honour what you already answered.
+
+\`pewt repos clone\` starts git and asks nothing: a clone fetches and executes
+nothing it fetched, and it lands inside repos/. It streams git's own output
+and exits with git's code. A url that needs credentials fails in git's words
+rather than prompting \u2014 the host runs git with no terminal to ask on, so use
+an ssh url if your keys are set up, or a public one.
 
 \`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
 stdin, the agent's own messages out on stdout. Whatever is on the other end
@@ -1260,8 +1349,8 @@ var FsioClient = class {
         const readJson2 = async (f) => JSON.parse(await (await (await dir.getFileHandle(f)).getFile()).text());
         const entry = { id: name, kind: null, status: null };
         try {
-          const spawn3 = await readJson2("spawn.json");
-          const p = spawn3.params ?? spawn3;
+          const spawn4 = await readJson2("spawn.json");
+          const p = spawn4.params ?? spawn4;
           entry.kind = p.kind ?? "echo";
           entry.client = p.client;
           entry.origin = p.origin;
@@ -2055,7 +2144,7 @@ async function call(dir, method, params, opts = {}) {
 }
 
 // dist/check.js
-import { execFile } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 import fs6 from "node:fs";
 import path5 from "node:path";
 var CheckError = class extends Error {
@@ -2104,13 +2193,13 @@ async function check(p) {
     );
   }
   const t0 = Date.now();
-  const { code, out } = await run(compiler.entry, p.root);
+  const { code, out } = await run2(compiler.entry, p.root);
   const errors = parse(out);
   return { ok: code === 0, errors, version: compiler.version, ms: Date.now() - t0 };
 }
-function run(entry, cwd) {
+function run2(entry, cwd) {
   return new Promise((resolve2, reject) => {
-    execFile(
+    execFile2(
       process.execPath,
       [entry, "--noEmit", "--pretty", "false"],
       // tsc writes one line per diagnostic and a project with a lot wrong
@@ -2167,9 +2256,367 @@ ${n} error${n === 1 ? "" : "s"} \u2014 typescript ${result.version}, ${result.ms
   return lines.join("\n").trimStart();
 }
 
-// dist/node-fs.js
-import fs7 from "node:fs/promises";
+// dist/clone.js
+import { spawn as spawn2 } from "node:child_process";
+import fs8 from "node:fs";
+import path7 from "node:path";
+
+// dist/run.js
+import { spawn } from "node:child_process";
+import fs7 from "node:fs";
 import path6 from "node:path";
+var RunError = class extends Error {
+  code;
+  hint;
+  constructor(code, message, hint) {
+    super(message);
+    this.code = code;
+    this.hint = hint;
+    this.name = "RunError";
+  }
+};
+var isSegment = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
+function planRun(p, spec) {
+  const script = spec.script;
+  if (typeof script !== "string" || script === "") {
+    throw new RunError("bad_params", "run needs a script name");
+  }
+  const repo = spec.repo;
+  let cwd = p.root;
+  if (repo !== void 0) {
+    if (typeof repo !== "string" || !isSegment(repo)) {
+      throw new RunError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
+    }
+    cwd = path6.join(p.repos, repo);
+    if (!fs7.existsSync(cwd)) {
+      throw new RunError("no_repo", `no project named ${repo} in this pewter`, "`pewt repos` lists them");
+    }
+  }
+  const manifest = path6.join(cwd, "package.json");
+  let pkg;
+  try {
+    pkg = JSON.parse(fs7.readFileSync(manifest, "utf8"));
+  } catch {
+    throw new RunError("no_manifest", `${where(p, cwd)} has no package.json to declare scripts in`, "`pewt run` runs what a project already declares; a project with no package.json declares nothing");
+  }
+  const scripts = pkg.scripts ?? {};
+  const declared = scripts[script];
+  if (typeof declared !== "string") {
+    const names = Object.keys(scripts);
+    throw new RunError("no_script", `${where(p, cwd)}/package.json declares no script named ${JSON.stringify(script)}`, names.length ? `it declares: ${names.join(", ")}` : "it declares no scripts at all");
+  }
+  return {
+    script,
+    repo,
+    declared,
+    cwd,
+    label: `run ${script}${repo ? ` --repo ${repo}` : ""}`,
+    where: where(p, cwd)
+  };
+}
+function where(p, dir) {
+  const rel = path6.relative(p.root, dir);
+  return rel === "" ? p.name : rel;
+}
+function asRunSpec(spec) {
+  const script = spec["script"];
+  if (typeof script !== "string")
+    return null;
+  const repo = spec["repo"];
+  return { script, ...typeof repo === "string" ? { repo } : {} };
+}
+var LINE_MAX = 64 * 1024;
+function runKind(p, log) {
+  return (ctx) => {
+    const spec = asRunSpec(ctx.spec);
+    if (!spec)
+      throw new RunError("bad_params", "a run session needs a script name in its spec");
+    let plan;
+    try {
+      plan = planRun(p, spec);
+    } catch (e) {
+      throw e instanceof RunError && e.hint ? new RunError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
+    }
+    const child = spawn("npm", ["run", plan.script], {
+      cwd: plan.cwd,
+      env: childEnv(p),
+      stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so the host can stop the whole tree it
+      // started. `npm run` is a parent — killing only npm leaves the build
+      // it launched running, which is how orphaned vite servers happen.
+      detached: true
+    });
+    const say = (frame) => ctx.write(JSON.stringify(frame));
+    let lines = 0;
+    const out = splitter((line) => {
+      lines++;
+      say({ o: line });
+    });
+    const err = splitter((line) => {
+      lines++;
+      say({ e: line });
+    });
+    child.stdout?.on("data", (chunk) => out.push(chunk));
+    child.stderr?.on("data", (chunk) => err.push(chunk));
+    let done = false;
+    const finish = (code, signal) => {
+      if (done)
+        return;
+      done = true;
+      out.flush();
+      err.flush();
+      const exitCode = code ?? (signal ? 128 : null);
+      say({ end: exitCode });
+      log.info(`${plan.label} \u2192 exit ${exitCode ?? "?"}${signal ? ` (${signal})` : ""} \xB7 ${lines} line${lines === 1 ? "" : "s"}`);
+      ctx.exit(exitCode);
+    };
+    child.on("close", (code, signal) => finish(code, signal));
+    child.on("error", (e) => {
+      say({ e: `pewt: could not start npm \u2014 ${e.message}` });
+      finish(127, null);
+    });
+    log.info(`${plan.label} \u2192 npm run ${plan.script} in ${plan.where}/ (pid ${child.pid ?? "?"})`);
+    return {
+      // What the client needs to print a header without asking again.
+      result: { script: plan.script, repo: plan.repo ?? null, declared: plan.declared, where: plan.where, childPid: child.pid ?? null },
+      onClose: () => stopTree(child, done)
+    };
+  };
+}
+function childEnv(p) {
+  const bin = path6.join(p.root, "node_modules", ".bin");
+  const current = process.env["PATH"] ?? "";
+  return { ...process.env, PATH: current.includes(bin) ? current : `${bin}${path6.delimiter}${current}` };
+}
+function stopTree(child, alreadyDone) {
+  if (alreadyDone || child.pid === void 0)
+    return;
+  const signal = (sig) => {
+    try {
+      process.kill(-child.pid, sig);
+    } catch {
+    }
+  };
+  signal("SIGTERM");
+  const t = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null)
+      signal("SIGKILL");
+  }, 2e3);
+  t.unref();
+}
+function splitter(onLine) {
+  let buf = "";
+  return {
+    push(chunk) {
+      buf += chunk.toString("utf8");
+      for (; ; ) {
+        const at = buf.indexOf("\n");
+        if (at === -1)
+          break;
+        onLine(buf.slice(0, at).replace(/\r$/, ""));
+        buf = buf.slice(at + 1);
+      }
+      if (buf.length > LINE_MAX) {
+        onLine(buf.slice(0, LINE_MAX) + " \u2026[cut: no newline in 64 KB]");
+        buf = "";
+      }
+    },
+    flush() {
+      if (buf !== "") {
+        onLine(buf.replace(/\r$/, ""));
+        buf = "";
+      }
+    }
+  };
+}
+function asRunFrame(bytes) {
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object")
+    return null;
+  const f = value;
+  if (typeof f["o"] === "string")
+    return { o: f["o"] };
+  if (typeof f["e"] === "string")
+    return { e: f["e"] };
+  if ("end" in f && (typeof f["end"] === "number" || f["end"] === null))
+    return { end: f["end"] };
+  return null;
+}
+
+// dist/clone.js
+var CloneError = class extends Error {
+  code;
+  hint;
+  constructor(code, message, hint) {
+    super(message);
+    this.code = code;
+    this.hint = hint;
+    this.name = "CloneError";
+  }
+};
+function deriveName(url) {
+  const trimmed = url.replace(/\/+$/, "");
+  let tail;
+  const scheme = trimmed.indexOf("://");
+  if (scheme !== -1) {
+    const rest = trimmed.slice(scheme + 3);
+    const slash = rest.indexOf("/");
+    if (slash === -1)
+      return null;
+    tail = rest.slice(slash + 1);
+  } else {
+    const colon = trimmed.indexOf(":");
+    tail = colon !== -1 ? trimmed.slice(colon + 1) : trimmed;
+  }
+  const last = tail.split("/").pop() ?? "";
+  const name = last.endsWith(".git") ? last.slice(0, -".git".length) : last;
+  return isProjectName(name) ? name : null;
+}
+function planClone(p, spec) {
+  const url = spec.url;
+  if (typeof url !== "string" || url === "" || /\s/.test(url)) {
+    throw new CloneError("bad_url", "clone needs a repository url", "https, ssh, or a local path \u2014 whatever your git can fetch");
+  }
+  const name = spec.name ?? deriveName(url);
+  if (name === null) {
+    throw new CloneError("bad_url", `cannot work out a project name from ${JSON.stringify(url)}`, "give it one: pewt repos clone <url> <name>");
+  }
+  if (!isProjectName(name)) {
+    throw new CloneError("bad_name", `${JSON.stringify(name)} is not a project name`, "a project is a directory under repos/ \u2014 one path segment, not hidden");
+  }
+  const dest = path7.join(p.repos, name);
+  if (fs8.existsSync(dest)) {
+    throw new CloneError("exists", `there is already a project named ${name} in this pewter`, "pick another name: pewt repos clone <url> <name>");
+  }
+  return { url, name, dest, label: `repos.clone ${name}`, where: path7.join("repos", name) };
+}
+function asCloneSpec(spec) {
+  const url = spec["url"];
+  if (typeof url !== "string")
+    return null;
+  const name = spec["name"];
+  return { url, ...typeof name === "string" ? { name } : {} };
+}
+var PROGRESS_MS = 200;
+var LINE_MAX2 = 64 * 1024;
+function cloneKind(p, log) {
+  return (ctx) => {
+    const spec = asCloneSpec(ctx.spec);
+    if (!spec)
+      throw new CloneError("bad_params", "a clone session needs a url in its spec");
+    let plan;
+    try {
+      plan = planClone(p, spec);
+    } catch (e) {
+      throw e instanceof CloneError && e.hint ? new CloneError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
+    }
+    fs8.mkdirSync(p.repos, { recursive: true });
+    const child = spawn2("git", ["clone", "--progress", plan.url, plan.dest], {
+      cwd: p.root,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so the host can stop what it started (D6) —
+      // git spawns helpers (ssh, credential managers) and they go with it.
+      detached: true
+    });
+    const say = (frame) => ctx.write(JSON.stringify(frame));
+    let pendingProgress = null;
+    let timer = null;
+    const flushProgress = () => {
+      timer = null;
+      if (pendingProgress === null)
+        return;
+      say({ e: pendingProgress });
+      pendingProgress = null;
+    };
+    const repaint = (line) => {
+      pendingProgress = line;
+      if (!timer) {
+        timer = setTimeout(flushProgress, PROGRESS_MS);
+        timer.unref();
+      }
+    };
+    const errLine = (line) => {
+      pendingProgress = null;
+      say({ e: line });
+    };
+    const outLine = (line) => say({ o: line });
+    const err = crSplitter(errLine, repaint);
+    const out = crSplitter(outLine, repaint);
+    child.stdout?.on("data", (chunk) => out.push(chunk));
+    child.stderr?.on("data", (chunk) => err.push(chunk));
+    let done = false;
+    const finish = (code, signal) => {
+      if (done)
+        return;
+      done = true;
+      if (timer)
+        clearTimeout(timer);
+      flushProgress();
+      out.flush();
+      err.flush();
+      const exitCode = code ?? (signal ? 128 : null);
+      if (exitCode !== 0)
+        fs8.rmSync(plan.dest, { recursive: true, force: true });
+      say({ end: exitCode });
+      log.info(`${plan.label} \u2192 exit ${exitCode ?? "?"}${signal ? ` (${signal})` : ""}`);
+      ctx.exit(exitCode);
+    };
+    child.on("close", (code, signal) => finish(code, signal));
+    child.on("error", (e) => {
+      say({ e: `pewt: could not start git \u2014 ${e.message}` });
+      finish(127, null);
+    });
+    log.info(`${plan.label} \u2192 git clone ${plan.url} ${plan.where}/ (pid ${child.pid ?? "?"})`);
+    return {
+      // What the client needs to print a header without asking again.
+      result: { url: plan.url, name: plan.name, where: plan.where, childPid: child.pid ?? null },
+      onClose: () => stopTree(child, done)
+    };
+  };
+}
+function crSplitter(onLine, onRepaint) {
+  let buf = "";
+  return {
+    push(chunk) {
+      buf += chunk.toString("utf8");
+      for (; ; ) {
+        const nl = buf.indexOf("\n");
+        const cr = buf.indexOf("\r");
+        if (nl === -1 && cr === -1)
+          break;
+        if (nl !== -1 && (cr === -1 || nl < cr || cr === nl - 1)) {
+          onLine(buf.slice(0, cr === nl - 1 ? cr : nl));
+          buf = buf.slice(nl + 1);
+        } else {
+          const line = buf.slice(0, cr);
+          buf = buf.slice(cr + 1);
+          if (line !== "")
+            onRepaint(line);
+        }
+      }
+      if (buf.length > LINE_MAX2) {
+        onLine(buf.slice(0, LINE_MAX2) + " \u2026[cut: no newline in 64 KB]");
+        buf = "";
+      }
+    },
+    flush() {
+      if (buf !== "") {
+        onLine(buf);
+        buf = "";
+      }
+    }
+  };
+}
+
+// dist/node-fs.js
+import fs9 from "node:fs/promises";
+import path8 from "node:path";
 var NamedError = class extends Error {
   constructor(name, msg) {
     super(msg);
@@ -2182,28 +2629,28 @@ var NodeDirectory = class _NodeDirectory {
     this.dirPath = dirPath;
   }
   async getDirectoryHandle(name, options) {
-    const p = path6.join(this.dirPath, name);
+    const p = path8.join(this.dirPath, name);
     if (options?.create) {
-      await fs7.mkdir(p, { recursive: true });
+      await fs9.mkdir(p, { recursive: true });
     } else {
-      const st = await fs7.stat(p).catch(() => null);
+      const st = await fs9.stat(p).catch(() => null);
       if (!st?.isDirectory())
         throw new NamedError("NotFoundError", `no directory ${name}`);
     }
     return new _NodeDirectory(p);
   }
   async getFileHandle(name, options) {
-    const p = path6.join(this.dirPath, name);
-    const st = await fs7.stat(p).catch(() => null);
+    const p = path8.join(this.dirPath, name);
+    const st = await fs9.stat(p).catch(() => null);
     if (!st?.isFile()) {
       if (!options?.create)
         throw new NamedError("NotFoundError", `no file ${name}`);
-      await (await fs7.open(p, "a")).close();
+      await (await fs9.open(p, "a")).close();
     }
     return new NodeFile(p, name);
   }
   async *keys() {
-    yield* await fs7.readdir(this.dirPath);
+    yield* await fs9.readdir(this.dirPath);
   }
 };
 var NodeFile = class {
@@ -2214,12 +2661,12 @@ var NodeFile = class {
     this.name = name;
   }
   async getFile() {
-    const [st, buf] = await Promise.all([fs7.stat(this.filePath), fs7.readFile(this.filePath)]);
+    const [st, buf] = await Promise.all([fs9.stat(this.filePath), fs9.readFile(this.filePath)]);
     return new File([buf], this.name, { lastModified: Math.round(st.mtimeMs) });
   }
   async createWritable() {
     const tmp = `${this.filePath}.${Math.random().toString(36).slice(2, 8)}.crswap`;
-    const fh = await fs7.open(tmp, "w");
+    const fh = await fs9.open(tmp, "w");
     const target = this.filePath;
     return {
       async write(data) {
@@ -2227,17 +2674,17 @@ var NodeFile = class {
       },
       async close() {
         await fh.close();
-        await fs7.rename(tmp, target);
+        await fs9.rename(tmp, target);
       }
     };
   }
 };
 
 // dist/agent.js
-import { spawn } from "node:child_process";
-import fs8 from "node:fs";
+import { spawn as spawn3 } from "node:child_process";
+import fs10 from "node:fs";
 import os from "node:os";
-import path7 from "node:path";
+import path9 from "node:path";
 
 // dist/framing.js
 var MAX_LINE_BYTES = 1 << 20;
@@ -2343,16 +2790,16 @@ var AgentError = class extends Error {
     this.name = "AgentError";
   }
 };
-var isSegment = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
+var isSegment2 = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
 function planAgent(p, spec) {
   let cwd = p.root;
   const repo = spec.repo;
   if (repo !== void 0) {
-    if (typeof repo !== "string" || !isSegment(repo)) {
+    if (typeof repo !== "string" || !isSegment2(repo)) {
       throw new AgentError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
     }
-    cwd = path7.join(p.repos, repo);
-    if (!fs8.existsSync(cwd)) {
+    cwd = path9.join(p.repos, repo);
+    if (!fs10.existsSync(cwd)) {
       throw new AgentError("no_repo", `no project named ${repo} in this pewter`, "`pewt repos` lists them");
     }
   }
@@ -2380,12 +2827,12 @@ function planAgent(p, spec) {
     unmeasured: found.version !== adapter.measured,
     ...repo !== void 0 ? { repo } : {},
     cwd,
-    where: where(p, cwd),
+    where: where2(p, cwd),
     label: `agent ${adapter.name}${repo ? ` --repo ${repo}` : ""}`
   };
 }
-function where(p, dir) {
-  const rel = path7.relative(p.root, dir);
+function where2(p, dir) {
+  const rel = path9.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 function asAgentSpec(spec) {
@@ -2406,9 +2853,9 @@ function agentEnv(p, from2 = process.env) {
   }
   env["HOME"] ??= os.homedir();
   env["TERM"] = "dumb";
-  const bin = path7.join(p.root, "node_modules", ".bin");
+  const bin = path9.join(p.root, "node_modules", ".bin");
   const current = env["PATH"] ?? "";
-  env["PATH"] = current.includes(bin) ? current : `${bin}${path7.delimiter}${current}`;
+  env["PATH"] = current.includes(bin) ? current : `${bin}${path9.delimiter}${current}`;
   return env;
 }
 function agentKind(p, log) {
@@ -2419,7 +2866,7 @@ function agentKind(p, log) {
     } catch (e) {
       throw e instanceof AgentError && e.hint ? new AgentError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
     }
-    const child = spawn(plan.bin, [], { cwd: plan.cwd, env: agentEnv(p), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn3(plan.bin, [], { cwd: plan.cwd, env: agentEnv(p), stdio: ["pipe", "pipe", "pipe"] });
     const counters = { messagesOut: 0, messagesIn: 0, junkLines: 0, nonRpc: 0, refusedIn: 0, overflows: 0 };
     const stderr = [];
     const keep = (line) => {
@@ -2522,205 +2969,18 @@ function agentKind(p, log) {
 }
 
 // dist/paths.js
-import path8 from "node:path";
+import path10 from "node:path";
 import { safeRelPath } from "pewter";
 function inPewter(typed, root, cwd) {
-  const landed = path8.resolve(cwd, typed);
-  const rel = path8.relative(root, landed);
-  if (rel !== "" && !rel.startsWith("..") && !path8.isAbsolute(rel))
-    return { path: rel.split(path8.sep).join("/") };
-  const here = path8.relative(root, path8.resolve(cwd));
-  const away = here.startsWith("..") || path8.isAbsolute(here);
-  if (away && !path8.isAbsolute(typed) && safeRelPath(typed))
+  const landed = path10.resolve(cwd, typed);
+  const rel = path10.relative(root, landed);
+  if (rel !== "" && !rel.startsWith("..") && !path10.isAbsolute(rel))
+    return { path: rel.split(path10.sep).join("/") };
+  const here = path10.relative(root, path10.resolve(cwd));
+  const away = here.startsWith("..") || path10.isAbsolute(here);
+  if (away && !path10.isAbsolute(typed) && safeRelPath(typed))
     return { path: safeRelPath(typed) };
   return { outside: landed };
-}
-
-// dist/run.js
-import { spawn as spawn2 } from "node:child_process";
-import fs9 from "node:fs";
-import path9 from "node:path";
-var RunError = class extends Error {
-  code;
-  hint;
-  constructor(code, message, hint) {
-    super(message);
-    this.code = code;
-    this.hint = hint;
-    this.name = "RunError";
-  }
-};
-var isSegment2 = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
-function planRun(p, spec) {
-  const script = spec.script;
-  if (typeof script !== "string" || script === "") {
-    throw new RunError("bad_params", "run needs a script name");
-  }
-  const repo = spec.repo;
-  let cwd = p.root;
-  if (repo !== void 0) {
-    if (typeof repo !== "string" || !isSegment2(repo)) {
-      throw new RunError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
-    }
-    cwd = path9.join(p.repos, repo);
-    if (!fs9.existsSync(cwd)) {
-      throw new RunError("no_repo", `no project named ${repo} in this pewter`, "`pewt repos` lists them");
-    }
-  }
-  const manifest = path9.join(cwd, "package.json");
-  let pkg;
-  try {
-    pkg = JSON.parse(fs9.readFileSync(manifest, "utf8"));
-  } catch {
-    throw new RunError("no_manifest", `${where2(p, cwd)} has no package.json to declare scripts in`, "`pewt run` runs what a project already declares; a project with no package.json declares nothing");
-  }
-  const scripts = pkg.scripts ?? {};
-  const declared = scripts[script];
-  if (typeof declared !== "string") {
-    const names = Object.keys(scripts);
-    throw new RunError("no_script", `${where2(p, cwd)}/package.json declares no script named ${JSON.stringify(script)}`, names.length ? `it declares: ${names.join(", ")}` : "it declares no scripts at all");
-  }
-  return {
-    script,
-    repo,
-    declared,
-    cwd,
-    label: `run ${script}${repo ? ` --repo ${repo}` : ""}`,
-    where: where2(p, cwd)
-  };
-}
-function where2(p, dir) {
-  const rel = path9.relative(p.root, dir);
-  return rel === "" ? p.name : rel;
-}
-function asRunSpec(spec) {
-  const script = spec["script"];
-  if (typeof script !== "string")
-    return null;
-  const repo = spec["repo"];
-  return { script, ...typeof repo === "string" ? { repo } : {} };
-}
-var LINE_MAX = 64 * 1024;
-function runKind(p, log) {
-  return (ctx) => {
-    const spec = asRunSpec(ctx.spec);
-    if (!spec)
-      throw new RunError("bad_params", "a run session needs a script name in its spec");
-    let plan;
-    try {
-      plan = planRun(p, spec);
-    } catch (e) {
-      throw e instanceof RunError && e.hint ? new RunError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
-    }
-    const child = spawn2("npm", ["run", plan.script], {
-      cwd: plan.cwd,
-      env: childEnv(p),
-      stdio: ["ignore", "pipe", "pipe"],
-      // Its own process group, so the host can stop the whole tree it
-      // started. `npm run` is a parent — killing only npm leaves the build
-      // it launched running, which is how orphaned vite servers happen.
-      detached: true
-    });
-    const say = (frame) => ctx.write(JSON.stringify(frame));
-    let lines = 0;
-    const out = splitter((line) => {
-      lines++;
-      say({ o: line });
-    });
-    const err = splitter((line) => {
-      lines++;
-      say({ e: line });
-    });
-    child.stdout?.on("data", (chunk) => out.push(chunk));
-    child.stderr?.on("data", (chunk) => err.push(chunk));
-    let done = false;
-    const finish = (code, signal) => {
-      if (done)
-        return;
-      done = true;
-      out.flush();
-      err.flush();
-      const exitCode = code ?? (signal ? 128 : null);
-      say({ end: exitCode });
-      log.info(`${plan.label} \u2192 exit ${exitCode ?? "?"}${signal ? ` (${signal})` : ""} \xB7 ${lines} line${lines === 1 ? "" : "s"}`);
-      ctx.exit(exitCode);
-    };
-    child.on("close", (code, signal) => finish(code, signal));
-    child.on("error", (e) => {
-      say({ e: `pewt: could not start npm \u2014 ${e.message}` });
-      finish(127, null);
-    });
-    log.info(`${plan.label} \u2192 npm run ${plan.script} in ${plan.where}/ (pid ${child.pid ?? "?"})`);
-    return {
-      // What the client needs to print a header without asking again.
-      result: { script: plan.script, repo: plan.repo ?? null, declared: plan.declared, where: plan.where, childPid: child.pid ?? null },
-      onClose: () => stopTree(child, done)
-    };
-  };
-}
-function childEnv(p) {
-  const bin = path9.join(p.root, "node_modules", ".bin");
-  const current = process.env["PATH"] ?? "";
-  return { ...process.env, PATH: current.includes(bin) ? current : `${bin}${path9.delimiter}${current}` };
-}
-function stopTree(child, alreadyDone) {
-  if (alreadyDone || child.pid === void 0)
-    return;
-  const signal = (sig) => {
-    try {
-      process.kill(-child.pid, sig);
-    } catch {
-    }
-  };
-  signal("SIGTERM");
-  const t = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null)
-      signal("SIGKILL");
-  }, 2e3);
-  t.unref();
-}
-function splitter(onLine) {
-  let buf = "";
-  return {
-    push(chunk) {
-      buf += chunk.toString("utf8");
-      for (; ; ) {
-        const at = buf.indexOf("\n");
-        if (at === -1)
-          break;
-        onLine(buf.slice(0, at).replace(/\r$/, ""));
-        buf = buf.slice(at + 1);
-      }
-      if (buf.length > LINE_MAX) {
-        onLine(buf.slice(0, LINE_MAX) + " \u2026[cut: no newline in 64 KB]");
-        buf = "";
-      }
-    },
-    flush() {
-      if (buf !== "") {
-        onLine(buf.replace(/\r$/, ""));
-        buf = "";
-      }
-    }
-  };
-}
-function asRunFrame(bytes) {
-  let value;
-  try {
-    value = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== "object")
-    return null;
-  const f = value;
-  if (typeof f["o"] === "string")
-    return { o: f["o"] };
-  if (typeof f["e"] === "string")
-    return { e: f["e"] };
-  if ("end" in f && (typeof f["end"] === "number" || f["end"] === null))
-    return { end: f["end"] };
-  return null;
 }
 
 // dist/stream.js
@@ -2958,13 +3218,13 @@ async function pipeAgent(dir, spec, streams, opts = {}) {
 }
 
 // dist/serve.js
-import fs13 from "node:fs";
+import fs14 from "node:fs";
 import os2 from "node:os";
-import path13 from "node:path";
+import path14 from "node:path";
 
 // ../host/dist/host-server.js
-import fs10 from "node:fs";
-import path10 from "node:path";
+import fs11 from "node:fs";
+import path11 from "node:path";
 import { spawn as cpSpawn } from "node:child_process";
 var errMsg2 = (e) => e instanceof Error ? e.message : String(e);
 var SILENT_LOGGER = { info() {
@@ -2995,9 +3255,9 @@ var DEFAULT_TRANSCRIPTS = {
 var CLIENT_DIR = "client";
 var CLIENT_DIR_CAP = 8;
 function writeFileAtomic(file, data) {
-  const tmp = path10.join(path10.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
-  fs10.writeFileSync(tmp, data);
-  fs10.renameSync(tmp, file);
+  const tmp = path11.join(path11.dirname(file), `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
+  fs11.writeFileSync(tmp, data);
+  fs11.renameSync(tmp, file);
 }
 function writeJsonAtomic(file, obj) {
   writeFileAtomic(file, JSON.stringify(obj, null, 2));
@@ -3024,21 +3284,21 @@ function canonServices(d) {
 var isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 var echoSafe = (s) => s.replace(new RegExp("\\p{C}", "gu"), "").slice(0, 64);
 var within = (root, p) => {
-  const rel = path10.relative(root, p);
-  return rel === "" || !rel.startsWith("..") && !path10.isAbsolute(rel);
+  const rel = path11.relative(root, p);
+  return rel === "" || !rel.startsWith("..") && !path11.isAbsolute(rel);
 };
 function contains(root, p) {
   if (!within(root, p))
     return false;
   try {
-    return within(fs10.realpathSync(root), fs10.realpathSync(p));
+    return within(fs11.realpathSync(root), fs11.realpathSync(p));
   } catch {
     return true;
   }
 }
 function readJson(file) {
   try {
-    return JSON.parse(fs10.readFileSync(file, "utf8"));
+    return JSON.parse(fs11.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -3114,12 +3374,12 @@ var Session = class {
   constructor(host, id) {
     this.host = host;
     this.id = id;
-    this.dir = path10.join(host.sessionsDir, id);
+    this.dir = path11.join(host.sessionsDir, id);
   }
   /** Current writer's uplink dir (D18): `in/` for epoch 0, `in.<epoch>/`
    *  after an attach takeover. Only this dir is ever consumed. */
   get inDir() {
-    return path10.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
+    return path11.join(this.dir, this.epoch === 0 ? "in" : `in.${this.epoch}`);
   }
   get pty() {
     return this.usesPty ? this.proc : null;
@@ -3128,7 +3388,7 @@ var Session = class {
     return this.usesPty || !this.proc ? null : this.proc;
   }
   segPath(gen) {
-    return path10.join(this.dir, segName(gen));
+    return path11.join(this.dir, segName(gen));
   }
   // Append with open/write/close per call, then bump a rename-committed
   // doorbell file. Rationale (measured, spec/FINDINGS.md F1): on macOS,
@@ -3138,9 +3398,9 @@ var Session = class {
   // appends), so every segment is independently parseable.
   appendFrame(type, payload) {
     const bytes = encodeFrame(type, payload);
-    const fd = fs10.openSync(this.segPath(this.outGen), "a");
-    fs10.writeSync(fd, bytes);
-    fs10.closeSync(fd);
+    const fd = fs11.openSync(this.segPath(this.outGen), "a");
+    fs11.writeSync(fd, bytes);
+    fs11.closeSync(fd);
     this.segBytes += bytes.length;
     this.outTotal += bytes.length;
     if (this.segBytes >= this.host.limits.segMax) {
@@ -3151,7 +3411,7 @@ var Session = class {
       this.gcSegments();
     }
     const sig = { gen: this.outGen, size: this.segBytes, prevFinal: this.prevFinal, total: this.outTotal };
-    writeFileAtomic(path10.join(this.dir, "out.sig"), JSON.stringify(sig));
+    writeFileAtomic(path11.join(this.dir, "out.sig"), JSON.stringify(sig));
     this.checkWindow();
   }
   ack(total) {
@@ -3163,7 +3423,7 @@ var Session = class {
     while (this.doneSegs.length > 0 && this.ackTotal >= this.doneSegs[0].endTotal) {
       const seg = this.doneSegs.shift();
       try {
-        fs10.unlinkSync(this.segPath(seg.gen));
+        fs11.unlinkSync(this.segPath(seg.gen));
       } catch {
       }
     }
@@ -3205,7 +3465,7 @@ var Session = class {
   setStatus(obj) {
     const { detached: _, ...base } = obj;
     this.statusBase = base;
-    writeJsonAtomic(path10.join(this.dir, "status.json"), { t: now(), ...obj });
+    writeJsonAtomic(path11.join(this.dir, "status.json"), { t: now(), ...obj });
   }
   /** Toggle the D17 detached marker in status.json (no-op until the first
    *  setStatus, and when already in the requested state). */
@@ -3329,10 +3589,10 @@ var HostServer = class {
   scanning = false;
   rescan = false;
   constructor(opts) {
-    this.sharedDir = path10.resolve(opts.root);
-    this.fsioDir = path10.join(this.sharedDir, ".fsio");
-    this.sessionsDir = path10.join(this.fsioDir, "sessions");
-    this.transcriptsDir = path10.join(this.fsioDir, "transcripts");
+    this.sharedDir = path11.resolve(opts.root);
+    this.fsioDir = path11.join(this.sharedDir, ".fsio");
+    this.sessionsDir = path11.join(this.fsioDir, "sessions");
+    this.transcriptsDir = path11.join(this.fsioDir, "transcripts");
     this.allowShell = opts.allowShell ?? false;
     this.onSpawnRequest = opts.onSpawnRequest ?? null;
     const ownName = opts.workspaceName;
@@ -3452,12 +3712,12 @@ var HostServer = class {
     }
     this.servicesRev = prev + 1;
     this.servicesBody = body;
-    writeJsonAtomic(path10.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
+    writeJsonAtomic(path11.join(this.fsioDir, "services.json"), { rev: this.servicesRev, ...doc });
     return true;
   }
   readServices() {
     try {
-      const parsed2 = JSON.parse(fs10.readFileSync(path10.join(this.fsioDir, "services.json"), "utf8"));
+      const parsed2 = JSON.parse(fs11.readFileSync(path11.join(this.fsioDir, "services.json"), "utf8"));
       return parsed2 && typeof parsed2 === "object" ? parsed2 : null;
     } catch {
       return null;
@@ -3488,11 +3748,11 @@ var HostServer = class {
       this.log.warn("no pty (node-pty not installed): shell sessions fall back to pipes. `npm i node-pty` for full terminal support.");
     if (this.fresh)
       this.cleanServiceDir();
-    fs10.mkdirSync(this.sessionsDir, { recursive: true });
+    fs11.mkdirSync(this.sessionsDir, { recursive: true });
     this.sweepTranscripts();
     this.ensureGitignore();
     const manifest = { protocol: PROTOCOL_VERSION };
-    writeJsonAtomic(path10.join(this.fsioDir, "fsio.json"), manifest);
+    writeJsonAtomic(path11.join(this.fsioDir, "fsio.json"), manifest);
     this.publishServices();
     this.heartbeat();
     this.timers.push(setInterval(() => this.heartbeat(), this.timings.heartbeatMs));
@@ -3559,7 +3819,7 @@ var HostServer = class {
     this.rootWatcher?.close();
     this.rootWatcher = null;
     try {
-      fs10.unlinkSync(path10.join(this.fsioDir, "host.json"));
+      fs11.unlinkSync(path11.join(this.fsioDir, "host.json"));
     } catch {
     }
     return Promise.all(reaps).then(() => {
@@ -3612,10 +3872,10 @@ var HostServer = class {
   // lifecycle), and `takeover` skips the refusal for a killed host whose
   // last beat hasn't gone stale yet.
   refuseLiveHost() {
-    const hostJson = path10.join(this.fsioDir, "host.json");
+    const hostJson = path11.join(this.fsioDir, "host.json");
     let ageMs;
     try {
-      ageMs = Date.now() - fs10.statSync(hostJson).mtimeMs;
+      ageMs = Date.now() - fs11.statSync(hostJson).mtimeMs;
     } catch {
       return;
     }
@@ -3642,24 +3902,24 @@ var HostServer = class {
       return;
     let dir = this.sharedDir;
     for (; ; ) {
-      if (fs10.existsSync(path10.join(dir, ".git")))
+      if (fs11.existsSync(path11.join(dir, ".git")))
         break;
-      const up = path10.dirname(dir);
+      const up = path11.dirname(dir);
       if (up === dir)
         return;
       dir = up;
     }
-    const file = path10.join(this.sharedDir, ".gitignore");
+    const file = path11.join(this.sharedDir, ".gitignore");
     try {
       let text = "";
       try {
-        text = fs10.readFileSync(file, "utf8");
+        text = fs11.readFileSync(file, "utf8");
       } catch {
       }
       if (text.split("\n").some((l) => /^\/?\.fsio\/?$/.test(l.trim())))
         return;
       const sep = text.length > 0 && !text.endsWith("\n") ? "\n" : "";
-      fs10.appendFileSync(file, `${sep}# fsio transport state \u2014 session scrollback lives here
+      fs11.appendFileSync(file, `${sep}# fsio transport state \u2014 session scrollback lives here
 .fsio/
 `);
       this.log.info(`added .fsio/ to ${file} (scrollback must never be committed)`);
@@ -3671,7 +3931,7 @@ var HostServer = class {
     if (!this.watchEnabled)
       return null;
     try {
-      const w = fs10.watch(p, cb);
+      const w = fs11.watch(p, cb);
       w.on("error", () => {
       });
       return w;
@@ -3696,7 +3956,7 @@ var HostServer = class {
       // the service directory; hub clients read `capabilities`.
       servicesRev: this.servicesRev
     };
-    writeJsonAtomic(path10.join(this.fsioDir, "host.json"), info);
+    writeJsonAtomic(path11.join(this.fsioDir, "host.json"), info);
   }
   idleSweep() {
     for (const s of this.sessions.values()) {
@@ -3731,10 +3991,10 @@ var HostServer = class {
   // staleGraceMs — a live reporter flushes at least every 5 s, so a live
   // page's dir never looks stale.
   sweepClientDirs() {
-    const root = path10.join(this.fsioDir, CLIENT_DIR);
+    const root = path11.join(this.fsioDir, CLIENT_DIR);
     let entries;
     try {
-      entries = fs10.readdirSync(root, { withFileTypes: true });
+      entries = fs11.readdirSync(root, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3743,10 +4003,10 @@ var HostServer = class {
       if (!e.isDirectory())
         continue;
       try {
-        const p = path10.join(root, e.name);
-        let mtime2 = fs10.statSync(p).mtimeMs;
+        const p = path11.join(root, e.name);
+        let mtime2 = fs11.statSync(p).mtimeMs;
         try {
-          mtime2 = Math.max(mtime2, fs10.statSync(path10.join(p, "report.json")).mtimeMs);
+          mtime2 = Math.max(mtime2, fs11.statSync(path11.join(p, "report.json")).mtimeMs);
         } catch {
         }
         dirs.push({ name: e.name, mtime: mtime2 });
@@ -3760,7 +4020,7 @@ var HostServer = class {
       if (Date.now() - d.mtime < this.timings.staleGraceMs)
         continue;
       try {
-        fs10.rmSync(path10.join(root, d.name), { recursive: true, force: true });
+        fs11.rmSync(path11.join(root, d.name), { recursive: true, force: true });
         this.log.info(`client dir ${d.name}: over cap (${CLIENT_DIR_CAP}) and stale, removed`);
       } catch {
       }
@@ -3794,26 +4054,26 @@ var HostServer = class {
       return;
     let logs;
     try {
-      logs = fs10.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
+      logs = fs11.readdirSync(s.dir).filter((n) => OUT_LOG_RE.test(n)).sort();
     } catch {
       return;
     }
     if (!logs.length)
       return;
-    const dir = path10.join(this.transcriptsDir, s.id);
+    const dir = path11.join(this.transcriptsDir, s.id);
     try {
-      fs10.mkdirSync(dir, { recursive: true });
+      fs11.mkdirSync(dir, { recursive: true });
       let bytes = 0;
       for (const name of logs) {
-        const to = path10.join(dir, name);
-        fs10.renameSync(path10.join(s.dir, name), to);
-        bytes += fs10.statSync(to).size;
+        const to = path11.join(dir, name);
+        fs11.renameSync(path11.join(s.dir, name), to);
+        bytes += fs11.statSync(to).size;
       }
       try {
-        fs10.copyFileSync(path10.join(s.dir, "spawn.json"), path10.join(dir, "spawn.json"));
+        fs11.copyFileSync(path11.join(s.dir, "spawn.json"), path11.join(dir, "spawn.json"));
       } catch {
       }
-      const st = readJson(path10.join(s.dir, "status.json"));
+      const st = readJson(path11.join(s.dir, "status.json"));
       const first = OUT_LOG_RE.exec(logs[0]);
       const meta = {
         id: s.id,
@@ -3827,7 +4087,7 @@ var HostServer = class {
         total: s.outTotal,
         bytes
       };
-      writeJsonAtomic(path10.join(dir, "meta.json"), meta);
+      writeJsonAtomic(path11.join(dir, "meta.json"), meta);
       this.log.info(`session ${s.id}: transcript kept (${why}, ${bytes} B)`);
     } catch (e) {
       this.log.warn(`session ${s.id}: transcript not kept: ${errMsg2(e)}`);
@@ -3844,7 +4104,7 @@ var HostServer = class {
       return;
     let entries;
     try {
-      entries = fs10.readdirSync(this.transcriptsDir, { withFileTypes: true });
+      entries = fs11.readdirSync(this.transcriptsDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3852,13 +4112,13 @@ var HostServer = class {
     for (const e of entries) {
       if (!e.isDirectory())
         continue;
-      const dir = path10.join(this.transcriptsDir, e.name);
+      const dir = path11.join(this.transcriptsDir, e.name);
       let bytes = 0;
       let ended = 0;
       try {
-        for (const f of fs10.readdirSync(dir))
-          bytes += fs10.statSync(path10.join(dir, f)).size;
-        ended = readJson(path10.join(dir, "meta.json"))?.ended ?? fs10.statSync(dir).mtimeMs;
+        for (const f of fs11.readdirSync(dir))
+          bytes += fs11.statSync(path11.join(dir, f)).size;
+        ended = readJson(path11.join(dir, "meta.json"))?.ended ?? fs11.statSync(dir).mtimeMs;
       } catch {
         continue;
       }
@@ -3873,7 +4133,7 @@ var HostServer = class {
       if (!over)
         continue;
       try {
-        fs10.rmSync(path10.join(this.transcriptsDir, t.name), { recursive: true, force: true });
+        fs11.rmSync(path11.join(this.transcriptsDir, t.name), { recursive: true, force: true });
         this.log.info(`transcript ${t.name}: removed (${over})`);
       } catch {
       }
@@ -3903,12 +4163,12 @@ var HostServer = class {
   cleanServiceDir(keepClient = false) {
     const keep = /* @__PURE__ */ new Set();
     if (this.transcripts)
-      keep.add(path10.basename(this.transcriptsDir));
+      keep.add(path11.basename(this.transcriptsDir));
     if (keepClient)
       keep.add(CLIENT_DIR);
     let entries;
     try {
-      entries = fs10.readdirSync(this.fsioDir, { withFileTypes: true });
+      entries = fs11.readdirSync(this.fsioDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3916,12 +4176,12 @@ var HostServer = class {
       if (keep.has(e.name))
         continue;
       try {
-        fs10.rmSync(path10.join(this.fsioDir, e.name), { recursive: true, force: true });
+        fs11.rmSync(path11.join(this.fsioDir, e.name), { recursive: true, force: true });
       } catch {
       }
     }
     try {
-      fs10.rmdirSync(this.fsioDir);
+      fs11.rmdirSync(this.fsioDir);
     } catch {
     }
   }
@@ -3949,7 +4209,7 @@ var HostServer = class {
   scanOnce() {
     let entries;
     try {
-      entries = fs10.readdirSync(this.sessionsDir, { withFileTypes: true });
+      entries = fs11.readdirSync(this.sessionsDir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -3973,7 +4233,7 @@ var HostServer = class {
   adoptSession(id) {
     const s = new Session(this, id);
     this.sessions.set(id, s);
-    const status = readJson(path10.join(s.dir, "status.json"));
+    const status = readJson(path11.join(s.dir, "status.json"));
     if (status && status.state === "exited") {
       s.done = true;
       if (now() - (status.t ?? 0) > this.timings.staleGraceMs)
@@ -3985,7 +4245,7 @@ var HostServer = class {
     this.log.info(`session ${id}: adopted`);
   }
   tryStart(s) {
-    const raw = readJson(path10.join(s.dir, "spawn.json"));
+    const raw = readJson(path11.join(s.dir, "spawn.json"));
     if (!raw)
       return;
     if (raw.jsonrpc === "2.0" && raw.method === "spawn") {
@@ -3994,7 +4254,7 @@ var HostServer = class {
     } else {
       s.spawn = raw;
     }
-    const prior = readJson(path10.join(s.dir, "status.json"));
+    const prior = readJson(path11.join(s.dir, "status.json"));
     if (prior?.writer)
       s.epoch = prior.writer.epoch;
     s.started = true;
@@ -4146,7 +4406,7 @@ var HostServer = class {
     const name = r.name ?? asked;
     if (name)
       info.workspace = s.workspace = name;
-    return path10.resolve(r.root);
+    return path11.resolve(r.root);
   }
   /** The exact thing a shell spec would run — shared by the policy hook's
    *  info and startShell so the judged command can't drift from the
@@ -4157,7 +4417,7 @@ var HostServer = class {
     return {
       cmd: spec.cmd || process.env.SHELL || "/bin/bash",
       args: spec.args ?? [],
-      cwd: spec.cwd ? path10.resolve(root, spec.cwd) : root,
+      cwd: spec.cwd ? path11.resolve(root, spec.cwd) : root,
       pty: !!this.ptyMod && spec.pty !== false
     };
   }
@@ -4241,17 +4501,17 @@ var HostServer = class {
   processAttach(s) {
     let names;
     try {
-      names = fs10.readdirSync(s.dir);
+      names = fs11.readdirSync(s.dir);
     } catch {
       return;
     }
     for (const name of names.sort()) {
       if (!/^attach\.[A-Za-z0-9_-]+\.json$/.test(name))
         continue;
-      const p = path10.join(s.dir, name);
+      const p = path11.join(s.dir, name);
       const raw = readJson(p);
       try {
-        fs10.unlinkSync(p);
+        fs11.unlinkSync(p);
       } catch {
         continue;
       }
@@ -4308,7 +4568,7 @@ var HostServer = class {
     s.epoch += 1;
     s.nextInSeq = null;
     try {
-      fs10.mkdirSync(s.inDir, { recursive: true });
+      fs11.mkdirSync(s.inDir, { recursive: true });
     } catch {
     }
     s.watchers.push(this.watchDir(s.inDir, () => this.scheduleScan()));
@@ -4332,7 +4592,7 @@ var HostServer = class {
   processIncoming(s) {
     let names;
     try {
-      names = fs10.readdirSync(s.inDir);
+      names = fs11.readdirSync(s.inDir);
     } catch {
       return;
     }
@@ -4350,13 +4610,13 @@ var HostServer = class {
       s.nextInSeq = Math.min(...chunks.keys());
     while (chunks.has(s.nextInSeq)) {
       const chunk = chunks.get(s.nextInSeq);
-      const p = path10.join(s.inDir, chunk.name);
+      const p = path11.join(s.inDir, chunk.name);
       let bytes;
       if (chunk.data !== void 0) {
         bytes = b64urlDecode(chunk.data);
       } else {
         try {
-          bytes = fs10.readFileSync(p);
+          bytes = fs11.readFileSync(p);
         } catch {
           return;
         }
@@ -4378,9 +4638,9 @@ var HostServer = class {
       for (const f of frames)
         this.handleFrame(s, f, t1);
       if (chunk.data !== void 0)
-        fs10.rmdirSync(p);
+        fs11.rmdirSync(p);
       else
-        fs10.unlinkSync(p);
+        fs11.unlinkSync(p);
       s.nextInSeq++;
     }
   }
@@ -4503,7 +4763,7 @@ var HostServer = class {
   removeSessionDir(s, why) {
     try {
       this.archiveTranscript(s, why);
-      fs10.rmSync(s.dir, { recursive: true, force: true });
+      fs11.rmSync(s.dir, { recursive: true, force: true });
       this.sessions.delete(s.id);
       this.log.info(`session ${s.id}: removed (${why})`);
     } catch (e) {
@@ -4517,8 +4777,8 @@ import readline from "node:readline/promises";
 import { describeGrant as describeGrant2, grantId as grantId3 } from "pewter";
 
 // dist/shell.js
-import fs11 from "node:fs";
-import path11 from "node:path";
+import fs12 from "node:fs";
+import path12 from "node:path";
 import { repoOfCwd } from "pewter";
 var ShellError = class extends Error {
   code;
@@ -4536,7 +4796,7 @@ function planShell(p, spec, resolved) {
   const repo = repoOfCwd(asked);
   let stat;
   try {
-    stat = fs11.statSync(cwd);
+    stat = fs12.statSync(cwd);
   } catch {
     throw new ShellError(repo ? "no_repo" : "no_cwd", repo ? `no project named ${repo} in this pewter` : `${where3(p, cwd)} is not a directory in this pewter`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
   }
@@ -4556,7 +4816,7 @@ function planShell(p, spec, resolved) {
   };
 }
 function where3(p, dir) {
-  const rel = path11.relative(p.root, dir);
+  const rel = path12.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 
@@ -4586,6 +4846,10 @@ var STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-age
 function spawnGate(p, opts, log) {
   const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents };
   return async (spec, info) => {
+    if (info.kind === "repos.clone") {
+      log.info(`\u25CF repos.clone \u2014 git will fetch into repos/, executing nothing (${from(info.origin)})`);
+      return true;
+    }
     if (!(info.kind in STARTS)) {
       log.info(`\u25CF ${info.kind} session \u2014 origin: ${info.origin ?? "(none reported)"}`);
       return true;
@@ -4898,9 +5162,9 @@ function asRpcError(e, method, log) {
 }
 
 // dist/open.js
-import { execFile as execFile2 } from "node:child_process";
-import fs12 from "node:fs";
-import path12 from "node:path";
+import { execFile as execFile3 } from "node:child_process";
+import fs13 from "node:fs";
+import path13 from "node:path";
 var CHROMIUMS = [
   { id: "com.google.Chrome", name: "Google Chrome" },
   { id: "com.microsoft.edgemac", name: "Microsoft Edge" },
@@ -4913,7 +5177,7 @@ async function openInChromium(url, platform = process.platform) {
   }
   for (const b of CHROMIUMS) {
     const ok = await new Promise((resolve2) => {
-      execFile2("open", ["-b", b.id, url], { timeout: 1e4 }, (err) => resolve2(!err));
+      execFile3("open", ["-b", b.id, url], { timeout: 1e4 }, (err) => resolve2(!err));
     });
     if (ok)
       return { opened: true, browser: b.name };
@@ -4922,7 +5186,7 @@ async function openInChromium(url, platform = process.platform) {
 }
 function hasClientDirs(fsioDir) {
   try {
-    return fs12.readdirSync(path12.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
+    return fs13.readdirSync(path13.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
   } catch {
     return false;
   }
@@ -4950,7 +5214,7 @@ async function serve(p, opts = {}) {
     throw new Error(`--url ${JSON.stringify(base)} is not a URL`);
   }
   page.searchParams.set("dir", p.name);
-  const tmpReal = fs13.realpathSync(os2.tmpdir());
+  const tmpReal = fs14.realpathSync(os2.tmpdir());
   if (p.root.startsWith("/private/tmp") || p.root.startsWith(tmpReal)) {
     throw new Error(`refusing to serve a pewter under a temp dir (${p.root}) \u2014 Chrome's file observers break there (F9)`);
   }
@@ -4972,6 +5236,7 @@ async function serve(p, opts = {}) {
   server.registerKind("pewt", pewtKind(p, router, log));
   server.registerKind("run", runKind(p, log));
   server.registerKind("agent", agentKind(p, log));
+  server.registerKind("repos.clone", cloneKind(p, log));
   await server.start();
   console.log(`
 pewter \xB7 ${p.root}
@@ -5029,7 +5294,7 @@ function grantLine(p) {
 function countExtensions(p) {
   let names;
   try {
-    names = fs13.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
+    names = fs14.readdirSync(p.extensions, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name);
   } catch {
     return "no extensions/ directory \u2014 the page will have nothing to show.";
   }
@@ -5040,8 +5305,8 @@ async function stop(server, p, signal) {
 ${signal} \u2014 closing sessions\u2026`);
   await server.close();
   server.cleanServiceDir(true);
-  const clientDir = path13.join(p.fsio, "client");
-  const reports = fs13.existsSync(clientDir) ? fs13.readdirSync(clientDir).length : 0;
+  const clientDir = path14.join(p.fsio, "client");
+  const reports = fs14.existsSync(clientDir) ? fs14.readdirSync(clientDir).length : 0;
   console.log(reports ? `done; .fsio swept, ${reports} page report${reports === 1 ? "" : "s"} kept.` : "done; .fsio removed.");
 }
 
@@ -5165,12 +5430,29 @@ if (parsed.kind === "check") {
     }
     if (parsed.method === "shell") {
       const cwd = typeof parsed.spec["cwd"] === "string" ? parsed.spec["cwd"] : ".";
-      const where4 = path14.join(pewter.name, cwd);
+      const where4 = path15.join(pewter.name, cwd);
       console.log(parsed.json ? JSON.stringify({ dryRun: true, cwd, where: where4 }, null, 2) : `would open  a shell
        cwd  ${where4}/
 
 (nothing started \u2014 the host was not asked, and which shell it runs is its own)`);
       process.exit(0);
+    }
+    if (parsed.method === "repos.clone") {
+      try {
+        const plan = planClone(pewter, parsed.spec);
+        console.log(parsed.json ? JSON.stringify({ dryRun: true, url: plan.url, name: plan.name, where: plan.where }, null, 2) : `would clone  ${plan.url}
+       into  ${plan.where}/
+
+(nothing started \u2014 and nothing would be asked: a clone fetches and executes nothing)`);
+        process.exit(0);
+      } catch (e) {
+        if (!(e instanceof CloneError))
+          throw e;
+        console.error(`pewt: ${e.message}`);
+        if (e.hint)
+          console.error(`  ${e.hint}`);
+        process.exit(1);
+      }
     }
     try {
       const plan = planRun(pewter, parsed.spec);
@@ -5236,7 +5518,7 @@ if (parsed.kind === "check") {
         (stream === "out" || parsed.json ? process.stdout : process.stderr).write(`${text}
 `);
       },
-      onWaiting: () => process.stderr.write("pewt: waiting for the host to allow this run \u2014 it is asking on its own terminal\n")
+      onWaiting: () => process.stderr.write(parsed.method === "repos.clone" ? "pewt: waiting for the host to start this clone\n" : "pewt: waiting for the host to allow this run \u2014 it is asking on its own terminal\n")
     });
     if (parsed.json)
       console.log(JSON.stringify({ end: outcome.exitCode }));
