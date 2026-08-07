@@ -79,6 +79,15 @@ textarea:disabled {
   cursor: default;
 }
 
+/* The elements are block boxes — but `hidden` must keep meaning hidden.
+ * The browser's own `[hidden] { display: none }` lives in the UA stylesheet,
+ * which ANY author rule outranks, so a bare `display: block` here would
+ * silently defeat the attribute the scaffolded markup starts with. */
+pewter-status[hidden],
+pewter-menu[hidden] {
+  display: none;
+}
+
 /* One quiet line above a screen, for what just happened — "the shell ended",
  * "waiting on the host". The element spelling is <pewter-status>. */
 .status,

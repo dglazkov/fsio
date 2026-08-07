@@ -154,6 +154,15 @@ status.say("kit status");
 status.offer("again", () => status.say("kit acted"));
 status.querySelector("button")!.click();
 
+// A hidden element must stay hidden. The kit styles its elements as block
+// boxes, and an author rule outranks the UA stylesheet's [hidden] — the
+// exact bug a human found on the first screen — so the guard rule is pinned
+// here, where the kit's real CSS is in the page.
+const quiet = document.createElement("pewter-status");
+quiet.id = "quiet";
+quiet.hidden = true;
+document.body.append(quiet);
+
 document.title = "answered";
 `
 );
@@ -322,6 +331,7 @@ let opened = "";
 let agentinfo = "";
 let picked = "";
 let kitsaid = "";
+let quietDisplay = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -348,7 +358,8 @@ try {
   granted = await frame.locator("#granted").textContent();
   opened = await frame.locator("#opened").textContent();
   picked = await frame.locator("#picked").textContent();
-  kitsaid = await frame.locator("pewter-status span").textContent();
+  kitsaid = await frame.locator("pewter-status span").first().textContent();
+  quietDisplay = await frame.locator("#quiet").evaluate((el) => getComputedStyle(el).display);
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -381,6 +392,7 @@ const checks = [
   ["what the tab opened with arrived inside the sandbox", opened === '{"repo":"site"}'],
   ["the kit's menu rendered in the sandbox, and a click came back through onpick", picked === "picked site"],
   ["the kit's status line spoke, offered, and acted", kitsaid === "kit acted"],
+  ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["nothing threw in the page", errors.length === 0],
 ];
 
