@@ -57,6 +57,12 @@ export declare class PewtError extends Error {
     readonly hint?: string;
     constructor(error: ApiError);
 }
+/** A refusal in words a screen can show: the message, and the hint on its
+ *  own line when the operation sent one. Extracted from the scaffolded
+ *  extensions, each of which had written exactly this — it lives here rather
+ *  than in a UI package because it is about this package's error shape, not
+ *  about how anything looks. */
+export declare function explain(e: unknown): string;
 /** The API surface, as an extension sees it.
  *
  *  It is written out rather than generated so an editor can complete it and

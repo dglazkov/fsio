@@ -27,6 +27,14 @@ export class PewtError extends Error {
             this.hint = error.hint;
     }
 }
+/** A refusal in words a screen can show: the message, and the hint on its
+ *  own line when the operation sent one. Extracted from the scaffolded
+ *  extensions, each of which had written exactly this — it lives here rather
+ *  than in a UI package because it is about this package's error shape, not
+ *  about how anything looks. */
+export function explain(e) {
+    return e instanceof PewtError ? e.message + (e.hint ? `\n${e.hint}` : "") : String(e);
+}
 /** Every method this package knows how to spell, in wire form. The host's
  *  table is the authority; this is the list that gets checked against it.
  *
