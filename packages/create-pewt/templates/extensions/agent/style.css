@@ -1,0 +1,64 @@
+:root { color-scheme: light dark; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column;
+  font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: light-dark(#f7f5f2, #16161a);
+  color: light-dark(#1b1b1f, #e8e6e3);
+}
+#status { margin: 0; padding: 0.5rem 1rem; font-size: 0.85rem; opacity: 0.75; white-space: pre-wrap; }
+#status button {
+  font: inherit; font-size: 0.8rem; margin-left: 0.6rem; padding: 0.1rem 0.6rem; cursor: pointer;
+  border-radius: 5px; border: 1px solid light-dark(#0003, #fff3);
+  background: transparent; color: inherit;
+}
+#picker { width: 100%; max-width: 40rem; margin: 0 auto; padding: 2.5rem 2rem; box-sizing: border-box; }
+#picker h1 { font-size: 1.6rem; margin: 0 0 0.2rem; }
+#note { margin: 0 0 1.6rem; opacity: 0.6; font-size: 0.85rem; white-space: pre-wrap; }
+#places { list-style: none; margin: 0; padding: 0; }
+#places li { border-bottom: 1px solid light-dark(#0001, #fff2); }
+#places li.hint { padding: 0.6rem 0.2rem; font-size: 0.85rem; opacity: 0.8; border-bottom: none; }
+#places button {
+  font: inherit; width: 100%; text-align: left; padding: 0.6rem 0.2rem; cursor: pointer;
+  border: none; background: transparent; color: inherit;
+}
+#places button:hover { background: light-dark(#0000000d, #ffffff0d); }
+#chat {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  width: 100%; max-width: 44rem; margin: 0 auto; padding: 0 1rem 1rem; box-sizing: border-box;
+}
+#who { margin: 0.6rem 0.2rem; font-size: 0.85rem; opacity: 0.6; }
+#log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.6rem; padding: 0.4rem 0.2rem; }
+.entry { white-space: pre-wrap; word-break: break-word; }
+.entry.user { align-self: flex-end; max-width: 85%; padding: 0.45rem 0.7rem; border-radius: 10px; background: light-dark(#e4e0da, #24242b); }
+.entry.thought { opacity: 0.55; font-size: 0.85rem; }
+.entry.note { opacity: 0.65; font-size: 0.85rem; }
+.entry.error { color: light-dark(#a3372e, #ff8f85); font-size: 0.9rem; }
+.entry.tool { font-size: 0.85rem; opacity: 0.85; padding: 0.35rem 0.6rem; border-left: 2px solid light-dark(#0003, #fff3); }
+.tool-status { margin-left: 0.6rem; opacity: 0.6; font-style: italic; }
+.tool-detail { opacity: 0.7; font-size: 0.8rem; white-space: pre-wrap; }
+.entry.permission { padding: 0.7rem 0.9rem; border: 1px solid light-dark(#0004, #fff4); border-radius: 8px; }
+.entry.permission p { margin: 0 0 0.4rem; }
+.entry.permission pre {
+  margin: 0 0 0.6rem; font-size: 0.8rem; white-space: pre-wrap;
+  opacity: 0.8; max-height: 10rem; overflow-y: auto;
+}
+.choices { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.choices button {
+  font: inherit; font-size: 0.85rem; padding: 0.25rem 0.8rem; cursor: pointer;
+  border-radius: 6px; border: 1px solid light-dark(#0004, #fff4);
+  background: light-dark(#fff, #222228); color: inherit;
+}
+.choices em { font-size: 0.85rem; opacity: 0.7; }
+#composer { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+#composer textarea {
+  flex: 1; min-width: 0; resize: none; font: inherit; padding: 0.45rem 0.6rem;
+  border-radius: 6px; border: 1px solid light-dark(#0003, #fff3);
+  background: transparent; color: inherit;
+}
+#composer button {
+  font: inherit; font-size: 0.85rem; padding: 0.35rem 0.9rem; cursor: pointer;
+  border-radius: 6px; border: 1px solid light-dark(#0004, #fff4);
+  background: light-dark(#fff, #222228); color: inherit; align-self: flex-end;
+}
+#composer button:disabled, #composer textarea:disabled { opacity: 0.5; cursor: default; }

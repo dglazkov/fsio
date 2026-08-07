@@ -1,0 +1,20 @@
+{
+  // The templates, compiled the way a pewter compiles them. These
+  // compilerOptions deliberately mirror the tsconfig.json that scaffold.ts
+  // writes — not tsconfig.base.json — because the point of the check is to
+  // see what `pewt check` and a pewter's editor will see. `pewter` resolves
+  // through the workspace symlink to the same dist/index.d.ts an installed
+  // pewter reads; the xterm pair are this package's devDependencies for the
+  // same reason.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["templates/extensions"]
+}

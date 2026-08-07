@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Projects</title>
+<link rel="stylesheet" href="./style.css" />
+<main>
+  <header>
+    <h1>Projects</h1>
+    <p id="note">asking the host…</p>
+  </header>
+  <ul id="list"></ul>
+  <section id="verbs">
+    <form id="create">
+      <input id="create-name" placeholder="a name" autocomplete="off" spellcheck="false" />
+      <button>New project</button>
+    </form>
+    <form id="clone">
+      <input id="clone-url" placeholder="https://… or git@… or a path" autocomplete="off" spellcheck="false" />
+      <button>Clone</button>
+    </form>
+  </section>
+  <p id="error" hidden></p>
+  <pre id="progress" hidden></pre>
+</main>
+<script type="module" src="./main.ts"></script>

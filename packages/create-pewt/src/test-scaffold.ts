@@ -73,6 +73,28 @@ test("both spellings name the directory node_modules will hold", () => {
   }
 });
 
+test("the extensions are the templates, byte for byte", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The whole arrangement: extensions are real files in this repository,
+  // and a pewter gets copies, not renderings. Nothing escaped, nothing
+  // interpolated — so what CI typechecks under templates/ is exactly what
+  // `pewt check` compiles in the pewter.
+  const templates = path.resolve(import.meta.dirname, "../templates");
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(path.join(templates, dir), { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${dir}/${entry.name}`);
+      else files.push(`${dir}/${entry.name}`);
+    }
+  };
+  walk("extensions");
+  assert.ok(files.length >= 10, `templates hold the extensions (${files.length} files)`);
+  for (const rel of files) {
+    assert.equal(read(root, rel), fs.readFileSync(path.join(templates, rel), "utf8"), `${rel} is a verbatim copy`);
+  }
+});
+
 test("it ships three extensions, in the shape the bundler compiles", () => {
   const root = path.join(into(), "p");
   scaffold({ root });
