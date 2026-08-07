@@ -11,16 +11,18 @@
 // One tab is one conversation with one agent. For a second one, open another
 // tab: `pewt tabs add agent`.
 import { pewt, args, explain, type Agent } from "pewter";
-// The shared look: tokens and base styles, an ordinary dependency of this
-// pewter — the same arrangement as an ACP adapter.
+// The shared look, an ordinary dependency of this pewter — the same
+// arrangement as an ACP adapter. The bare import registers the kit's
+// elements; the css import is the styles. Both queries below come back
+// typed because the kit's .d.ts names its tags, which is also how
+// `pewt check` knows what a <pewter-menu> can do.
+import "pewter-ui";
 import "pewter-ui/style.css";
 
-const status = document.getElementById("status")!;
-const said = document.getElementById("said")!;
-const again = document.getElementById("again") as HTMLButtonElement;
+const status = document.querySelector("pewter-status")!;
 const picker = document.getElementById("picker")!;
 const note = document.getElementById("note")!;
-const places = document.getElementById("places")!;
+const places = document.querySelector("pewter-menu")!;
 const chat = document.getElementById("chat")!;
 const who = document.getElementById("who")!;
 const log = document.getElementById("log")!;
@@ -291,33 +293,22 @@ let turning = false;
 async function offer(): Promise<void> {
   chat.hidden = true;
   picker.hidden = false;
-  places.replaceChildren();
   note.textContent = "asking the host…";
   try {
     const [{ agents }, { repos }] = await Promise.all([pewt.agents.list(), pewt.repos.list()]);
     const installed = agents.filter((a) => a.installed);
     if (installed.length === 0) {
       // Nothing to start. An adapter is an ordinary dependency, so the fix
-      // is a line you type, and the roster knows the lines.
+      // is a line you type, and the roster knows the lines — hints, not
+      // choices, because there is nothing to pick yet.
       note.textContent = "this pewter has no ACP adapter installed — an adapter is an ordinary dependency:";
-      for (const a of agents) {
-        const row = document.createElement("li");
-        row.className = "hint";
-        row.textContent = `${a.install} — ${a.asks ? "asks before it edits" : "edits with its own hands"}`;
-        places.append(row);
-      }
+      places.hints = agents.map((a) => `${a.install} — ${a.asks ? "asks before it edits" : "edits with its own hands"}`);
       return;
     }
     const first = installed[0]!;
     note.textContent = `${first.title}${first.version ? ` ${first.version}` : ""} — ${first.asks ? "asks before it edits" : "edits with its own hands"}. The host asks before it starts one.`;
-    for (const where of [null, ...repos.map((r) => r.name)]) {
-      const row = document.createElement("li");
-      const button = document.createElement("button");
-      button.textContent = where ?? "this pewter";
-      button.addEventListener("click", () => void open(where));
-      row.append(button);
-      places.append(row);
-    }
+    places.choices = [{ value: null, label: "this pewter" }, ...repos.map((r) => ({ value: r.name, label: r.name }))];
+    places.onpick = (where) => void open(where);
   } catch (e) {
     note.textContent = explain(e);
   }
@@ -327,7 +318,6 @@ async function offer(): Promise<void> {
 async function open(repo: string | null): Promise<void> {
   picker.hidden = true;
   chat.hidden = false;
-  again.hidden = true;
   log.replaceChildren();
   tools.clear();
   streaming = null;
@@ -335,7 +325,7 @@ async function open(repo: string | null): Promise<void> {
   who.textContent = "";
   say.disabled = true;
   send.disabled = true;
-  sayStatus("waiting — the host asks on its own terminal before it starts an agent");
+  status.say("waiting — the host asks on its own terminal before it starts an agent");
 
   let agent: Agent;
   const rpc = new Rpc((message) => agent.send(message));
@@ -344,7 +334,7 @@ async function open(repo: string | null): Promise<void> {
   } catch (e) {
     // A refusal is a normal ending: the human at the host's terminal said
     // no, or there is nothing to start. Back to the picker, under the reason.
-    sayStatus(explain(e));
+    status.say(explain(e));
     await offer();
     return;
   }
@@ -372,8 +362,11 @@ async function open(repo: string | null): Promise<void> {
     turn(false);
     say.disabled = true;
     send.disabled = true;
-    sayStatus(code === null ? "the agent ended without an exit code — a signal, or the host went away" : `the agent exited (${code})`);
-    again.hidden = false;
+    status.say(code === null ? "the agent ended without an exit code — a signal, or the host went away" : `the agent exited (${code})`);
+    status.offer("new conversation", () => {
+      current = null;
+      void offer();
+    });
   });
 
   try {
@@ -397,7 +390,7 @@ async function open(repo: string | null): Promise<void> {
     agent.close();
     return;
   }
-  status.hidden = true;
+  status.hide();
   say.disabled = false;
   send.disabled = false;
   say.focus();
@@ -447,16 +440,6 @@ say.addEventListener("keydown", (e) => {
 stop.addEventListener("click", () => {
   if (live) live.rpc.notify("session/cancel", { sessionId: live.sessionId });
 });
-again.addEventListener("click", () => {
-  again.hidden = true;
-  current = null;
-  void offer();
-});
-
-function sayStatus(text: string): void {
-  said.textContent = text;
-  status.hidden = false;
-}
 
 // Opened with `{repo}` — the repos row's agent verb — this screen skips its
 // picker and goes straight there. Opened bare, it offers the choice. Either

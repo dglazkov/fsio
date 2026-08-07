@@ -10,12 +10,6 @@ body {
   display: flex;
   flex-direction: column;
 }
-#places li.hint {
-  padding: 0.6rem 0.2rem;
-  font-size: 0.85rem;
-  opacity: 0.8;
-  border-bottom: none;
-}
 #chat {
   flex: 1;
   min-height: 0;

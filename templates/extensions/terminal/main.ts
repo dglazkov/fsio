@@ -12,16 +12,18 @@ import { pewt, args, explain } from "pewter";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-// The shared look: tokens and base styles, an ordinary dependency of this
-// pewter — the same arrangement as the emulator above.
+// The shared look, an ordinary dependency of this pewter — the same
+// arrangement as the emulator above. The bare import registers the kit's
+// elements; the css import is the styles. Both queries below come back
+// typed because the kit's .d.ts names its tags, which is also how
+// `pewt check` knows what a <pewter-menu> can do.
+import "pewter-ui";
 import "pewter-ui/style.css";
 
-const status = document.getElementById("status")!;
-const said = document.getElementById("said")!;
-const again = document.getElementById("again") as HTMLButtonElement;
+const status = document.querySelector("pewter-status")!;
 const picker = document.getElementById("picker")!;
 const note = document.getElementById("note")!;
-const places = document.getElementById("places")!;
+const places = document.querySelector("pewter-menu")!;
 const host = document.getElementById("term")!;
 
 /** xterm takes concrete colours, not custom properties, so the palette is
@@ -60,19 +62,12 @@ const THEME = {
 async function offer(): Promise<void> {
   host.hidden = true;
   picker.hidden = false;
-  places.replaceChildren();
   note.textContent = "asking the host…";
   try {
     const { repos } = await pewt.repos.list();
     note.textContent = "a shell is your own account on this machine — the host asks before it opens one";
-    for (const where of [null, ...repos.map((r) => r.name)]) {
-      const row = document.createElement("li");
-      const button = document.createElement("button");
-      button.textContent = where ?? "this pewter";
-      button.addEventListener("click", () => void open(where));
-      row.append(button);
-      places.append(row);
-    }
+    places.choices = [{ value: null, label: "this pewter" }, ...repos.map((r) => ({ value: r.name, label: r.name }))];
+    places.onpick = (where) => void open(where);
   } catch (e) {
     note.textContent = explain(e);
   }
@@ -83,7 +78,6 @@ async function offer(): Promise<void> {
 async function open(repo: string | null): Promise<void> {
   picker.hidden = true;
   host.hidden = false;
-  again.hidden = true;
   // The emulator first and fitted first, so the pty is born at the size the
   // tab actually has rather than resized into it a moment later.
   const term = new Terminal({
@@ -95,7 +89,7 @@ async function open(repo: string | null): Promise<void> {
   term.loadAddon(fit);
   term.open(host as HTMLElement);
   fit.fit();
-  say("waiting — the host asks on its own terminal before it opens a shell");
+  status.say("waiting — the host asks on its own terminal before it opens a shell");
   try {
     const shell = await pewt.shell({
       ...(repo ? { repo } : {}),
@@ -103,7 +97,7 @@ async function open(repo: string | null): Promise<void> {
       rows: term.rows,
       onData: (bytes) => term.write(bytes),
     });
-    status.hidden = true;
+    status.hide();
     term.onData((keys) => shell.write(keys));
     // The tab's size is the pty's size. A 0×0 box is skipped — a tab that is
     // not on screen has one, and the fit addon would propose garbage for it.
@@ -119,27 +113,20 @@ async function open(repo: string | null): Promise<void> {
     // What the shell printed before it ended is often the reason it ended,
     // so the terminal stays on screen — dead but readable — until you ask
     // for the next one.
-    say(code === null ? "the shell ended without an exit code — a signal, or the host went away" : `the shell ended — exit ${code}`);
-    again.hidden = false;
-    again.onclick = () => {
-      again.hidden = true;
+    status.say(code === null ? "the shell ended without an exit code — a signal, or the host went away" : `the shell ended — exit ${code}`);
+    status.offer("new shell", () => {
       term.dispose();
       void offer();
-    };
+    });
   } catch (e) {
     // A refusal is a normal ending: the human at the host's terminal said
     // no, or there is no host. It arrives in the operation's own words —
     // and a shell that never started leaves nothing on screen worth
     // keeping, so the picker comes straight back under the reason.
-    say(explain(e));
+    status.say(explain(e));
     term.dispose();
     await offer();
   }
-}
-
-function say(text: string): void {
-  said.textContent = text;
-  status.hidden = false;
 }
 
 // Opened with `{repo}` — the repos row's shell verb (#198) — this screen
