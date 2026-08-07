@@ -64,7 +64,17 @@ function scaffold(opts) {
     // `npm start` above finds; `pewter` is what an extension imports and
     // what typechecks it. Being declared is what makes them survive
     // `npm install` — see `Source` for the whole of that story.
-    dependencies: dependencies(root2, source2)
+    //
+    // The xterm pair is the terminal extension's emulator. NARRATIVE.md's
+    // claim is that nothing about the terminal is built into the shell —
+    // what draws it is an emulator you chose — and this is where the
+    // choosing happens: an ordinary dependency of your pewter, like an
+    // ACP adapter. `npm rm` both and put another in their place.
+    dependencies: {
+      "@xterm/addon-fit": "^0.10.0",
+      "@xterm/xterm": "^5.5.0",
+      ...dependencies(root2, source2)
+    }
   }, null, 2) + "\n");
   write("tsconfig.json", JSON.stringify({
     // Covers extensions/. Your editor and `pewt check` both use it, so
@@ -106,7 +116,9 @@ the channel between this machine and the Pewter page at once.
   \`pewt --help\` lists them.
 - Screens live in \`extensions/\`. One is a directory with an \`index.html\`
   and a \`main.ts\`; it imports \`pewter\` for the API and is bundled into a
-  single file when a tab opens it. There is no plugin API to learn.
+  single file when a tab opens it. There is no plugin API to learn. Two are
+  scaffolded: \`repos/\` is the first tab, and \`terminal/\` is a shell on
+  this machine \u2014 \`pewt tabs add terminal\` opens one.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
   clone <url>\` fetches one, and the Projects screen offers both.
@@ -387,6 +399,207 @@ cloneForm.addEventListener("submit", (e) => {
 });
 
 await refresh();
+`);
+  write("extensions/env.d.ts", `// Imported stylesheets are real to the build and unknown to the checker.
+//
+// The terminal extension writes \`import "@xterm/xterm/css/xterm.css"\`:
+// esbuild collects the CSS and the host inlines it into the tab's one file,
+// but tsc has no idea what importing a stylesheet means. This line tells
+// \`pewt check\` and your editor what the build already knows, for every
+// extension in this folder.
+declare module "*.css";
+`);
+  write("extensions/terminal/index.html", `<!doctype html>
+<meta charset="utf-8" />
+<title>Terminal</title>
+<link rel="stylesheet" href="./style.css" />
+<p id="status" hidden><span id="said"></span><button id="again" hidden>new shell</button></p>
+<section id="picker">
+  <h1>Terminal</h1>
+  <p id="note">asking the host\u2026</p>
+  <ul id="places"></ul>
+</section>
+<div id="term" hidden></div>
+<script type="module" src="./main.ts"></script>
+`);
+  write("extensions/terminal/style.css", `:root { color-scheme: light dark; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column;
+  font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: light-dark(#f7f5f2, #16161a);
+  color: light-dark(#1b1b1f, #e8e6e3);
+}
+#status { margin: 0; padding: 0.5rem 1rem; font-size: 0.85rem; opacity: 0.75; white-space: pre-wrap; }
+#status button {
+  font: inherit; font-size: 0.8rem; margin-left: 0.6rem; padding: 0.1rem 0.6rem; cursor: pointer;
+  border-radius: 5px; border: 1px solid light-dark(#0003, #fff3);
+  background: transparent; color: inherit;
+}
+#picker { width: 100%; max-width: 40rem; margin: 0 auto; padding: 2.5rem 2rem; box-sizing: border-box; }
+#picker h1 { font-size: 1.6rem; margin: 0 0 0.2rem; }
+#note { margin: 0 0 1.6rem; opacity: 0.6; font-size: 0.85rem; }
+#places { list-style: none; margin: 0; padding: 0; }
+#places li { border-bottom: 1px solid light-dark(#0001, #fff2); }
+#places button {
+  font: inherit; width: 100%; text-align: left; padding: 0.6rem 0.2rem; cursor: pointer;
+  border: none; background: transparent; color: inherit;
+}
+#places button:hover { background: light-dark(#0000000d, #ffffff0d); }
+/* The terminal takes everything under the status line, on the same slab the
+   theme in main.ts is set against \u2014 it does not invert with the page,
+   because a terminal that flips colours under running output is worse than
+   one that commits. The padding goes on .xterm rather than on this box: the
+   fit addon measures the box and reads the padding off .xterm itself, so
+   this is the arrangement it sizes correctly. */
+#term { flex: 1; min-height: 0; background: #17191c; }
+#term .xterm { padding: 0.65rem 0.8rem; }
+`);
+  write("extensions/terminal/main.ts", `// A shell on this machine, in a tab.
+//
+// What \`pewt.shell()\` hands over is live and raw: the pty's own bytes,
+// escape sequences included, with keystrokes and window sizes going back the
+// other way. The host holds no opinion about what draws them \u2014 the emulator
+// here is xterm, an ordinary dependency of this pewter, and swapping it for
+// another touches nothing outside this directory.
+//
+// One tab is one shell. For a second one, open another tab:
+// \`pewt tabs add terminal\`.
+import { pewt, PewtError } from "pewter";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+
+const status = document.getElementById("status")!;
+const said = document.getElementById("said")!;
+const again = document.getElementById("again") as HTMLButtonElement;
+const picker = document.getElementById("picker")!;
+const note = document.getElementById("note")!;
+const places = document.getElementById("places")!;
+const host = document.getElementById("term")!;
+
+/** xterm takes concrete colours, not custom properties, so the palette is
+ *  spelled out \u2014 and it is yours: this file is in your pewter. The sixteen
+ *  ANSI colours are muted rather than the VGA defaults, which arrive as
+ *  saturated primaries the moment anything colours its output. */
+const THEME = {
+  background: "#17191c",
+  foreground: "#d6dbdf",
+  cursor: "#d6dbdf",
+  cursorAccent: "#17191c",
+  selectionBackground: "#3f6f7859",
+
+  black: "#1f2328",
+  red: "#c97d79",
+  green: "#93b899",
+  yellow: "#dcba76",
+  blue: "#8098ab",
+  magenta: "#b294bb",
+  cyan: "#8fbfc7",
+  white: "#d6dbdf",
+
+  brightBlack: "#5b656d",
+  brightRed: "#e79a96",
+  brightGreen: "#aecfb3",
+  brightYellow: "#ecd49b",
+  brightBlue: "#a2b6c6",
+  brightMagenta: "#c9aed1",
+  brightCyan: "#aed6dc",
+  brightWhite: "#eceff1",
+};
+
+/** Where a shell can start: the pewter itself, or a project under \`repos/\`.
+ *  Asked fresh every time the picker shows, so a project cloned since the
+ *  last shell is on the list. */
+async function offer(): Promise<void> {
+  host.hidden = true;
+  picker.hidden = false;
+  places.replaceChildren();
+  note.textContent = "asking the host\u2026";
+  try {
+    const { repos } = await pewt.repos.list();
+    note.textContent = "a shell is your own account on this machine \u2014 the host asks before it opens one";
+    for (const where of [null, ...repos.map((r) => r.name)]) {
+      const row = document.createElement("li");
+      const button = document.createElement("button");
+      button.textContent = where ?? "this pewter";
+      button.addEventListener("click", () => void open(where));
+      row.append(button);
+      places.append(row);
+    }
+  } catch (e) {
+    note.textContent = words(e);
+  }
+}
+
+/** One shell, for as long as it runs. The tab is the terminal while it does,
+ *  and the picker comes back when it ends, under the code it ended on. */
+async function open(repo: string | null): Promise<void> {
+  picker.hidden = true;
+  host.hidden = false;
+  again.hidden = true;
+  // The emulator first and fitted first, so the pty is born at the size the
+  // tab actually has rather than resized into it a moment later.
+  const term = new Terminal({
+    fontSize: 13,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    theme: THEME,
+  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  term.open(host as HTMLElement);
+  fit.fit();
+  say("waiting \u2014 the host asks on its own terminal before it opens a shell");
+  try {
+    const shell = await pewt.shell({
+      ...(repo ? { repo } : {}),
+      cols: term.cols,
+      rows: term.rows,
+      onData: (bytes) => term.write(bytes),
+    });
+    status.hidden = true;
+    term.onData((keys) => shell.write(keys));
+    // The tab's size is the pty's size. A 0\xD70 box is skipped \u2014 a tab that is
+    // not on screen has one, and the fit addon would propose garbage for it.
+    const watch = new ResizeObserver(() => {
+      if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
+      fit.fit();
+      shell.resize(term.cols, term.rows);
+    });
+    watch.observe(host);
+    term.focus();
+    const code = await shell.exit;
+    watch.disconnect();
+    // What the shell printed before it ended is often the reason it ended,
+    // so the terminal stays on screen \u2014 dead but readable \u2014 until you ask
+    // for the next one.
+    say(code === null ? "the shell ended without an exit code \u2014 a signal, or the host went away" : \`the shell ended \u2014 exit \${code}\`);
+    again.hidden = false;
+    again.onclick = () => {
+      again.hidden = true;
+      term.dispose();
+      void offer();
+    };
+  } catch (e) {
+    // A refusal is a normal ending: the human at the host's terminal said
+    // no, or there is no host. It arrives in the operation's own words \u2014
+    // and a shell that never started leaves nothing on screen worth
+    // keeping, so the picker comes straight back under the reason.
+    say(words(e));
+    term.dispose();
+    await offer();
+  }
+}
+
+function say(text: string): void {
+  said.textContent = text;
+  status.hidden = false;
+}
+
+const words = (e: unknown): string =>
+  e instanceof PewtError ? e.message + (e.hint ? \`\\n\${e.hint}\` : "") : String(e);
+
+await offer();
 `);
   fs.mkdirSync(path.join(root2, "repos"), { recursive: true });
   return written2;

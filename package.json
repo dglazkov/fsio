@@ -1,6 +1,6 @@
 {
   "name": "create-pewt",
-  "version": "0.0.0-96c23de84121",
+  "version": "0.0.0-e0441ae7a1f7",
   "description": "Make a pewter: the folder that is a git repository, an npm project, and the channel at once",
   "license": "MIT",
   "repository": "github:dglazkov/fsio",
