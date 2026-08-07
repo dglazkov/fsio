@@ -45,10 +45,16 @@ import { log, reporter } from "./reporter";
 export function mount(html: string, name: string): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   // No `allow-same-origin`. Everything else an extension might want —
-  // forms, popups, top-level navigation — is absent for the same reason:
-  // this list is what an extension has, so it starts at the minimum and
-  // grows only when something real needs it.
-  frame.setAttribute("sandbox", "allow-scripts");
+  // popups, top-level navigation — is absent for the same reason: this list
+  // is what an extension has, so it starts at the minimum and grows only
+  // when something real needs it.
+  //
+  // `allow-forms` is the first growth, needed by the first real extension
+  // (#189's repos screen): without it Chrome blocks submission *before* the
+  // submit event fires, so a handler's preventDefault never runs and every
+  // `<form>` is silently dead. What the flag permits is the submission a
+  // handler then cancels; the frame still has no origin and no storage.
+  frame.setAttribute("sandbox", "allow-scripts allow-forms");
   frame.setAttribute("title", `${name} (extension)`);
   frame.srcdoc = html;
 

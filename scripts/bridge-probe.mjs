@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -77,6 +77,18 @@ const clone = await pewt.repos.clone("https://example.test/things/atlas3.git", {
   onOutput: (line) => cprog.append(line + "\\n"),
 });
 document.getElementById("cloned")!.textContent = \`\${made.repo.name} · clone exit \${clone.exitCode}\`;
+
+// A form, because the scaffolded extension is made of them. Without
+// allow-forms Chrome blocks submission BEFORE the submit event fires, so a
+// handler's preventDefault never runs and every form is silently dead —
+// found by a human in the first minutes of using the real screen (#189).
+// requestSubmit() walks the same path a click on the button does.
+const form = document.getElementById("form") as HTMLFormElement;
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  document.getElementById("formed")!.textContent = "submit handled";
+});
+form.requestSubmit();
 
 const term = document.getElementById("term")!;
 const shell = await pewt.shell({ repo: "site", onData: (chunk) => term.append(chunk) });
@@ -133,7 +145,7 @@ const PARENT = `<!doctype html>
   window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [] };
 
   const frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("sandbox", "allow-scripts allow-forms");
   frame.srcdoc = html;
 
   addEventListener("message", (event) => {
@@ -267,6 +279,7 @@ let streamed = "";
 let code = "";
 let cloned = "";
 let cprog = "";
+let formed = "";
 let terminal = "";
 let left = "";
 let acp = "";
@@ -289,6 +302,7 @@ try {
   code = await frame.locator("#code").textContent();
   cloned = await frame.locator("#cloned").textContent();
   cprog = await frame.locator("#cprog").textContent();
+  formed = await frame.locator("#formed").textContent();
   terminal = await frame.locator("#term").textContent();
   left = await frame.locator("#left").textContent();
   acp = await frame.locator("#acp").textContent();
@@ -311,6 +325,7 @@ const checks = [
   ["an extension created a project and cloned one over the same channel", result.calls.includes("repos.create") && result.calls.includes("repos.clone")],
   ["the clone's progress streamed while git worked", cprog === "Cloning into 'atlas3'...\nReceiving objects: 100%, done.\n"],
   ["and both answers came back typed", cloned === "atlas2 · clone exit 0"],
+  ["a form submits to its own handler — the sandbox allows forms and the handler cancels the rest", formed === "submit handled"],
   ["an extension held a live shell, and what it printed first was not lost", terminal.startsWith("$ ")],
   ["keystrokes left the sandbox after the call was made", JSON.stringify(result.typed) === JSON.stringify(["exit 0\n"])],
   ["so did a window size", JSON.stringify(result.sized) === JSON.stringify({ cols: 100, rows: 30 })],
