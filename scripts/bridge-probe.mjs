@@ -239,7 +239,7 @@ const PARENT = `<!doctype html>
         post({ ok: true, result: { exitCode: 0 } });
         return;
       }
-      post({ ok: true, result: { repos: [{ name: "atlas", git: false, branch: null, scripts: [] }, { name: "site", git: true, branch: "main", scripts: ["build"] }] } });
+      post({ ok: true, result: { repos: [{ name: "atlas", git: false, branch: null, scripts: [], installed: null }, { name: "site", git: true, branch: "main", scripts: ["build"], installed: true }] } });
     };
     channel.port1.start();
     // The version comes from the package rather than a literal: a stand-in

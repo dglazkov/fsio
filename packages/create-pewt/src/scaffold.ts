@@ -247,6 +247,7 @@ li .verbs button {
   background: transparent; color: inherit;
 }
 li .verbs button:disabled { opacity: 0.5; cursor: default; }
+li .verbs button.install { border-style: dashed; }
 .empty { opacity: 0.7; }
 #verbs { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.6rem; }
 #verbs form { display: flex; gap: 0.4rem; flex: 1; min-width: 14rem; }
@@ -315,10 +316,19 @@ async function refresh(): Promise<void> {
     // The row's verbs: this project's own scripts, each one click from
     // running. The set is the project's package.json, not anything this
     // screen invents — an extension cannot make a script runnable by
-    // drawing a button for it.
-    if (repo.scripts.length > 0) {
+    // drawing a button for it. \`install\` leads when node_modules is
+    // missing (every fresh clone), because the scripts will not run
+    // without it — and unlike clone, install is asked about (#193).
+    if (repo.scripts.length > 0 || repo.installed === false) {
       const verbs = document.createElement("span");
       verbs.className = "verbs";
+      if (repo.installed === false) {
+        const install = document.createElement("button");
+        install.className = "install";
+        install.textContent = "install";
+        install.addEventListener("click", () => installRepo(repo.name));
+        verbs.append(install);
+      }
       for (const script of repo.scripts) {
         const verb = document.createElement("button");
         verb.textContent = script;
@@ -334,6 +344,36 @@ async function refresh(): Promise<void> {
     }
     list.append(row);
   }
+}
+
+/** \`npm install\`, asked first: it runs lifecycle scripts, which makes it
+ *  the first execution of what a clone fetched. The question rides the run
+ *  rung, so \`--allow-runs\` or a standing \`run/<project>\` grant covers it. */
+function installRepo(repo: string): void {
+  error.hidden = true;
+  progress.textContent = \`npm install — in \${repo}\\n\`;
+  progress.hidden = false;
+  busy(true);
+  const waiting = setTimeout(() => {
+    progress.append("(waiting — the host asks on its own terminal before it starts anything)\\n");
+  }, 1200);
+  pewt.repos
+    .install(repo, {
+      onOutput: (line) => {
+        clearTimeout(waiting);
+        progress.append(line + "\\n");
+        progress.scrollTop = progress.scrollHeight;
+      },
+    })
+    .then(async ({ exitCode }) => {
+      progress.append(\`\\nexit \${exitCode ?? "?"}\\n\`);
+      if (exitCode === 0) await refresh();
+    })
+    .catch(complain)
+    .finally(() => {
+      clearTimeout(waiting);
+      busy(false);
+    });
 }
 
 /** Run one script, output streaming into the shared pane. The host asks a
