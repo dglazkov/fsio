@@ -33,7 +33,7 @@ export class PewtError extends Error {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export const METHODS = ["repos.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS];
+export const METHODS = ["repos.list", "repos.create", "repos.clone", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS];
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
 export class Channel {
@@ -130,6 +130,21 @@ export function apiFor(channel) {
     return {
         repos: {
             list: () => channel.call("repos.list"),
+            create: (params) => channel.call("repos.create", params),
+            // A clone is `run`'s shape with a different child: the call stays open
+            // while git works, its output arrives as events on the same id, and the
+            // answer is the exit code.
+            clone: (url, options = {}) => {
+                const { onOutput } = options;
+                return channel.call("repos.clone", { url, ...(options.name !== undefined ? { name: options.name } : {}) }, onOutput &&
+                    ((event) => {
+                        const line = event;
+                        if (typeof line.o === "string")
+                            onOutput(line.o, "out");
+                        else if (typeof line.e === "string")
+                            onOutput(line.e, "err");
+                    }));
+            },
         },
         ext: {
             bundle: (params) => channel.call("ext.bundle", params),
