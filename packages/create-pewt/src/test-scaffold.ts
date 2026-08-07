@@ -108,7 +108,7 @@ test("it ships three extensions, in the shape the bundler compiles", () => {
   // it reached for anything private, "there are no built-ins" would be a
   // claim rather than a demonstration.
   const main = read(root, "extensions/repos/main.ts");
-  assert.match(main, /import \{ explain, pewt \} from "pewter"/);
+  assert.match(main, /import \{ explain, pewt, type Project \} from "pewter"/);
   assert.match(main, /pewt\.repos\.list\(\)/);
 });
 
@@ -121,16 +121,26 @@ test("the shared look is pewter-ui, and every screen imports it", () => {
   for (const ext of ["repos", "terminal", "agent"]) {
     assert.match(read(root, `extensions/${ext}/main.ts`), /import "pewter-ui\/style\.css"/, `${ext} imports the shared look`);
   }
-  // The kit's typed elements, on the two screens that have a status line and
-  // a picker. The bare import registers them; the tags in the markup are
-  // what HTMLElementTagNameMap makes typed — which is the discovery rail:
-  // `pewt check` and an editor both know what these elements can do.
-  for (const ext of ["terminal", "agent"]) {
-    assert.match(read(root, `extensions/${ext}/main.ts`), /import "pewter-ui";/, `${ext} registers the elements`);
-    assert.match(read(root, `extensions/${ext}/main.ts`), /document\.querySelector\("pewter-menu"\)/, `${ext} queries the menu by tag`);
-    assert.match(read(root, `extensions/${ext}/index.html`), /<pewter-status hidden><\/pewter-status>/, `${ext} has the status line`);
-    assert.match(read(root, `extensions/${ext}/index.html`), /<pewter-menu><\/pewter-menu>/, `${ext} has the menu`);
+  // Two shapes of screen, both on the same kit. `repos` and `terminal` are
+  // lit templates over signals, drawn by the kit's `screen()`; `agent` still
+  // holds its transcript by hand and drives the same elements through their
+  // methods. Importing anything from the package registers the elements, so
+  // both shapes get the tags — and it is HTMLElementTagNameMap that makes
+  // them typed, which is the discovery rail `pewt check` and an editor read.
+  for (const ext of ["repos", "terminal"]) {
+    assert.match(read(root, `extensions/${ext}/main.ts`), /import \{ screen \} from "pewter-ui"/, `${ext} draws with the kit's screen`);
+    assert.match(read(root, `extensions/${ext}/main.ts`), /from "@lit-labs\/signals"/, `${ext} holds its state in signals`);
+    assert.match(read(root, `extensions/${ext}/main.ts`), /from "lit"/, `${ext} describes itself as a template`);
   }
+  const terminal = read(root, "extensions/terminal/main.ts");
+  assert.match(terminal, /<pewter-status/, "the terminal's status line is the kit's");
+  assert.match(terminal, /<pewter-menu \.choices=/, "the terminal's picker is the kit's menu");
+  // The agent, unconverted: the same two elements, driven the imperative way.
+  const agent = read(root, "extensions/agent/main.ts");
+  assert.match(agent, /import "pewter-ui";/, "agent registers the elements");
+  assert.match(agent, /document\.querySelector\("pewter-menu"\)/, "agent queries the menu by tag");
+  assert.match(read(root, "extensions/agent/index.html"), /<pewter-status hidden><\/pewter-status>/);
+  assert.match(read(root, "extensions/agent/index.html"), /<pewter-menu><\/pewter-menu>/);
 });
 
 test("the terminal's emulator is the pewter's own dependency, not the shell's", () => {
@@ -159,7 +169,9 @@ test("the repos rows and the terminal agree about the shell verb (#198)", () => 
   // reads it and skips its picker. The page between them carries it unread,
   // so this agreement — the whole contract — lives in these two files.
   const repos = read(root, "extensions/repos/main.ts");
-  assert.match(repos, /pewt\.tabs\.add\(\{ name: "terminal", title: repo, args: \{ repo \} \}\)/);
+  // One call for both verbs, each row naming which extension it opens.
+  assert.match(repos, /pewt\.tabs\.add\(\{ name, title: repo, args: \{ repo \} \}\)/);
+  assert.match(repos, /openTab\("terminal", repo\.name\)/);
   const terminal = read(root, "extensions/terminal/main.ts");
   assert.match(terminal, /import \{ pewt, args, explain \} from "pewter"/);
   assert.match(terminal, /await args/);
@@ -180,7 +192,7 @@ test("the agent tab is the ACP client, and the repos rows know how to open it", 
   assert.match(agent, /info\.cwd/);
   // The same argument arrangement the shell verb uses (#198): the row sends
   // `{repo}`, the agent screen reads it and skips its picker.
-  assert.match(read(root, "extensions/repos/main.ts"), /pewt\.tabs\.add\(\{ name: "agent", title: repo, args: \{ repo \} \}\)/);
+  assert.match(read(root, "extensions/repos/main.ts"), /openTab\("agent", repo\.name\)/);
   assert.match(agent, /await args/);
 });
 

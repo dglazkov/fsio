@@ -34,15 +34,20 @@ const log = (...a) => console.log("[bridge-probe]", ...a);
 // about the browser half.
 const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "bridge-probe-"));
 fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "probe", pewter: {} }));
-fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
-fs.symlinkSync(path.join(repo, "packages/pewter"), path.join(root, "node_modules/pewter"), "dir");
-fs.symlinkSync(path.join(repo, "packages/pewter-ui"), path.join(root, "node_modules/pewter-ui"), "dir");
+// One node_modules, the repository's own — which already holds `pewter` and
+// `pewter-ui` as workspace links, plus lit and the signals graph the kit
+// declares as peers. Handing over the whole directory rather than a chosen
+// few is what makes this a pewter with one copy of everything, the way npm
+// would install one: a bundle with two copies of lit in it renders once and
+// then silently stops (bundle.ts, `preserveSymlinks`), so the closure is not
+// something this probe should be curating by hand.
+fs.symlinkSync(path.join(repo, "node_modules"), path.join(root, "node_modules"), "dir");
 
 const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -59,7 +64,9 @@ fs.writeFileSync(
 fs.writeFileSync(
   path.join(ext, "main.ts"),
   `import { pewt, args } from "pewter";
-import "pewter-ui";
+import { html } from "lit";
+import { signal } from "@lit-labs/signals";
+import { screen } from "pewter-ui";
 import "pewter-ui/style.css";
 const { repos } = await pewt.repos.list();
 document.getElementById("out")!.textContent = repos.map((r) => r.name).join(", ");
@@ -137,31 +144,52 @@ document.getElementById("granted")!.textContent = grants.map((g) => \`\${g.kind}
 // settled — awaiting it last is the lazy option, not a race.
 document.getElementById("opened")!.textContent = JSON.stringify(await args);
 
-// The kit's elements, in the same sandbox: registered by the bare import's
-// side effect, rendered as light DOM, and driven by a real click. The tag
-// map makes both createElement calls typed — misuse here is a compile error
-// in a pewter, though this probe's own compiler is esbuild and only the
-// runtime half is under test.
+// The kit's elements, in the same sandbox: registered by the import's side
+// effect, rendered into their own shadow roots, and driven by a real click.
+// The tag map makes both createElement calls typed — misuse here is a
+// compile error in a pewter, though this probe's own compiler is esbuild and
+// only the runtime half is under test.
+//
+// These are lit components, so a draw is a microtask after the property
+// that caused it and \`updateComplete\` is what waits for it. That is the
+// difference this probe is really pinning: a screen that sets a property and
+// reads the DOM on the next line reads the DOM it had before.
 const menu = document.createElement("pewter-menu");
+document.body.append(menu);
 menu.choices = [{ value: "site", label: "site" }, { value: null, label: "this pewter" }];
 menu.onpick = (v) => { document.getElementById("picked")!.textContent = \`picked \${v}\`; };
-document.body.append(menu);
-menu.querySelector("button")!.click();
+await menu.updateComplete;
+menu.shadowRoot!.querySelector("button")!.click();
 
 const status = document.createElement("pewter-status");
 document.body.append(status);
 status.say("kit status");
 status.offer("again", () => status.say("kit acted"));
-status.querySelector("button")!.click();
+await status.updateComplete;
+status.shadowRoot!.querySelector("button")!.click();
+await status.updateComplete;
 
 // A hidden element must stay hidden. The kit styles its elements as block
-// boxes, and an author rule outranks the UA stylesheet's [hidden] — the
-// exact bug a human found on the first screen — so the guard rule is pinned
-// here, where the kit's real CSS is in the page.
+// boxes and an author rule outranks the UA stylesheet's [hidden] — the exact
+// bug a human found on the first screen — so the guard rule is pinned here.
+// It lives in the component's own styles now rather than in the stylesheet,
+// which is what this check is worth: the element is hidden because of what
+// it carries, not because of what the page imported.
 const quiet = document.createElement("pewter-status");
 quiet.id = "quiet";
 quiet.hidden = true;
 document.body.append(quiet);
+await quiet.updateComplete;
+
+// The screen helper, in the same sandbox: a signal written, and the DOM
+// caught up by the time \`drawn()\` resolves. This is the loop every
+// scaffolded screen now runs on.
+const drawnInto = document.getElementById("drawn")!;
+const beat = signal("first");
+const drawing = screen(drawnInto, () => html\`<b>\${beat.get()}</b>\`);
+beat.set("second");
+await drawing.drawn();
+drawnInto.setAttribute("data-drew", drawnInto.textContent ?? "");
 
 document.title = "answered";
 `
@@ -331,6 +359,7 @@ let opened = "";
 let agentinfo = "";
 let picked = "";
 let kitsaid = "";
+let kitdrew = "";
 let quietDisplay = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
@@ -359,6 +388,7 @@ try {
   opened = await frame.locator("#opened").textContent();
   picked = await frame.locator("#picked").textContent();
   kitsaid = await frame.locator("pewter-status span").first().textContent();
+  kitdrew = await frame.locator("#drawn").getAttribute("data-drew");
   quietDisplay = await frame.locator("#quiet").evaluate((el) => getComputedStyle(el).display);
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
@@ -393,6 +423,7 @@ const checks = [
   ["the kit's menu rendered in the sandbox, and a click came back through onpick", picked === "picked site"],
   ["the kit's status line spoke, offered, and acted", kitsaid === "kit acted"],
   ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
+  ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
   ["nothing threw in the page", errors.length === 0],
 ];
 

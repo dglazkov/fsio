@@ -106,6 +106,27 @@ export async function bundleExtension(p: Pewter, name: string): Promise<Bundle> 
     // property of the source, so two people with the same pewter get the
     // same bundle.
     absWorkingDir: p.root,
+    // Resolve through a linked package as if it lived where it is linked.
+    //
+    // A pewter's own `node_modules` is the one copy of anything. That is
+    // free when every package came from npm, and it stops being free the
+    // moment one of them is a `file:` link into a checkout — `create-pewt
+    // --link`, which is how this repository is worked on. esbuild follows a
+    // symlink to its real path by default, so `pewter-ui`'s own `import
+    // "lit"` would resolve out of the *checkout's* node_modules while the
+    // extension beside it resolves out of the *pewter's*: two copies of lit
+    // and two of the signals graph in one bundle.
+    //
+    // Two copies is not a size problem, it is a silence problem. A signal
+    // written through one graph is not read by a computed in the other, so
+    // the screen renders once and then never again — no error, nothing in
+    // the console, just a page that stopped. Measured, not feared.
+    //
+    // Keeping the symlink path makes resolution walk up from where the
+    // package is *installed*, which is what a peer dependency means. It
+    // changes nothing for a pewter whose packages all came from npm: there
+    // are no symlinks in that tree to preserve.
+    preserveSymlinks: true,
     // The page is Chromium-only anyway — it needs the File System Access API
     // to exist at all — so there is nothing to transpile down to.
     target: "es2022",
@@ -151,7 +172,9 @@ async function inlineLinks(html: string, dir: string): Promise<string> {
     if (rel.startsWith("/") || rel.split("/").includes("..")) continue;
     const text = await fs.readFile(path.join(dir, rel), "utf8").catch(() => null);
     if (text === null) continue; // missing: esbuild-style silence is worse, but a build failure over a stylesheet is worse still
-    out = out.replace(tag, `<style>\n${text}\n</style>`);
+    // A function, not a string — see `inline()` below for what a string
+    // replacement does to somebody else's source.
+    out = out.replace(tag, () => `<style>\n${text}\n</style>`);
   }
   return out;
 }
@@ -163,12 +186,26 @@ async function inlineLinks(html: string, dir: string): Promise<string> {
  *  it — and so the same index.html stays loadable by a dev server later
  *  (#164: a development harness is not built, and this keeps the door open).
  *  An extension whose HTML has no such tag gets the script before `</body>`,
- *  which is where it would have gone anyway. */
+ *  which is where it would have gone anyway.
+ *
+ *  **The replacements are functions, not strings, and that is load-bearing.**
+ *  `String.replace` reads `$&`, `` $` ``, `$'`, `$$` and `$<name>` out of a
+ *  replacement *string* and substitutes pieces of the match for them — so
+ *  handing it a compiled bundle rewrites whatever in that bundle happens to
+ *  look like one. It is not a hypothetical: lit-html builds its marker as
+ *
+ *      const o = `lit$${Math.random().toFixed(9).slice(2)}$`;
+ *
+ *  and through a string replacement that arrives as `` lit$…<the whole page
+ *  before the script tag> `` — a syntax error a hundred lines into somebody
+ *  else's library, in a file nobody wrote, and an extension frame that comes
+ *  up blank. A replacer function is handed the text verbatim and reads
+ *  nothing out of it. */
 export function inline(html: string, js: string, css: string): string {
   const style = css.trim() ? `<style>\n${css}\n</style>\n` : "";
   const script = `<script type="module">\n${escapeScript(js)}\n</script>`;
   const tag = /<script\b[^>]*\bsrc\s*=\s*["']\.?\/?main\.(ts|js)["'][^>]*>\s*<\/script>/i;
-  const withScript = tag.test(html) ? html.replace(tag, script) : insertBefore(html, "</body>", script);
+  const withScript = tag.test(html) ? html.replace(tag, () => script) : insertBefore(html, "</body>", script);
   return style ? insertBefore(withScript, "</head>", style) : withScript;
 }
 

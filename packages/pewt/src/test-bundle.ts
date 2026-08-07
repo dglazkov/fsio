@@ -139,6 +139,66 @@ test("a </script> inside the bundle cannot end the tag early", () => {
   assert.equal(html.match(/<\/script>/g)?.length, 1);
 });
 
+test("a linked package resolves its peers out of the pewter, not out of its own checkout", async () => {
+  // `create-pewt --link` installs `pewter-ui` as a symlink into a checkout of
+  // this repository, and the checkout has its own node_modules. Followed to
+  // its real path, the kit's own `import "lit"` lands there — so one bundle
+  // carries the pewter's lit *and* the checkout's, the extension writes a
+  // signal through one graph and the kit reads it through the other, and the
+  // screen renders once and then silently never again.
+  //
+  // Stood up here with two copies of one package that say different things,
+  // because "which copy did we get" is the whole question and a byte count
+  // cannot answer it.
+  const p = pewter();
+  const elsewhere = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pewt-checkout-"));
+  const shared = (root: string, says: string): void => {
+    const dir = path.join(root, "node_modules", "shared");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "shared", version: "1.0.0", main: "index.js" }));
+    fs.writeFileSync(path.join(dir, "index.js"), `export const says = ${JSON.stringify(says)};\n`);
+  };
+  // The kit, living in the checkout, declaring `shared` as a peer.
+  const kit = path.join(elsewhere, "kit");
+  fs.mkdirSync(kit, { recursive: true });
+  fs.writeFileSync(path.join(kit, "package.json"), JSON.stringify({ name: "kit", version: "1.0.0", type: "module", main: "index.js", peerDependencies: { shared: "*" } }));
+  fs.writeFileSync(path.join(kit, "index.js"), `import { says } from "shared";\nexport const fromTheKit = says;\n`);
+  shared(elsewhere, "the checkout's");
+  // The pewter: its own copy of `shared`, and the kit as npm links it.
+  shared(p.root, "the pewter's");
+  fs.symlinkSync(kit, path.join(p.root, "node_modules", "kit"), "dir");
+
+  extension(p, "linked", `import { fromTheKit } from "kit";\nimport { says } from "shared";\ndocument.title = fromTheKit + says;\n`);
+  const html = fs.readFileSync(path.join(p.root, (await bundleExtension(p, "linked")).path), "utf8");
+  assert.doesNotMatch(html, /the checkout's/, "the kit read its peer out of the checkout — two copies in one bundle");
+  // And exactly one copy of the one that is right.
+  assert.equal(html.match(/the pewter's/g)?.length, 1);
+});
+
+test("a bundle that looks like a replacement pattern is inlined verbatim", () => {
+  // lit-html's marker, which is the real source of this: the whole line
+  // arrives through `inline` and every `$`-sequence in it has to survive.
+  // Through a replacement *string*, `$$` collapses and `` $` `` becomes the
+  // page before the script tag — a syntax error in somebody else's library.
+  const js = "const o = `lit$${Math.random()}$`; const p = \"$& $' $<x>\";";
+  const html = inline('<body><p id="drawn"></p><script type="module" src="./main.ts"></script></body>', js, "");
+  assert.match(html, /const o = `lit\$\$\{Math\.random\(\)\}\$`;/);
+  assert.match(html, /\$& \$' \$<x>/);
+});
+
+test("a stylesheet that looks like a replacement pattern is inlined verbatim too", async () => {
+  const p = pewter();
+  extension(p, "dollared");
+  const dir = path.join(p.extensions, "dollared");
+  fs.writeFileSync(path.join(dir, "style.css"), "b::after { content: '$& $`'; }\n");
+  fs.writeFileSync(
+    path.join(dir, "index.html"),
+    `<link rel="stylesheet" href="./style.css" />\n<body><script type="module" src="./main.ts"></script></body>\n`
+  );
+  const html = fs.readFileSync(path.join(p.root, (await bundleExtension(p, "dollared")).path), "utf8");
+  assert.match(html, /content: '\$& \$`';/);
+});
+
 test("CSS is inlined into the head", () => {
   const html = inline("<head><title>t</title></head><body></body>", "1;", "body { color: red }");
   assert.match(html, /<style>[\s\S]*color: red[\s\S]*<\/style>\s*<\/head>/);
