@@ -146,7 +146,7 @@ async function serve(data: unknown, port: MessagePort, name: string, live: Map<n
     const result =
       PAGE_METHODS.includes(call.method as (typeof PAGE_METHODS)[number])
         ? await answerHere(call.method, call.params)
-        : call.method === "run" || call.method === "repos.clone"
+        : call.method === "run" || call.method === "repos.clone" || call.method === "repos.install"
         ? await runOnHost(
             call.params as Record<string, unknown>,
             (line, stream) => port.postMessage(event(call.id, stream === "out" ? { o: line } : { e: line })),

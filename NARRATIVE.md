@@ -443,7 +443,7 @@ there is nothing to run.
 
 ```
 PEWTER      serve · check · doctor · api   (doctor, api not built)
-PROJECTS    repos {create, clone, link, rm} · template {new, apply}   (link, rm, template not built)
+PROJECTS    repos {create, clone, install, link, rm} · template {new, apply}   (link, rm, template not built)
 RUNNING     run · shell · agent · agents
 THE PAGE    tabs {list, add, update, close, focus} · open · fling
             files {list, show, drop}
@@ -472,6 +472,7 @@ operations. Neither is the real one:
 | `pewt repos` | `await pewt.repos.list()` |
 | `pewt repos create site` | `await pewt.repos.create({ name: "site" })` |
 | `pewt repos clone https://…/site.git` | `await pewt.repos.clone("https://…/site.git")` |
+| `pewt repos install site` | `await pewt.repos.install("site")` |
 | `pewt run build --repo site` | `await pewt.run("build", { repo: "site" })` |
 | `pewt shell --repo site` | `await pewt.shell({ repo: "site" })` |
 | `pewt agents` | `await pewt.agents.list()` |
@@ -525,7 +526,7 @@ agent` all start something, and the host asks first:
 12:06:02        cwd repos/fsio/
 12:06:02      allow once / allow always / deny  [o/a/D] a
 12:06:02    ✓ standing grant recorded → .pewter/grants.json
-12:06:02      any run in fsio — take it back with `pewt grants revoke run/fsio`
+12:06:02      any run in fsio, npm install included — take it back with `pewt grants revoke run/fsio`
 12:06:09    ✓ exit 0 · 41 lines of output
 ```
 
@@ -540,6 +541,12 @@ it fetched, the same reasoning that leaves `pewt check`'s compiler and
 network address somebody chose — is said here rather than put behind a
 prompt with no scope to offer.
 
+`pewt repos install` is the other half, and it IS asked: `npm install` runs
+lifecycle scripts, so it is the first execution of what a clone fetched.
+The question rides the run rung — `--allow-runs` covers it, and a standing
+`run/<project>` grant answers it — because that grant already means "I
+trust this project's code to execute."
+
 ### What "always" remembers
 
 `allow always` writes a standing grant to `.pewter/grants.json`, and the
@@ -548,7 +555,7 @@ narrower than the question that produced it:
 
 | You answered `a` to | The grant covers | Called |
 |---|---|---|
-| `run build --repo fsio` | any run in `fsio` | `run/fsio` |
+| `run build --repo fsio` | any run in `fsio`, `npm install` included | `run/fsio` |
 | `agent pi-acp --repo fsio` | `pi-acp` in `fsio` | `agent/pi-acp/fsio` |
 | `shell` | nothing — there is no third answer | — |
 

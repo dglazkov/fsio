@@ -629,7 +629,23 @@ export const cloneProcess: ProcessOperation = {
   },
 };
 
-export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess, cloneProcess];
+export const installProcess: ProcessOperation = {
+  method: "repos.install",
+  cli: ["repos", "install"],
+  summary: "npm install in a project — asked first, unlike clone",
+  usage: "<name>",
+  repo: false,
+  fromArgv: (argv) => {
+    if (argv.length !== 1 || !argv[0]) throw new OpError("usage", "repos install takes one project name — `pewt repos` lists them");
+    return { name: argv[0] };
+  },
+  // The name is checked against the disk when the install is planned
+  // (install.ts) — a project that is not there, or has no manifest, is
+  // refused before any question is asked.
+  parse: (params) => ({ name: str(params, "name") }),
+};
+
+export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess, cloneProcess, installProcess];
 
 export const processByMethod = (method: string): ProcessOperation | undefined =>
   PROCESSES.find((o) => o.method === method);

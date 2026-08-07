@@ -67,6 +67,11 @@ and exits with git's code. A url that needs credentials fails in git's words
 rather than prompting — the host runs git with no terminal to ask on, so use
 an ssh url if your keys are set up, or a public one.
 
+\`pewt repos install\` is the other half, and it IS asked: npm install runs
+lifecycle scripts, which is the first execution of what a clone fetched. The
+question rides the run rung — \`--allow-runs\` covers it, and a standing
+\`run/<project>\` grant answers it.
+
 \`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
 stdin, the agent's own messages out on stdout. Whatever is on the other end
 is the ACP client — a tab is the one Pewter ships toward.

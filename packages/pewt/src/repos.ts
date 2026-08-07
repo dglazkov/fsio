@@ -29,6 +29,12 @@ export interface Project {
    *  the set of runnable things is a file (NARRATIVE.md), and this is that
    *  file's table of contents. Empty when there is no manifest. */
   scripts: string[];
+  /** null: no manifest, so nothing to install. false: a manifest and no
+   *  `node_modules` — the state every fresh clone is in, and the reason a
+   *  row offers its install verb (#193). true: `node_modules` exists. A
+   *  directory-exists read, honestly named: staleness against the lockfile
+   *  is not this field's claim. */
+  installed: boolean | null;
 }
 
 /** Every project, by name. Sorted, so two calls a second apart do not
@@ -56,13 +62,21 @@ export async function listRepos(p: Pewter): Promise<Project[]> {
 export async function projectAt(p: Pewter, name: string): Promise<Project> {
   const dir = path.join(p.repos, name);
   const git = await isGitRepo(dir);
+  const manifest = await exists(path.join(dir, "package.json"));
   return {
     name,
     git,
     branch: git ? await branchOf(dir) : null,
     scripts: await scriptsOf(dir),
+    installed: manifest ? await exists(path.join(dir, "node_modules")) : null,
   };
 }
+
+const exists = (at: string): Promise<boolean> =>
+  fs
+    .stat(at)
+    .then(() => true)
+    .catch(() => false);
 
 /** The branch `.git/HEAD` names, following a worktree's `.git` *file* to the
  *  real directory first. A detached HEAD is a sha, not a ref, and answers

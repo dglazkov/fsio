@@ -28,6 +28,11 @@ export interface Project {
    *  These are what `pewt.run(name, { repo })` can start — the set of
    *  runnable things is a file, and this is that file's table of contents. */
   scripts: string[];
+  /** null: no manifest, nothing to install. false: a manifest and no
+   *  `node_modules` — every fresh clone, and the state the install verb is
+   *  for. true: `node_modules` exists (a directory read, not a lockfile
+   *  comparison). */
+  installed: boolean | null;
 }
 
 /** One extension, built. `path` is folder-relative — the shell reads it
@@ -99,6 +104,11 @@ export interface CloneResult {
   exitCode: number | null;
 }
 
+/** What an install does while it runs. Same stream as a clone's. */
+export interface InstallOptions {
+  onOutput?: (line: string, stream: "out" | "err") => void;
+}
+
 export interface PewtApi {
   repos: {
     /** Every project in this pewter, by name. */
@@ -114,6 +124,14 @@ export interface PewtApi {
      *  prompts — the host runs git with no terminal to ask on — and the
      *  failure arrives in git's own words through `onOutput`. */
     clone(url: string, options?: CloneOptions): Promise<CloneResult>;
+    /** `npm install` in a project — the half of clone that IS asked (#193).
+     *
+     *  Install is the first execution of what a clone fetched: lifecycle
+     *  scripts run, so the host asks a human at its own terminal first. The
+     *  question rides the run rung — `--allow-runs` and a standing
+     *  `run/<project>` grant both cover it — and this call can wait as long
+     *  as a human takes, and can come back refused. */
+    install(name: string, options?: InstallOptions): Promise<CloneResult>;
   };
   ext: {
     /** Build an extension into one self-contained HTML file. The shell calls
@@ -266,7 +284,7 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export const METHODS = ["repos.list", "repos.create", "repos.clone", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS] as const;
+export const METHODS = ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS] as const;
 
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
@@ -371,6 +389,19 @@ export function apiFor(channel: Channel): PewtApi {
         return channel.call(
           "repos.clone",
           { url, ...(options.name !== undefined ? { name: options.name } : {}) },
+          onOutput &&
+            ((event: unknown) => {
+              const line = event as { o?: unknown; e?: unknown };
+              if (typeof line.o === "string") onOutput(line.o, "out");
+              else if (typeof line.e === "string") onOutput(line.e, "err");
+            })
+        ) as Promise<CloneResult>;
+      },
+      install: (name, options = {}) => {
+        const { onOutput } = options;
+        return channel.call(
+          "repos.install",
+          { name },
           onOutput &&
             ((event: unknown) => {
               const line = event as { o?: unknown; e?: unknown };
