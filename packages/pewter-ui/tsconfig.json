@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    // An element runs in a tab and this package is bundled into it, so
+    // nothing here may reach for Node — pewter's arrangement exactly. The
+    // DOM lib is the whole platform.
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src"]
+}

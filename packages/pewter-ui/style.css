@@ -2,13 +2,19 @@
  *
  * An ordinary dependency of your pewter, imported by each extension:
  *
- *   import "pewter-ui/style.css";
+ *   import "pewter-ui";              the typed elements — <pewter-status>,
+ *                                    <pewter-menu> — see dist/index.d.ts
+ *   import "pewter-ui/style.css";    this stylesheet
  *
  * The stylesheet rides the same rail xterm's does: esbuild collects the
  * import and the host inlines it into the tab's one file. It is swappable
  * the way the terminal's emulator is — `npm rm pewter-ui`, delete the
  * imports, and style your screens yourself — and nothing outside your
  * extensions/ notices.
+ *
+ * The elements render ordinary light-DOM markup into themselves — the same
+ * rows a hand-written screen has — so the selectors below cover both
+ * spellings, and your overrides work the same on either.
  *
  * Everything here was extracted from the three scaffolded extensions, which
  * had each written it: the palette all three repeated, the status line and
@@ -74,15 +80,18 @@ textarea:disabled {
 }
 
 /* One quiet line above a screen, for what just happened — "the shell ended",
- * "waiting on the host". */
-.status {
+ * "waiting on the host". The element spelling is <pewter-status>. */
+.status,
+pewter-status {
+  display: block;
   margin: 0;
   padding: 0.5rem 1rem;
   font-size: 0.85rem;
   opacity: 0.75;
   white-space: pre-wrap;
 }
-.status button {
+.status button,
+pewter-status button {
   font-size: 0.8rem;
   margin-left: 0.6rem;
   padding: 0.1rem 0.6rem;
@@ -110,7 +119,12 @@ textarea:disabled {
   white-space: pre-wrap;
 }
 
-/* A list of choices, each row one full-width button. */
+/* A list of choices, each row one full-width button. The element spelling
+ * is <pewter-menu>, which renders a real ul.menu inside itself — one set of
+ * selectors covers both. */
+pewter-menu {
+  display: block;
+}
 .menu {
   list-style: none;
   margin: 0;
@@ -118,6 +132,13 @@ textarea:disabled {
 }
 .menu li {
   border-bottom: 1px solid var(--pewter-hairline);
+}
+/* A row that is not a choice: nothing to pick, and this line says why. */
+.menu li.hint {
+  padding: 0.6rem 0.2rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+  border-bottom: none;
 }
 .menu li button {
   font: inherit;

@@ -51,6 +51,7 @@
         "./packages/acp-demo:build",
         "./packages/actuator-demo:build",
         "./packages/pewter:build",
+        "./packages/pewter-ui:build",
         "./packages/create-pewt:build",
         "./packages/pewt:build",
         "./packages/pewter-shell:build",
