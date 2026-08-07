@@ -4943,11 +4943,13 @@ var DEFAULT_SHELL = "http://localhost:8769";
 async function serve(p, opts = {}) {
   const log = opts.log ?? console;
   const base = opts.url ?? process.env["PEWT_SHELL"] ?? DEFAULT_SHELL;
+  let page;
   try {
-    new URL(base);
+    page = new URL(base);
   } catch {
     throw new Error(`--url ${JSON.stringify(base)} is not a URL`);
   }
+  page.searchParams.set("dir", p.name);
   const tmpReal = fs13.realpathSync(os2.tmpdir());
   if (p.root.startsWith("/private/tmp") || p.root.startsWith(tmpReal)) {
     throw new Error(`refusing to serve a pewter under a temp dir (${p.root}) \u2014 Chrome's file observers break there (F9)`);
@@ -4985,14 +4987,14 @@ pewter \xB7 ${p.root}
 
 (Ctrl-C stops the host and sweeps .fsio)
 `);
-  console.log(`  ${base}
+  console.log(`  ${page.href}
 `);
   if (opts.open === false) {
     console.log("--no-open: opening nothing. Paste that into a Chromium browser.\n");
   } else if (folderHasSeenAPage && await pageIsWatching(p.fsio)) {
     console.log("a page is already open on this pewter \u2014 not opening another tab.\n");
   } else {
-    const res = await openInChromium(base);
+    const res = await openInChromium(page.href);
     console.log(res.opened ? `opened in ${res.browser}.
 ` : `${res.why} \u2014 open that URL yourself, in Chrome or another Chromium.
 `);
