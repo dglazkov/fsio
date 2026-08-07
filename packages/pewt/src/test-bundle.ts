@@ -81,6 +81,19 @@ test("a stylesheet link becomes a style block — an extension is one file", asy
   assert.match(html, /https:\/\/example\.com\/x\.css/);
 });
 
+test("a stylesheet imported from code is bundled and inlined — the terminal's xterm.css path", async () => {
+  const p = pewter();
+  extension(p, "drawn", `import "./skin.css";\ndocument.title = "drawn";\n`);
+  fs.writeFileSync(path.join(p.extensions, "drawn", "skin.css"), ".xterm { color: aliceblue }\n");
+  const html = fs.readFileSync(path.join(p.root, (await bundleExtension(p, "drawn")).path), "utf8");
+  // esbuild collects the import into a css output file, and the bundler puts
+  // it in a <style> block — the same journey `import "@xterm/xterm/css/
+  // xterm.css"` makes in the scaffolded terminal extension, walked here with
+  // a local file so no test needs a node_modules.
+  assert.match(html, /<style>[\s\S]*aliceblue[\s\S]*<\/style>/);
+  assert.doesNotMatch(html, /import ["']\.\/skin\.css["']/);
+});
+
 test("a stylesheet link that climbs out of the extension is not followed", async () => {
   const p = pewter();
   extension(p, "nosy");

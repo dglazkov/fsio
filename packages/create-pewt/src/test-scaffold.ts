@@ -73,18 +73,52 @@ test("both spellings name the directory node_modules will hold", () => {
   }
 });
 
-test("it ships one extension, in the shape the bundler compiles", () => {
+test("it ships two extensions, in the shape the bundler compiles", () => {
   const root = path.join(into(), "p");
   scaffold({ root });
-  // `bundleExtension` needs exactly these two names.
-  assert.ok(fs.existsSync(path.join(root, "extensions/repos/index.html")));
-  assert.ok(fs.existsSync(path.join(root, "extensions/repos/main.ts")));
+  // `bundleExtension` needs exactly these two names, per extension.
+  for (const ext of ["repos", "terminal"]) {
+    assert.ok(fs.existsSync(path.join(root, `extensions/${ext}/index.html`)));
+    assert.ok(fs.existsSync(path.join(root, `extensions/${ext}/main.ts`)));
+  }
   // The first screen is an ordinary extension calling the ordinary API. If
   // it reached for anything private, "there are no built-ins" would be a
   // claim rather than a demonstration.
   const main = read(root, "extensions/repos/main.ts");
   assert.match(main, /import \{ pewt, PewtError \} from "pewter"/);
   assert.match(main, /pewt\.repos\.list\(\)/);
+});
+
+test("the terminal's emulator is the pewter's own dependency, not the shell's", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // NARRATIVE.md's claim, checkable as a property of the written files:
+  // nothing about the terminal is built into the shell. The extension
+  // imports an emulator, and the emulator is a line in this package.json —
+  // the ACP-adapter arrangement, so `npm rm` and `git clone && npm i` both
+  // mean what they always mean.
+  const pkg = JSON.parse(read(root, "package.json"));
+  assert.ok(pkg.dependencies["@xterm/xterm"]);
+  assert.ok(pkg.dependencies["@xterm/addon-fit"]);
+  const main = read(root, "extensions/terminal/main.ts");
+  assert.match(main, /import \{ Terminal \} from "@xterm\/xterm"/);
+  assert.match(main, /pewt\.shell\(/);
+  // Self-sufficient on purpose (#195): `tabs.add` carries no arguments, so
+  // where the shell starts is this screen's own question, asked of the same
+  // list every front end reads.
+  assert.match(main, /pewt\.repos\.list\(\)/);
+});
+
+test("the stylesheet import compiles under the checker the scaffold declares", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The terminal imports xterm's stylesheet; esbuild bundles it and tsc has
+  // no idea what a .css import means. The ambient declaration is what keeps
+  // `pewt check` exit 0 on a fresh pewter, and it lives under extensions/
+  // because that is all the tsconfig includes.
+  assert.match(read(root, "extensions/terminal/main.ts"), /import "@xterm\/xterm\/css\/xterm\.css"/);
+  assert.match(read(root, "extensions/env.d.ts"), /declare module "\*\.css"/);
+  assert.deepEqual(JSON.parse(read(root, "tsconfig.json")).include, ["extensions"]);
 });
 
 test("everything sorts by what deletes it", () => {

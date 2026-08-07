@@ -114,6 +114,7 @@ extensions/
 ├── repos/          The project list you see on startup.
 │   ├── index.html
 │   └── main.ts
+├── terminal/       A shell on your machine, drawn by an emulator you chose.
 ├── chat/           Where you talk to an agent.
 └── dashboard/      What is happening in a project right now.
 ```
@@ -280,7 +281,12 @@ await shell.exit;
 
 What arrives is the terminal's own bytes, escape sequences included, so
 whatever draws it is a terminal emulator you chose. Nothing about the
-terminal is built into the shell.
+terminal is built into the shell. The scaffold ships that choice made once:
+`extensions/terminal/` draws with `@xterm/xterm`, declared in your
+`package.json` the way an adapter is, so `npm rm` swaps it for another
+emulator and nothing outside that directory notices. Where its shell starts
+is the screen's own question — the same project list every front end reads,
+because a tab opens with no arguments.
 
 The host asks before it opens one, the same way it asks before a run, and
 `pewt serve --allow-shells` is the separate answer-in-advance for a host
