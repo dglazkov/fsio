@@ -30,7 +30,7 @@
       "command": "tsc --pretty -p tsconfig.templates.json",
       "files": ["templates/**", "tsconfig.templates.json"],
       "output": [],
-      "dependencies": ["../pewter:build"]
+      "dependencies": ["../pewter:build", "../pewter-ui:build"]
     },
     "bundle": {
       "command": "node scripts/make-artifact.mjs",

@@ -121,6 +121,16 @@ test("the shared look is pewter-ui, and every screen imports it", () => {
   for (const ext of ["repos", "terminal", "agent"]) {
     assert.match(read(root, `extensions/${ext}/main.ts`), /import "pewter-ui\/style\.css"/, `${ext} imports the shared look`);
   }
+  // The kit's typed elements, on the two screens that have a status line and
+  // a picker. The bare import registers them; the tags in the markup are
+  // what HTMLElementTagNameMap makes typed — which is the discovery rail:
+  // `pewt check` and an editor both know what these elements can do.
+  for (const ext of ["terminal", "agent"]) {
+    assert.match(read(root, `extensions/${ext}/main.ts`), /import "pewter-ui";/, `${ext} registers the elements`);
+    assert.match(read(root, `extensions/${ext}/main.ts`), /document\.querySelector\("pewter-menu"\)/, `${ext} queries the menu by tag`);
+    assert.match(read(root, `extensions/${ext}/index.html`), /<pewter-status hidden><\/pewter-status>/, `${ext} has the status line`);
+    assert.match(read(root, `extensions/${ext}/index.html`), /<pewter-menu><\/pewter-menu>/, `${ext} has the menu`);
+  }
 });
 
 test("the terminal's emulator is the pewter's own dependency, not the shell's", () => {

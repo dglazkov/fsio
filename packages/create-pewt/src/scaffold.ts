@@ -215,9 +215,15 @@ the channel between this machine and the Pewter page at once.
   are scaffolded: \`repos/\` is the first tab, \`terminal/\` is a shell on
   this machine, and \`agent/\` is a conversation with a coding agent —
   \`pewt tabs add terminal\` or \`pewt tabs add agent\` opens one. Their
-  shared look is \`pewter-ui/style.css\`, an ordinary dependency each
-  screen imports — restyle a screen by overriding it, or drop the import
-  and start from nothing.
+  shared look is \`pewter-ui\`, an ordinary dependency with two imports:
+  \`import "pewter-ui"\` registers its typed elements — \`<pewter-status>\`,
+  \`<pewter-menu>\` — and \`import "pewter-ui/style.css"\` is the styles.
+  The elements are the kit's API: the package's \`.d.ts\` names its tags,
+  so your editor completes them and \`pewt check\` fails a misuse. Before
+  styling or building a screen, read \`node_modules/pewter-ui\` — one
+  stylesheet and one module, short enough to read whole. Restyle a screen
+  by overriding (its own \`style.css\` wins by specificity), or drop the
+  imports and start from nothing.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
   clone <url>\` fetches one, and the Projects screen offers both.

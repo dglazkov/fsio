@@ -36,12 +36,13 @@ const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "bridge-prob
 fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "probe", pewter: {} }));
 fs.mkdirSync(path.join(root, "node_modules"), { recursive: true });
 fs.symlinkSync(path.join(repo, "packages/pewter"), path.join(root, "node_modules/pewter"), "dir");
+fs.symlinkSync(path.join(repo, "packages/pewter-ui"), path.join(root, "node_modules/pewter-ui"), "dir");
 
 const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -58,6 +59,8 @@ fs.writeFileSync(
 fs.writeFileSync(
   path.join(ext, "main.ts"),
   `import { pewt, args } from "pewter";
+import "pewter-ui";
+import "pewter-ui/style.css";
 const { repos } = await pewt.repos.list();
 document.getElementById("out")!.textContent = repos.map((r) => r.name).join(", ");
 
@@ -133,6 +136,32 @@ document.getElementById("granted")!.textContent = grants.map((g) => \`\${g.kind}
 // the port, so by the time any call above was answered it had already
 // settled — awaiting it last is the lazy option, not a race.
 document.getElementById("opened")!.textContent = JSON.stringify(await args);
+
+// The kit's elements, in the same sandbox: registered by the bare import's
+// side effect, rendered as light DOM, and driven by a real click. The tag
+// map makes both createElement calls typed — misuse here is a compile error
+// in a pewter, though this probe's own compiler is esbuild and only the
+// runtime half is under test.
+const menu = document.createElement("pewter-menu");
+menu.choices = [{ value: "site", label: "site" }, { value: null, label: "this pewter" }];
+menu.onpick = (v) => { document.getElementById("picked")!.textContent = \`picked \${v}\`; };
+document.body.append(menu);
+menu.querySelector("button")!.click();
+
+const status = document.createElement("pewter-status");
+document.body.append(status);
+status.say("kit status");
+status.offer("again", () => status.say("kit acted"));
+status.querySelector("button")!.click();
+
+// A hidden element must stay hidden. The kit styles its elements as block
+// boxes, and an author rule outranks the UA stylesheet's [hidden] — the
+// exact bug a human found on the first screen — so the guard rule is pinned
+// here, where the kit's real CSS is in the page.
+const quiet = document.createElement("pewter-status");
+quiet.id = "quiet";
+quiet.hidden = true;
+document.body.append(quiet);
 
 document.title = "answered";
 `
@@ -300,6 +329,9 @@ let filed = "";
 let granted = "";
 let opened = "";
 let agentinfo = "";
+let picked = "";
+let kitsaid = "";
+let quietDisplay = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -325,6 +357,9 @@ try {
   filed = await frame.locator("#filed").textContent();
   granted = await frame.locator("#granted").textContent();
   opened = await frame.locator("#opened").textContent();
+  picked = await frame.locator("#picked").textContent();
+  kitsaid = await frame.locator("pewter-status span").first().textContent();
+  quietDisplay = await frame.locator("#quiet").evaluate((el) => getComputedStyle(el).display);
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -355,6 +390,9 @@ const checks = [
   ["and the tab it got back names the file", filed === "notes.md → tab-2 · 0 held"],
   ["an extension read what the host will start without asking", result.calls.includes("grants.list") && granted === "run/site"],
   ["what the tab opened with arrived inside the sandbox", opened === '{"repo":"site"}'],
+  ["the kit's menu rendered in the sandbox, and a click came back through onpick", picked === "picked site"],
+  ["the kit's status line spoke, offered, and acted", kitsaid === "kit acted"],
+  ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["nothing threw in the page", errors.length === 0],
 ];
 
