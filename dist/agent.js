@@ -13,7 +13,7 @@
 //
 // So what this hands over is messages. Correlating ids, answering requests,
 // and drawing whatever a permission question should look like are the
-// extension's, and a chat tab is where they belong.
+// extension's, and the agent tab is where they belong.
 /** Options → the spec that goes on the wire. Trivial, and here rather than
  *  inline so the command line and an extension cannot spell it differently
  *  (the `shell` slice's lesson, for the same reason). */
