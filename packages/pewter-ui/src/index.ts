@@ -1,169 +1,39 @@
-// The kit's typed surface: custom elements an extension can see.
+// The kit an extension imports: elements the compiler knows, and a screen
+// that follows its own state.
 //
-// Importing this module registers them — `import "pewter-ui"` is the whole
-// setup — and the HTMLElementTagNameMap augmentation at the bottom is the
-// discovery rail: `document.querySelector("pewter-menu")` comes back typed,
-// the editor completes `.choices`, and `pewt check` fails a misuse the same
-// way it fails a wrong `pewt.*` call. That is why these are elements rather
-// than more classes in the stylesheet: a class name is a string nothing
-// checks, and an element is an API.
+//     import "pewter-ui";              registers <pewter-status>, <pewter-menu>
+//     import "pewter-ui/style.css";    the page around them
+//     import { screen } from "pewter-ui";
 //
-// Light DOM, on purpose. Each element renders ordinary markup into itself —
-// the same markup the scaffolded screens used to write by hand — so your
-// stylesheet restyles any of it by specificity, and devtools shows real
-// rows rather than a shadow boundary. pewter-ui/style.css styles them
-// through the same selectors a hand-written screen uses.
+// The bare import is the whole setup, and the `HTMLElementTagNameMap`
+// augmentations that ride the `.d.ts` are the discovery rail:
+// `document.querySelector("pewter-menu")` comes back typed, the editor
+// completes `.choices`, and `pewt check` fails a misuse the same way it
+// fails a wrong `pewt.*` call. That is why these are elements rather than
+// class names in a stylesheet — a class name is a string nothing checks, and
+// an element is an API.
+//
+// **They are lit components with shadow roots.** Each one carries its own
+// look in `static styles`, so it is right whether or not the stylesheet was
+// imported, and an extension's CSS cannot reach in and break a row by
+// accident. What an extension *can* reach is deliberate and small: the
+// `--pewter-*` custom properties in tokens.ts, and the `part=` names on the
+// markup inside. Both are listed in style.css, which is where somebody
+// restyling a screen will be looking.
+import { PewterMenu } from "./menu.js";
+import { PewterStatus } from "./status.js";
 
-/** `<pewter-status>` — one quiet line above a screen: what just happened,
- *  and at most one thing to do about it.
- *
- *      status.say("the shell ended — exit 0");
- *      status.offer("new shell", () => again());
- *
- *  Extracted from the terminal and agent screens, which had each written
- *  exactly this line, its span, and its one button. */
-export class PewterStatus extends HTMLElement {
-  #said?: HTMLSpanElement;
-  #verb?: HTMLButtonElement;
-  #act: (() => void) | null = null;
+export { PewterStatus } from "./status.js";
+export { PewterMenu } from "./menu.js";
+export type { PewterMenuChoice } from "./menu.js";
+export { screen } from "./screen.js";
+export type { Screen } from "./screen.js";
+export { control, tokens } from "./tokens.js";
 
-  connectedCallback(): void {
-    this.#ensure();
-  }
-
-  /** The children, built once — in connectedCallback for an element from
-   *  markup, or on first use for one made before it is in the document. */
-  #ensure(): { said: HTMLSpanElement; verb: HTMLButtonElement } {
-    if (!this.#said || !this.#verb) {
-      this.#said = document.createElement("span");
-      this.#verb = document.createElement("button");
-      this.#verb.hidden = true;
-      this.#verb.addEventListener("click", () => {
-        // The button goes first, then the act — both screens this was
-        // extracted from hid it before doing anything else.
-        this.#verb!.hidden = true;
-        const act = this.#act;
-        this.#act = null;
-        act?.();
-      });
-      this.replaceChildren(this.#said, this.#verb);
-    }
-    return { said: this.#said, verb: this.#verb };
-  }
-
-  /** Show the line with these words. Clears any offer — a new line is a new
-   *  state, and the button that belonged to the old one goes with it. */
-  say(text: string): void {
-    const { said, verb } = this.#ensure();
-    said.textContent = text;
-    verb.hidden = true;
-    this.#act = null;
-    this.hidden = false;
-  }
-
-  /** Put one action beside the words, without changing them. */
-  offer(label: string, act: () => void): void {
-    const { verb } = this.#ensure();
-    verb.textContent = label;
-    verb.hidden = false;
-    this.#act = act;
-    this.hidden = false;
-  }
-
-  /** The line has nothing to say. */
-  hide(): void {
-    this.hidden = true;
-  }
-}
-
-/** One row of `<pewter-menu>`: what the button says, and what a pick of it
- *  carries. The value is yours — the scaffolded screens use null for "this
- *  pewter" and a project name otherwise. */
-export interface PewterMenuChoice {
-  value: string | null;
-  label: string;
-}
-
-/** `<pewter-menu>` — a list of choices, each row one full-width button.
- *
- *      menu.choices = [{ value: null, label: "this pewter" }, ...names];
- *      menu.onpick = (value) => open(value);
- *
- *  Setting `hints` instead replaces the list with plain rows — for when
- *  there is nothing to pick and the useful thing is to say why, which is
- *  the agent screen's empty roster. Extracted from the terminal and agent
- *  pickers, which had each written this list, its rows, and its refresh. */
-export class PewterMenu extends HTMLElement {
-  #list?: HTMLUListElement;
-  #choices: PewterMenuChoice[] = [];
-
-  /** Called with the picked row's value. One handler, not a bus: the
-   *  screens this serves route every pick the same place. */
-  onpick: ((value: string | null) => void) | null = null;
-
-  connectedCallback(): void {
-    this.#ensure();
-  }
-
-  #ensure(): HTMLUListElement {
-    if (!this.#list) {
-      // A real <ul class="menu"> in the light DOM: exactly what the screens
-      // wrote by hand, so the stylesheet needs no second spelling for it.
-      this.#list = document.createElement("ul");
-      this.#list.className = "menu";
-      this.replaceChildren(this.#list);
-    }
-    return this.#list;
-  }
-
-  get choices(): PewterMenuChoice[] {
-    return this.#choices;
-  }
-
-  set choices(rows: PewterMenuChoice[]) {
-    this.#choices = rows;
-    const list = this.#ensure();
-    list.replaceChildren();
-    for (const row of rows) {
-      const li = document.createElement("li");
-      const button = document.createElement("button");
-      button.textContent = row.label;
-      button.addEventListener("click", () => this.onpick?.(row.value));
-      li.append(button);
-      list.append(li);
-    }
-  }
-
-  /** Plain rows in place of the choices: there is nothing to pick, and
-   *  these lines say why. */
-  set hints(lines: string[]) {
-    this.#choices = [];
-    const list = this.#ensure();
-    list.replaceChildren();
-    for (const line of lines) {
-      const li = document.createElement("li");
-      li.className = "hint";
-      li.textContent = line;
-      list.append(li);
-    }
-  }
-}
-
-/** Each tab is its own document with its own registry, so this runs once
- *  per tab — the guard is for the harmless second import, not for clashes. */
+/** Each tab is its own document with its own registry, so this runs once per
+ *  tab — the guard is for the harmless second import, not for clashes. */
 const define = (tag: string, ctor: CustomElementConstructor): void => {
   if (!customElements.get(tag)) customElements.define(tag, ctor);
 };
 define("pewter-status", PewterStatus);
 define("pewter-menu", PewterMenu);
-
-// The discovery rail. This augmentation rides the .d.ts into every pewter,
-// which is what makes document.createElement("pewter-menu") and
-// querySelector("pewter-status") typed in an extension with no cast — and
-// what lets `pewt check` and the editor say so when a screen misuses one.
-declare global {
-  interface HTMLElementTagNameMap {
-    "pewter-status": PewterStatus;
-    "pewter-menu": PewterMenu;
-  }
-}

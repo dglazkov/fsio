@@ -6,7 +6,12 @@
     // An element runs in a tab and this package is bundled into it, so
     // nothing here may reach for Node — pewter's arrangement exactly. The
     // DOM lib is the whole platform.
-    "lib": ["ES2022", "DOM"]
+    "lib": ["ES2022", "DOM"],
+    // Lit's `static properties` installs accessors on the prototype; an
+    // ES2022 class field would define an own property over the top of them
+    // and the element would stop reacting. This is Lit's documented setting
+    // for TypeScript without decorators, and @fsio/ui's for the same reason.
+    "useDefineForClassFields": false
   },
   "include": ["src"]
 }
