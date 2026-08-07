@@ -115,43 +115,48 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
   server.registerKind("repos.install", installKind(p, log));
   await server.start();
 
-  console.log(`
-pewter · ${p.root}
-  ${countExtensions(p)}
+  // Identity, then anything this host will not ask about, then the page. Each
+  // of the middle lines is conditional and most pewters print none of them: a
+  // banner that recites what is about to happen normally teaches nothing,
+  // because every question introduces itself in full when it arrives (ask.ts).
+  // What cannot introduce itself is a question that will never be asked.
+  const banner = [`\npewter · ${p.root}`];
+  const missing = extensionsWarning(p);
+  if (missing) banner.push(`  ${missing}`);
+  const unasked = unaskedPolicy(p, opts, asker);
+  if (unasked) banner.push(`  ${unasked}`);
+  console.log(`${banner.join("\n")}\n`);
 
-  in the page: pick this folder — ${p.name} — and allow it. Those clicks are
-  Chrome's own and cannot be automated (F15); they are also what stops the
-  page from reaching anything you did not choose.
-
-  from a terminal, in this folder:  pewt repos
-
-  ${runPolicy(p, opts, asker)}
-
-(Ctrl-C stops the host and sweeps .fsio)
-`);
-
-  console.log(`  ${page.href}\n`);
+  // The last step is the human's, and it is the only instruction here — but
+  // only when a page is actually being opened. A page already holding this
+  // folder has already been picked and allowed, and telling its owner to do it
+  // again is an instruction with nothing behind it.
+  const pick = `pick this folder — ${p.name} — and allow it`;
+  console.log(`  ${page.href}`);
   if (opts.open === false) {
-    console.log("--no-open: opening nothing. Paste that into a Chromium browser.\n");
+    console.log(`  --no-open: paste that into a Chromium browser, then ${pick}.\n`);
   } else if (folderHasSeenAPage && (await pageIsWatching(p.fsio))) {
-    console.log("a page is already open on this pewter — not opening another tab.\n");
+    console.log("  a page is already open on this pewter — not opening another tab.\n");
   } else {
     const res = await openInChromium(page.href);
-    console.log(res.opened ? `opened in ${res.browser}.\n` : `${res.why} — open that URL yourself, in Chrome or another Chromium.\n`);
+    console.log(res.opened ? `  opened in ${res.browser} — ${pick}.\n` : `  ${res.why} — open that URL yourself, in Chrome or another Chromium, then ${pick}.\n`);
   }
 
   return server;
 }
 
-/** What happens when something asks to start a process, said at startup
- *  rather than discovered at the first prompt — or, worse, at the first
- *  denial. Three flags, so up to three sentences: they are separate
- *  capabilities and a host can have been told about one and not the others.
+/** What this host will start **without asking** — and nothing else.
  *
- *  Standing grants get a line of their own when there are any. What this host
- *  will not ask about is the half a person cannot see, and reading it off a
- *  banner beats discovering it when something starts in silence. */
-function runPolicy(p: Pewter, opts: ServeOptions, asker: Asker): string {
+ *  The ordinary pewter prints none of this, which is the point. Sentences
+ *  previewing the questions that are coming were three lines of the banner and
+ *  carried nothing the question does not say better when it arrives: `ask.ts`
+ *  shows the command, the directory, that a shell is unconfined, and whether
+ *  an agent asks before it edits, at the moment those facts decide something.
+ *
+ *  A question that will never be asked is the opposite. It cannot introduce
+ *  itself, and a process starting in silence is the half a person cannot see —
+ *  so a flag, a standing grant, and a host with no terminal each say so here. */
+function unaskedPolicy(p: Pewter, opts: ServeOptions, asker: Asker): string | null {
   const standing = grantLine(p);
   if (!asker.ask) {
     const told = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null].filter(Boolean);
@@ -165,20 +170,28 @@ function runPolicy(p: Pewter, opts: ServeOptions, asker: Asker): string {
   }
   // Each sentence stands alone: a host can have been told about runs and not
   // shells, and a shared clause would then be wrong about one of them.
-  const runs = opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : "a `pewt run` asks here first, and starts nothing until you answer.";
-  const shells = opts.allowShells
-    ? "--allow-shells: every `pewt shell` starts without asking."
-    : "a `pewt shell` asks here too, and what it starts is unconfined.";
-  const agents = opts.allowAgents
-    ? "--allow-agents: every `pewt agent` starts without asking."
-    : "a `pewt agent` asks here too, and that question says whether the agent will ask you back.";
-  return [runs, shells, agents, ...(standing ? [standing] : [])].join("\n  ");
+  const told = [
+    opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : null,
+    opts.allowShells ? "--allow-shells: every `pewt shell` starts without asking." : null,
+    opts.allowAgents ? "--allow-agents: every `pewt agent` starts without asking." : null,
+    standing,
+  ].filter((line): line is string => line !== null);
+  return told.length ? told.join("\n  ") : null;
 }
 
 /** One line about what this host already remembers, or nothing when it
  *  remembers nothing — which is every pewter until somebody answers `a`. An
  *  unreadable grants file says so here rather than at the first question,
- *  because that is a broken file and not a broken run. */
+ *  because that is a broken file and not a broken run.
+ *
+ *  It names the file rather than `pewt grants`, and the reason is who is
+ *  reading. This banner is printed on the host's terminal, which is the one
+ *  place `pewt` is not on `PATH` — `run.ts`'s `childEnv` and `agent.ts`'s
+ *  `agentEnv` put it there for the scripts and agents that call back in, and
+ *  those are who the command line is for. A person standing where this prints
+ *  is not expected to run `pewt` at all, so the honest pointer is the folder
+ *  they already have. Reading it, not writing it: the host stays the only
+ *  writer (grants.ts). */
 function grantLine(p: Pewter): string | null {
   let grants;
   try {
@@ -187,13 +200,14 @@ function grantLine(p: Pewter): string | null {
     return `${GRANTS_FILE} cannot be read (${e instanceof Error ? e.message : String(e)}), so nothing will start until it is fixed or deleted.`;
   }
   if (grants.length === 0) return null;
-  return `${grants.length} standing grant${grants.length === 1 ? "" : "s"} — these start without asking. \`pewt grants\` lists them.`;
+  return `${grants.length} standing grant${grants.length === 1 ? "" : "s"} — these start without asking. They are in ${GRANTS_FILE}.`;
 }
 
-/** What this pewter can show, said once at startup. A pewter with no
- *  extensions is not broken, but it is a page with nothing in it, and that
- *  is worth knowing before you go looking in the browser for the reason. */
-function countExtensions(p: Pewter): string {
+/** Said only when this pewter has no screens. A roster of directory names told
+ *  a reader what they are about to see anyway, in the browser, by name — but a
+ *  page with nothing in it looks broken, and the reason is on this side of the
+ *  folder where nobody would think to look for it. */
+function extensionsWarning(p: Pewter): string | null {
   let names: string[];
   try {
     names = fs
@@ -203,9 +217,7 @@ function countExtensions(p: Pewter): string {
   } catch {
     return "no extensions/ directory — the page will have nothing to show.";
   }
-  return names.length
-    ? `extensions: ${names.join(", ")}`
-    : "extensions/ is empty — the page will have nothing to show.";
+  return names.length ? null : "extensions/ is empty — the page will have nothing to show.";
 }
 
 /** Stop the host and leave the folder as it was found: sessions closed, the
