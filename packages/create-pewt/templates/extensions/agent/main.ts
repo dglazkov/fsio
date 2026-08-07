@@ -10,7 +10,10 @@
 //
 // One tab is one conversation with one agent. For a second one, open another
 // tab: `pewt tabs add agent`.
-import { pewt, args, PewtError, type Agent } from "pewter";
+import { pewt, args, explain, type Agent } from "pewter";
+// The shared look: tokens and base styles, an ordinary dependency of this
+// pewter — the same arrangement as an ACP adapter.
+import "pewter-ui/style.css";
 
 const status = document.getElementById("status")!;
 const said = document.getElementById("said")!;
@@ -316,7 +319,7 @@ async function offer(): Promise<void> {
       places.append(row);
     }
   } catch (e) {
-    note.textContent = words(e);
+    note.textContent = explain(e);
   }
 }
 
@@ -341,7 +344,7 @@ async function open(repo: string | null): Promise<void> {
   } catch (e) {
     // A refusal is a normal ending: the human at the host's terminal said
     // no, or there is nothing to start. Back to the picker, under the reason.
-    sayStatus(words(e));
+    sayStatus(explain(e));
     await offer();
     return;
   }
@@ -390,7 +393,7 @@ async function open(repo: string | null): Promise<void> {
     if (!made.sessionId) throw new Error("the agent answered session/new without a sessionId");
     live = { rpc, sessionId: made.sessionId };
   } catch (e) {
-    line("error", words(e));
+    line("error", explain(e));
     agent.close();
     return;
   }
@@ -414,7 +417,7 @@ async function ask(): Promise<void> {
     });
     if (done.stopReason && done.stopReason !== "end_turn") line("note", `turn ended: ${done.stopReason}`);
   } catch (e) {
-    line("error", words(e));
+    line("error", explain(e));
   } finally {
     turn(false);
     streaming = null;
@@ -454,9 +457,6 @@ function sayStatus(text: string): void {
   said.textContent = text;
   status.hidden = false;
 }
-
-const words = (e: unknown): string =>
-  e instanceof PewtError ? e.message + (e.hint ? `\n${e.hint}` : "") : String(e);
 
 // Opened with `{repo}` — the repos row's agent verb — this screen skips its
 // picker and goes straight there. Opened bare, it offers the choice. Either

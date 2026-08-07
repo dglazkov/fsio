@@ -8,10 +8,13 @@
 //
 // One tab is one shell. For a second one, open another tab:
 // `pewt tabs add terminal`.
-import { pewt, args, PewtError } from "pewter";
+import { pewt, args, explain } from "pewter";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+// The shared look: tokens and base styles, an ordinary dependency of this
+// pewter — the same arrangement as the emulator above.
+import "pewter-ui/style.css";
 
 const status = document.getElementById("status")!;
 const said = document.getElementById("said")!;
@@ -71,7 +74,7 @@ async function offer(): Promise<void> {
       places.append(row);
     }
   } catch (e) {
-    note.textContent = words(e);
+    note.textContent = explain(e);
   }
 }
 
@@ -128,7 +131,7 @@ async function open(repo: string | null): Promise<void> {
     // no, or there is no host. It arrives in the operation's own words —
     // and a shell that never started leaves nothing on screen worth
     // keeping, so the picker comes straight back under the reason.
-    say(words(e));
+    say(explain(e));
     term.dispose();
     await offer();
   }
@@ -138,9 +141,6 @@ function say(text: string): void {
   said.textContent = text;
   status.hidden = false;
 }
-
-const words = (e: unknown): string =>
-  e instanceof PewtError ? e.message + (e.hint ? `\n${e.hint}` : "") : String(e);
 
 // Opened with `{repo}` — the repos row's shell verb (#198) — this screen
 // skips its picker and goes straight there. Opened bare, it offers the

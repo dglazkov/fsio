@@ -1,46 +1,76 @@
-:root { color-scheme: light dark; }
-body {
-  margin: 0; padding: 2.5rem 2rem;
-  font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: light-dark(#f7f5f2, #16161a);
-  color: light-dark(#1b1b1f, #e8e6e3);
+/* What is this screen's own. The shared look — the palette, the screen
+   frame, buttons and inputs, the error line — is pewter-ui/style.css,
+   imported in main.ts; the tokens below are its custom properties. It lands
+   after this sheet in the bundle, so overrides here are id-scoped. */
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
-main { max-width: 40rem; margin: 0 auto; }
-h1 { font-size: 1.6rem; margin: 0 0 0.2rem; }
-#note { margin: 0 0 1.6rem; opacity: 0.6; font-size: 0.85rem; }
-ul { list-style: none; margin: 0; padding: 0; }
 li {
-  display: flex; justify-content: space-between; gap: 1rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
   padding: 0.6rem 0.2rem;
-  border-bottom: 1px solid light-dark(#0001, #fff2);
+  border-bottom: 1px solid var(--pewter-hairline);
 }
-li .kind { opacity: 0.5; font-size: 0.8rem; }
-li .branch { font-style: normal; opacity: 0.5; font-size: 0.8rem; margin-left: 0.5rem; }
-li .verbs { display: flex; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; }
-li .verbs button {
-  font: inherit; font-size: 0.75rem; padding: 0.15rem 0.55rem; cursor: pointer;
-  border-radius: 5px; border: 1px solid light-dark(#0003, #fff3);
-  background: transparent; color: inherit;
+li .kind {
+  opacity: 0.5;
+  font-size: 0.8rem;
 }
-li .verbs button:disabled { opacity: 0.5; cursor: default; }
-li .verbs button.install { border-style: dashed; }
-.empty { opacity: 0.7; }
-#verbs { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.6rem; }
-#verbs form { display: flex; gap: 0.4rem; flex: 1; min-width: 14rem; }
+li .branch {
+  font-style: normal;
+  opacity: 0.5;
+  font-size: 0.8rem;
+  margin-left: 0.5rem;
+}
+li .verbs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+#list .verbs button {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 5px;
+  border-color: var(--pewter-line);
+  background: transparent;
+}
+#list .verbs button.install {
+  border-style: dashed;
+}
+.empty {
+  opacity: 0.7;
+}
+#verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 1.6rem;
+}
+#verbs form {
+  display: flex;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 14rem;
+}
 #verbs input {
-  flex: 1; min-width: 0; font: inherit; padding: 0.35rem 0.6rem;
-  border-radius: 6px; border: 1px solid light-dark(#0003, #fff3);
-  background: transparent; color: inherit;
+  flex: 1;
+  min-width: 0;
 }
 #verbs button {
-  font: inherit; font-size: 0.85rem; padding: 0.35rem 0.8rem; cursor: pointer;
-  border-radius: 6px; border: 1px solid light-dark(#0004, #fff4);
-  background: light-dark(#fff, #222228); color: inherit; white-space: nowrap;
+  white-space: nowrap;
 }
-#verbs button:disabled, #verbs input:disabled { opacity: 0.5; cursor: default; }
-#error { color: light-dark(#a3372e, #ff8f85); font-size: 0.85rem; white-space: pre-wrap; }
 #progress {
-  margin-top: 1rem; padding: 0.8rem 1rem; max-height: 14rem; overflow-y: auto;
-  font-size: 0.8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
-  border-radius: 8px; background: light-dark(#0000000d, #ffffff0d);
+  margin-top: 1rem;
+  padding: 0.8rem 1rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: 8px;
+  background: var(--pewter-wash);
 }

@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [terminal-demo, acp-demo, pewt, pewter, create-pewt]
+        pkg: [terminal-demo, acp-demo, pewt, pewter, pewter-ui, create-pewt]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

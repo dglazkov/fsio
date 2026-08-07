@@ -1,32 +1,25 @@
-:root { color-scheme: light dark; }
-html, body { height: 100%; }
+/* What is this screen's own — the terminal slab. Everything else it shows
+   (the status line, the picker) is pewter-ui/style.css, imported in
+   main.ts. */
+html,
 body {
-  margin: 0; display: flex; flex-direction: column;
-  font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: light-dark(#f7f5f2, #16161a);
-  color: light-dark(#1b1b1f, #e8e6e3);
+  height: 100%;
 }
-#status { margin: 0; padding: 0.5rem 1rem; font-size: 0.85rem; opacity: 0.75; white-space: pre-wrap; }
-#status button {
-  font: inherit; font-size: 0.8rem; margin-left: 0.6rem; padding: 0.1rem 0.6rem; cursor: pointer;
-  border-radius: 5px; border: 1px solid light-dark(#0003, #fff3);
-  background: transparent; color: inherit;
+body {
+  display: flex;
+  flex-direction: column;
 }
-#picker { width: 100%; max-width: 40rem; margin: 0 auto; padding: 2.5rem 2rem; box-sizing: border-box; }
-#picker h1 { font-size: 1.6rem; margin: 0 0 0.2rem; }
-#note { margin: 0 0 1.6rem; opacity: 0.6; font-size: 0.85rem; }
-#places { list-style: none; margin: 0; padding: 0; }
-#places li { border-bottom: 1px solid light-dark(#0001, #fff2); }
-#places button {
-  font: inherit; width: 100%; text-align: left; padding: 0.6rem 0.2rem; cursor: pointer;
-  border: none; background: transparent; color: inherit;
-}
-#places button:hover { background: light-dark(#0000000d, #ffffff0d); }
 /* The terminal takes everything under the status line, on the same slab the
    theme in main.ts is set against — it does not invert with the page,
    because a terminal that flips colours under running output is worse than
    one that commits. The padding goes on .xterm rather than on this box: the
    fit addon measures the box and reads the padding off .xterm itself, so
    this is the arrangement it sizes correctly. */
-#term { flex: 1; min-height: 0; background: #17191c; }
-#term .xterm { padding: 0.65rem 0.8rem; }
+#term {
+  flex: 1;
+  min-height: 0;
+  background: #17191c;
+}
+#term .xterm {
+  padding: 0.65rem 0.8rem;
+}

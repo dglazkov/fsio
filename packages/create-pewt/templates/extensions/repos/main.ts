@@ -4,7 +4,11 @@
 // read it, change it, or delete it. Nothing it uses is private to it: every
 // call below has a spelling on the command line too — `pewt repos`,
 // `pewt repos create <name>`, `pewt repos clone <url>`.
-import { pewt, PewtError } from "pewter";
+import { explain, pewt } from "pewter";
+// The shared look: tokens and base styles, an ordinary dependency of this
+// pewter. Delete the import (and the classes in index.html) to style this
+// screen entirely yourself.
+import "pewter-ui/style.css";
 
 const list = document.getElementById("list")!;
 const note = document.getElementById("note")!;
@@ -155,11 +159,10 @@ function runScript(repo: string, script: string): void {
     });
 }
 
-/** A refusal, in the operation's own words — the code and hint travel with
- *  the error, so this screen never has to guess what went wrong. */
+/** A refusal, in the operation's own words — `explain` keeps the hint that
+ *  travels with a PewtError, so this screen never has to guess. */
 function complain(e: unknown): void {
-  const known = e instanceof PewtError ? e : null;
-  error.textContent = known ? known.message + (known.hint ? `\n${known.hint}` : "") : String(e);
+  error.textContent = explain(e);
   error.hidden = false;
 }
 

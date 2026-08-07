@@ -1,0 +1,20 @@
+{
+  "name": "pewter-ui",
+  "version": "0.0.1",
+  "private": true,
+  "description": "The look the scaffolded screens share: tokens and base styles an extension imports",
+  "type": "module",
+  "exports": {
+    "./style.css": "./style.css"
+  },
+  "scripts": {
+    "bundle": "wireit"
+  },
+  "wireit": {
+    "bundle": {
+      "command": "node scripts/make-artifact.mjs",
+      "files": ["scripts/make-artifact.mjs", "artifact/**", "style.css"],
+      "output": ["artifact-dist/**"]
+    }
+  }
+}

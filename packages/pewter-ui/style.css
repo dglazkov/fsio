@@ -1,0 +1,141 @@
+/* pewter-ui — the look the scaffolded screens share.
+ *
+ * An ordinary dependency of your pewter, imported by each extension:
+ *
+ *   import "pewter-ui/style.css";
+ *
+ * The stylesheet rides the same rail xterm's does: esbuild collects the
+ * import and the host inlines it into the tab's one file. It is swappable
+ * the way the terminal's emulator is — `npm rm pewter-ui`, delete the
+ * imports, and style your screens yourself — and nothing outside your
+ * extensions/ notices.
+ *
+ * Everything here was extracted from the three scaffolded extensions, which
+ * had each written it: the palette all three repeated, the status line and
+ * choice list the terminal and agent had byte-identical. One thing to know
+ * before overriding: the bundler places imported CSS *after* an extension's
+ * own <style>, so a screen's stylesheet wins by being more specific (its
+ * selectors are id-scoped; these are element and class rules), not by
+ * coming later.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --pewter-bg: light-dark(#f7f5f2, #16161a);
+  --pewter-ink: light-dark(#1b1b1f, #e8e6e3);
+  --pewter-error: light-dark(#a3372e, #ff8f85);
+
+  /* three weights of the same edge: row separators, controls, emphasis */
+  --pewter-hairline: light-dark(#0001, #fff2);
+  --pewter-line: light-dark(#0003, #fff3);
+  --pewter-line-strong: light-dark(#0004, #fff4);
+
+  /* a raised control, and the wash a pointer leaves over a flat one */
+  --pewter-raised: light-dark(#fff, #222228);
+  --pewter-wash: light-dark(#0000000d, #ffffff0d);
+}
+
+body {
+  margin: 0;
+  font: 15px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--pewter-bg);
+  color: var(--pewter-ink);
+}
+
+button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.8rem;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid var(--pewter-line-strong);
+  background: var(--pewter-raised);
+  color: inherit;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+input,
+textarea {
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--pewter-line);
+  background: transparent;
+  color: inherit;
+}
+input:disabled,
+textarea:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* One quiet line above a screen, for what just happened — "the shell ended",
+ * "waiting on the host". */
+.status {
+  margin: 0;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  opacity: 0.75;
+  white-space: pre-wrap;
+}
+.status button {
+  font-size: 0.8rem;
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: 5px;
+  border: 1px solid var(--pewter-line);
+  background: transparent;
+}
+
+/* A screen: one centered column with a heading and a quiet note under it. */
+.screen {
+  width: 100%;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2.5rem 2rem;
+  box-sizing: border-box;
+}
+.screen h1 {
+  font-size: 1.6rem;
+  margin: 0 0 0.2rem;
+}
+.screen .note {
+  margin: 0 0 1.6rem;
+  opacity: 0.6;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+/* A list of choices, each row one full-width button. */
+.menu {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.menu li {
+  border-bottom: 1px solid var(--pewter-hairline);
+}
+.menu li button {
+  font: inherit;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.6rem 0.2rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+.menu li button:hover {
+  background: var(--pewter-wash);
+}
+
+/* A refusal, in the operation's own words. */
+.error {
+  color: var(--pewter-error);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}

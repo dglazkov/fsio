@@ -52,7 +52,9 @@ export interface ScaffoldOptions {
 
 const REPO = "github:dglazkov/fsio";
 
-/** The two dependency specs, spelled for this source.
+/** The dependency specs, spelled for this source: `pewt`, `pewter`, and
+ *  `pewter-ui` — the shared look the scaffolded extensions import, on the
+ *  same rails as the other two.
  *
  *  The branch name IS the package directory name — `#pewt`, `#pewter` — which
  *  is the same convention `ci.yml`'s artifact job is built on. Note the key
@@ -62,7 +64,7 @@ const REPO = "github:dglazkov/fsio";
  *  keeps working with no registry name involved. */
 export function dependencies(root: string, source: Source): Record<string, string> {
   if (source.kind === "git") {
-    return { pewt: `${REPO}#pewt`, pewter: `${REPO}#pewter` };
+    return { pewt: `${REPO}#pewt`, pewter: `${REPO}#pewter`, "pewter-ui": `${REPO}#pewter-ui` };
   }
   const spec = (name: string): string => {
     const rel = path.relative(root, path.join(source.path, "packages", name));
@@ -70,7 +72,7 @@ export function dependencies(root: string, source: Source): Record<string, strin
     // hands back the platform separator.
     return `file:${rel.split(path.sep).join("/")}`;
   };
-  return { pewt: spec("pewt"), pewter: spec("pewter") };
+  return { pewt: spec("pewt"), pewter: spec("pewter"), "pewter-ui": spec("pewter-ui") };
 }
 
 /** Where the verbatim files live. Two homes, one per shape this package
@@ -130,17 +132,20 @@ export function scaffold(opts: ScaffoldOptions): string[] {
         devDependencies: {
           typescript: "^7.0.2",
         },
-        // The two packages a pewter is made of, declared like anything else.
+        // The packages a pewter is made of, declared like anything else.
         // `pewt` puts the command line on `node_modules/.bin`, which is what
         // `npm start` above finds; `pewter` is what an extension imports and
-        // what typechecks it. Being declared is what makes them survive
-        // `npm install` — see `Source` for the whole of that story.
+        // what typechecks it; `pewter-ui` is the look the scaffolded screens
+        // share, which each extension imports as a stylesheet. Being declared
+        // is what makes them survive `npm install` — see `Source` for the
+        // whole of that story.
         //
         // The xterm pair is the terminal extension's emulator. NARRATIVE.md's
         // claim is that nothing about the terminal is built into the shell —
         // what draws it is an emulator you chose — and this is where the
         // choosing happens: an ordinary dependency of your pewter, like an
-        // ACP adapter. `npm rm` both and put another in their place.
+        // ACP adapter. `npm rm` both and put another in their place — and
+        // `pewter-ui` is swappable the same way.
         dependencies: {
           "@xterm/addon-fit": "^0.10.0",
           "@xterm/xterm": "^5.5.0",
@@ -209,7 +214,10 @@ the channel between this machine and the Pewter page at once.
   single file when a tab opens it. There is no plugin API to learn. Three
   are scaffolded: \`repos/\` is the first tab, \`terminal/\` is a shell on
   this machine, and \`agent/\` is a conversation with a coding agent —
-  \`pewt tabs add terminal\` or \`pewt tabs add agent\` opens one.
+  \`pewt tabs add terminal\` or \`pewt tabs add agent\` opens one. Their
+  shared look is \`pewter-ui/style.css\`, an ordinary dependency each
+  screen imports — restyle a screen by overriding it, or drop the import
+  and start from nothing.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
   clone <url>\` fetches one, and the Projects screen offers both.

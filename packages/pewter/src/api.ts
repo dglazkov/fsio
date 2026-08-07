@@ -79,6 +79,15 @@ export class PewtError extends Error {
   }
 }
 
+/** A refusal in words a screen can show: the message, and the hint on its
+ *  own line when the operation sent one. Extracted from the scaffolded
+ *  extensions, each of which had written exactly this — it lives here rather
+ *  than in a UI package because it is about this package's error shape, not
+ *  about how anything looks. */
+export function explain(e: unknown): string {
+  return e instanceof PewtError ? e.message + (e.hint ? `\n${e.hint}` : "") : String(e);
+}
+
 /** The API surface, as an extension sees it.
  *
  *  It is written out rather than generated so an editor can complete it and
