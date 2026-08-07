@@ -41,6 +41,8 @@ export const grantId = (g) => [g.kind, ...(g.adapter ? [g.adapter] : []), g.repo
  *  beside it and what the terminal says at the moment one is recorded. */
 export function describeGrant(g) {
     const where = g.repo ?? "the pewter itself";
-    return g.kind === "run" ? `any run in ${where}` : `${g.adapter ?? "any agent"} in ${where}`;
+    // "npm install included" since #193: an install question records this same
+    // grant, so the sentence a human reads must say what it covers.
+    return g.kind === "run" ? `any run in ${where}, npm install included` : `${g.adapter ?? "any agent"} in ${where}`;
 }
 //# sourceMappingURL=grants.js.map

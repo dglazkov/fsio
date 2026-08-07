@@ -11,6 +11,17 @@ export interface Project {
      *  listed: the folder is the user's, and hiding what is in it would be a
      *  lie about their own disk. */
     git: boolean;
+    /** the branch it is on, or null — detached, or not a repository. */
+    branch: string | null;
+    /** the script names its `package.json` declares, in declaration order.
+     *  These are what `pewt.run(name, { repo })` can start — the set of
+     *  runnable things is a file, and this is that file's table of contents. */
+    scripts: string[];
+    /** null: no manifest, nothing to install. false: a manifest and no
+     *  `node_modules` — every fresh clone, and the state the install verb is
+     *  for. true: `node_modules` exists (a directory read, not a lockfile
+     *  comparison). */
+    installed: boolean | null;
 }
 /** One extension, built. `path` is folder-relative — the shell reads it
  *  through the grant, so an extension never sees bytes it did not ask for. */
@@ -69,6 +80,10 @@ export interface CloneOptions {
 export interface CloneResult {
     exitCode: number | null;
 }
+/** What an install does while it runs. Same stream as a clone's. */
+export interface InstallOptions {
+    onOutput?: (line: string, stream: "out" | "err") => void;
+}
 export interface PewtApi {
     repos: {
         /** Every project in this pewter, by name. */
@@ -90,6 +105,14 @@ export interface PewtApi {
          *  prompts — the host runs git with no terminal to ask on — and the
          *  failure arrives in git's own words through `onOutput`. */
         clone(url: string, options?: CloneOptions): Promise<CloneResult>;
+        /** `npm install` in a project — the half of clone that IS asked (#193).
+         *
+         *  Install is the first execution of what a clone fetched: lifecycle
+         *  scripts run, so the host asks a human at its own terminal first. The
+         *  question rides the run rung — `--allow-runs` and a standing
+         *  `run/<project>` grant both cover it — and this call can wait as long
+         *  as a human takes, and can come back refused. */
+        install(name: string, options?: InstallOptions): Promise<CloneResult>;
     };
     ext: {
         /** Build an extension into one self-contained HTML file. The shell calls
@@ -293,7 +316,7 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export declare const METHODS: readonly ["repos.list", "repos.create", "repos.clone", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...("files.drop" | "files.fling" | "files.list" | "files.open" | "files.show" | "tabs.add" | "tabs.close" | "tabs.focus" | "tabs.list" | "tabs.update")[]];
+export declare const METHODS: readonly ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...("files.drop" | "files.fling" | "files.list" | "files.open" | "files.show" | "tabs.add" | "tabs.close" | "tabs.focus" | "tabs.list" | "tabs.update")[]];
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
 export declare class Channel {
