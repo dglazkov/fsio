@@ -58,6 +58,10 @@ export interface Agent {
   send(message: unknown): void;
   /** stop it. The host stops what it started (D6). */
   close(): void;
+  /** what the host said it started. Set before `pewt.agent()` resolves — the
+   *  same event carries both — so a tab can draw a header and name a cwd
+   *  without asking a second question. */
+  readonly info: AgentStarted;
   /** the adapter's exit code, or null when it died on a signal or the host
    *  went away. */
   readonly exit: Promise<number | null>;
@@ -73,6 +77,12 @@ export interface AgentStarted {
   unmeasured: boolean;
   /** the working directory, relative to the pewter. */
   where: string;
+  /** the same directory, absolute — because ACP's `session/new` requires an
+   *  absolute cwd and the tab is the ACP client. The one path that crosses
+   *  to the page, on `acp-demo`'s recorded precedent (`acp/info`): it is a
+   *  label for the folder the page was already granted, not a disclosure of
+   *  anything beyond it. */
+  cwd: string;
 }
 
 /** Options → the spec that goes on the wire. Trivial, and here rather than

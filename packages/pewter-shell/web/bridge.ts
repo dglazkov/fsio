@@ -214,7 +214,10 @@ async function serveAgent(id: number, spec: Record<string, unknown>, port: Messa
     if ("m" in asked) agent.send(asked.m);
     else if (asked.close) agent.close();
   });
-  port.postMessage(event(id, { started: true }));
+  // Unlike a shell's bare `started: true`, this carries what the host said it
+  // started (AgentStarted) — the extension is the ACP client, and the cwd in
+  // it is what `session/new` requires.
+  port.postMessage(event(id, { started: agent.info }));
   return agent.exit;
 }
 

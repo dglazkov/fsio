@@ -41,7 +41,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -101,6 +101,9 @@ document.getElementById("left")!.textContent = \`left \${await shell.exit}\`;
 // one — which is the claim this checks.
 const acp = document.getElementById("acp")!;
 const agent = await pewt.agent({ repo: "site", onMessage: (m) => acp.append(JSON.stringify(m) + "\\n") });
+// What the host said it started, on the same event that resolved the handle
+// — the cwd is what an ACP client's session/new has to name.
+document.getElementById("agentinfo")!.textContent = \`\${agent.info.title} in \${agent.info.cwd}\`;
 agent.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
 await agent.exit;
 
@@ -211,7 +214,9 @@ const PARENT = `<!doctype html>
         return;
       }
       if (call.method === "agent") {
-        post({ type: "pewt:event", event: { started: true } });
+        // An agent's start carries what the host said it started — the tab
+        // is the ACP client, and the cwd is what its session/new must name.
+        post({ type: "pewt:event", event: { started: { agent: "fake", title: "A fake agent", version: "1.0.0", asks: true, unmeasured: false, where: "site", cwd: "/probe/repos/site" } } });
         return;
       }
       if (call.method === "shell") {
@@ -294,6 +299,7 @@ let tabbed = "";
 let filed = "";
 let granted = "";
 let opened = "";
+let agentinfo = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -314,6 +320,7 @@ try {
   terminal = await frame.locator("#term").textContent();
   left = await frame.locator("#left").textContent();
   acp = await frame.locator("#acp").textContent();
+  agentinfo = await frame.locator("#agentinfo").textContent();
   tabbed = await frame.locator("#tabbed").textContent();
   filed = await frame.locator("#filed").textContent();
   granted = await frame.locator("#granted").textContent();
@@ -341,6 +348,7 @@ const checks = [
   ["and the shell's exit code came back as its call's answer", left === "left 0"],
   ["an extension sent an agent a whole ACP message", JSON.stringify(result.messaged) === JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "initialize" }])],
   ["and read the agent's answer back whole", acp.trim() === JSON.stringify({ jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } })],
+  ["what the host started arrived with the handle, cwd included", agentinfo === "A fake agent in /probe/repos/site"],
   ["an extension asked the page for a tab over the same channel", result.calls.includes("tabs.add") && result.calls.includes("tabs.list")],
   ["and read back a strip holding it", tabbed === "tab-1 · 1 open"],
   ["an extension asked for a file by path, and only the path crossed", result.calls.includes("files.open") && result.calls.includes("files.list")],

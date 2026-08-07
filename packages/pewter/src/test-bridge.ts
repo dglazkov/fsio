@@ -242,7 +242,14 @@ test("an agent is live too, and what crosses is whole messages", async () => {
   port2.onmessage = (e: MessageEvent) => {
     const call = asCall(e.data);
     if (call) {
-      port2.postMessage(event(call.id, { started: true }));
+      // Unlike a shell's bare `started: true`, an agent's start carries what
+      // the host said it started — the tab is the ACP client, and the cwd in
+      // here is what its `session/new` has to name.
+      port2.postMessage(
+        event(call.id, {
+          started: { agent: "fake", title: "A fake agent", version: "1.0.0", asks: true, unmeasured: false, where: "fsio", cwd: "/pewter/repos/fsio" },
+        })
+      );
       return;
     }
     const more = asSend(e.data)!;
@@ -260,6 +267,10 @@ test("an agent is live too, and what crosses is whole messages", async () => {
   const heard: unknown[] = [];
   try {
     const agent = await apiFor(channel).agent({ repo: "fsio", onMessage: (m) => heard.push(m) });
+    // Set by the same event that resolved the handle, so a tab can draw its
+    // header and name a cwd without a second question.
+    assert.equal(agent.info.cwd, "/pewter/repos/fsio");
+    assert.equal(agent.info.asks, true);
     agent.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
     assert.equal(await agent.exit, 0);
     assert.deepEqual(sent, [{ jsonrpc: "2.0", id: 1, method: "initialize" }]);

@@ -73,11 +73,11 @@ test("both spellings name the directory node_modules will hold", () => {
   }
 });
 
-test("it ships two extensions, in the shape the bundler compiles", () => {
+test("it ships three extensions, in the shape the bundler compiles", () => {
   const root = path.join(into(), "p");
   scaffold({ root });
   // `bundleExtension` needs exactly these two names, per extension.
-  for (const ext of ["repos", "terminal"]) {
+  for (const ext of ["repos", "terminal", "chat"]) {
     assert.ok(fs.existsSync(path.join(root, `extensions/${ext}/index.html`)));
     assert.ok(fs.existsSync(path.join(root, `extensions/${ext}/main.ts`)));
   }
@@ -119,6 +119,25 @@ test("the repos rows and the terminal agree about the shell verb (#198)", () => 
   const terminal = read(root, "extensions/terminal/main.ts");
   assert.match(terminal, /import \{ pewt, args, PewtError \} from "pewter"/);
   assert.match(terminal, /await args/);
+});
+
+test("the chat tab is the ACP client, and the repos rows know how to open it", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The claim NARRATIVE.md's "Agents" chapter makes: the tab, not the host,
+  // speaks the protocol. If the chat screen reached for anything beyond the
+  // ordinary API plus its own JSON-RPC, the claim would be decoration.
+  const chat = read(root, "extensions/chat/main.ts");
+  assert.match(chat, /pewt\.agent\(/);
+  assert.match(chat, /session\/request_permission/);
+  assert.match(chat, /session\/prompt/);
+  // The handshake names the cwd the started agent reported — the one path
+  // that crosses to the page, because ACP's session/new requires it.
+  assert.match(chat, /info\.cwd/);
+  // The same argument arrangement the shell verb uses (#198): the row sends
+  // `{repo}`, the chat screen reads it and skips its picker.
+  assert.match(read(root, "extensions/repos/main.ts"), /pewt\.tabs\.add\(\{ name: "chat", title: repo, args: \{ repo \} \}\)/);
+  assert.match(chat, /await args/);
 });
 
 test("the stylesheet import compiles under the checker the scaffold declares", () => {
