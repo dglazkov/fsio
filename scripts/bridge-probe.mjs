@@ -47,7 +47,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="md">no markdown</p><p id="ran">nothing run</p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="md">no markdown</p><p id="card">no card</p><p id="ran">nothing run</p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -232,6 +232,47 @@ document.getElementById("md")!.setAttribute(
     root.querySelector("pre")?.hasAttribute("data-open") ? "open" : "-",
     root.querySelector("pre code")?.textContent ?? "-",
     root.querySelector("script") ? "SCRIPT" : "none",
+  ].join(" | ")
+);
+
+// A question and a step, driven the way the agent screen drives them. The
+// two things worth pinning: an answer carries what it *means* (an affirm is
+// styled apart from a deny, so a human is not doing that reading), and a
+// file the question names reports a click back to the screen — which is the
+// half a terminal cannot do at all.
+const ask = document.createElement("pewter-ask");
+document.body.append(ask);
+ask.question = "Write to src/main.ts?";
+ask.paths = ["/abs/repos/site/src/main.ts"];
+let opened = "";
+ask.onpath = (p) => { opened = p; };
+ask.choices = [
+  { value: "y", label: "allow once", intent: "affirm" },
+  { value: "n", label: "reject", intent: "deny" },
+];
+let picked = "";
+ask.onpick = (v) => { picked = v ?? "(dismissed)"; ask.answered = v ?? ""; };
+await ask.updateComplete;
+const askRoot = ask.shadowRoot!;
+askRoot.querySelector<HTMLButtonElement>("button.path")!.click();
+askRoot.querySelectorAll<HTMLButtonElement>(".choices button")[0]!.click();
+await ask.updateComplete;
+
+const step = document.createElement("pewter-step");
+document.body.append(step);
+step.label = "edit main.ts";
+step.state = "failed";
+await step.updateComplete;
+
+document.getElementById("card")!.setAttribute(
+  "data-card",
+  [
+    picked,
+    opened,
+    // The answer replaced the buttons and stayed on screen as a record.
+    askRoot.querySelector(".answered")?.textContent?.trim().replace(/\\s+/g, " ") ?? "-",
+    askRoot.querySelector(".choices") ? "still-asking" : "answered",
+    step.getAttribute("state") ?? "-",
   ].join(" | ")
 );
 
@@ -468,6 +509,7 @@ let brokeStack = "";
 let screens = "";
 let ran = "";
 let md = "";
+let card = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -502,6 +544,7 @@ try {
   screens = await frame.locator("#screens").textContent();
   ran = await frame.locator("#ran").textContent();
   md = await frame.locator("#md").getAttribute("data-md");
+  card = await frame.locator("#card").getAttribute("data-card");
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -538,6 +581,7 @@ const checks = [
   ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
   ["an extension ran a program and read its output, stderr kept apart", ran === "out:M1 err:on stderr exit 0"],
   ["markdown an agent wrote renders as markup, and a fence still arriving is already code", md === "h1 | https://e.test | 1 | open | const a = 1; | none"],
+  ["a permission question answers, keeps the answer on screen, and hands a file back to the screen", card === "y | /abs/repos/site/src/main.ts | answered: allow once | answered | failed"],
   ["and its argv crossed as a list, so an awkward argument stayed one argument", result.calls.includes("exec") && result.execArgs?.length === 3 && result.execArgs[2] === "a b"],
   ["an extension read what extensions/ holds, half-written ones included", screens === "probe, half (no main.ts)"],
   ["an uncaught error left the sandbox instead of dying in a console", result.troubles.some((t) => t.kind === "error" && t.message.includes("uncaught, on purpose"))],
