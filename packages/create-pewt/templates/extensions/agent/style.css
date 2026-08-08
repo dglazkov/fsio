@@ -44,7 +44,7 @@ body {
   max-width: 85%;
   padding: 0.45rem 0.7rem;
   border-radius: 10px;
-  background: light-dark(#e4e0da, #24242b);
+  background: var(--pewter-accent-wash);
 }
 .entry.thought {
   opacity: 0.55;

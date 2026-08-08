@@ -50,7 +50,7 @@ export const pathStyles = css`
     margin: 0.25rem 0;
   }
   .path {
-    font-family: var(--pewter-md-code-font, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-family: var(--_mono);
     font-size: 0.75rem;
     padding: 0.1rem 0.4rem;
     border-radius: 5px;
