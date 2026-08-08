@@ -15,6 +15,9 @@ export interface Screen {
  *
  *  There is no way to stop it, and that is not an oversight: a screen lives
  *  as long as its tab, and the tab closing takes the whole document with
- *  it. */
+ *  it.
+ *
+ *  A `view()` that throws does not leave a blank pane: the reason is rendered
+ *  where the screen would have been (`failure`, above). */
 export declare function screen(root: HTMLElement | DocumentFragment, view: () => unknown): Screen;
 //# sourceMappingURL=screen.d.ts.map
