@@ -19,8 +19,9 @@ import { SignalWatcher } from "@lit-labs/signals";
 import { tokens, panel } from "@fsio/ui";
 import { bodyLabel } from "pewter";
 import { forgetFolder, grantPending, pickFolder, regrant } from "../session";
-import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, reconnectTo, served, tabs } from "../state";
+import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, reconnectTo, screens, screensError, served, tabs } from "../state";
 import { answer, chipsOf, openFirst, setStage } from "../tabs";
+import { loadExtensions } from "../extension";
 
 /** The extension a fresh pewter opens with. The project list is not part of
  *  the product — it is `extensions/repos/`, and naming it here rather than
@@ -66,6 +67,30 @@ class PewterShell extends SignalWatcher(LitElement) {
         padding: 0.3rem 0.9rem; border-top: 1px solid var(--fsio-line);
         background: var(--fsio-panel); font-size: 0.72rem; color: var(--fsio-dimmest);
       }
+      /* The page's own door to an extension (#187). A disclosure, so it
+         closes itself and needs no open-state here. */
+      .opener { position: relative; flex: none; }
+      .opener summary {
+        list-style: none; cursor: pointer; user-select: none;
+        padding: 0.1rem 0.5rem; border: 1px solid var(--fsio-line); border-radius: 6px;
+        color: var(--fsio-dim); font-size: 0.9rem; line-height: 1.3;
+      }
+      .opener summary::-webkit-details-marker { display: none; }
+      .opener summary:hover { color: var(--fsio-fg); border-color: var(--fsio-dim); }
+      .opener[open] summary { color: var(--fsio-fg); }
+      .opener .sheet {
+        position: absolute; right: 0; top: calc(100% + 0.35rem); z-index: 20;
+        min-width: 11rem; display: flex; flex-direction: column; gap: 0.1rem;
+        padding: 0.35rem; border: 1px solid var(--fsio-line); border-radius: 8px;
+        background: var(--fsio-panel);
+      }
+      .opener .sheet button {
+        text-align: left; border-color: transparent; background: transparent;
+        padding: 0.25rem 0.5rem; font-size: 0.78rem;
+      }
+      .opener .sheet button:hover:not(:disabled) { border-color: var(--fsio-line); }
+      .opener .sheet button em { font-style: normal; color: var(--fsio-dimmest); }
+      .opener .quiet-note { margin: 0; padding: 0.25rem 0.5rem; font-size: 0.75rem; color: var(--fsio-dimmest); }
       footer .mark { color: var(--fsio-cyan); }
       footer .bad { font-size: 0.72rem; }
     `,
@@ -80,6 +105,7 @@ class PewterShell extends SignalWatcher(LitElement) {
     return html`
       <fsio-top-bar .name=${folder.get() ? `${folder.get()}/` : "pewter"} suffix=${folder.get() ? "" : "· no folder yet"}>
         ${live ? this.#strip() : nothing}
+        ${live ? this.#opener() : nothing}
       </fsio-top-bar>
       ${live ? this.#live() : this.#setup()}
     `;
@@ -106,6 +132,61 @@ class PewterShell extends SignalWatcher(LitElement) {
       @select=${(e: CustomEvent<{ id: string }>) => void answer("tabs.focus", { id: e.detail.id })}
       @close=${(e: CustomEvent<{ id: string }>) => void answer("tabs.close", { id: e.detail.id })}
     ></fsio-tab-strip>`;
+  }
+
+  /** The page's own door to an extension (#187).
+   *
+   *  Before this, the shell opened one extension per page load and every tab
+   *  after that came from a command — an extension calling `pewt.tabs.add()`,
+   *  or `pewt tabs add` in a terminal. Close the last tab and both doors were
+   *  gone from the page, and the one screen that could have asked was the one
+   *  you just closed. What was left was a terminal, which is not a thing a
+   *  page should require.
+   *
+   *  In `slot="status"` rather than beside the strip, and that matters: the
+   *  strip measures its own box to decide how many chips fit, and the bar's
+   *  `::slotted(*) { flex: 1 }` is what gives it the row's width. A sibling in
+   *  the default slot would make it as wide as its chips and it would start
+   *  hiding tabs on a bar with room to spare. The status slot is `flex: none`.
+   *
+   *  A native `<details>` rather than a popover: it closes on its own, it is
+   *  keyboard-reachable, and it needs no state here for whether it is open. */
+  #opener(): TemplateResult {
+    const list = screens.get();
+    const failed = screensError.get();
+    return html`<details
+      slot="status"
+      class="opener"
+      @toggle=${(e: Event) => {
+        // Asked on every open, never cached: the folder is the list, and a
+        // screen an agent wrote a minute ago should be on it without a reload.
+        if ((e.target as HTMLDetailsElement).open) void loadExtensions();
+      }}
+    >
+      <summary title="open an extension" aria-label="open an extension">+</summary>
+      <div class="sheet">
+        ${failed
+          ? html`<p class="bad">${failed}</p>`
+          : list === null
+            ? html`<p class="quiet-note">asking the host…</p>`
+            : list.length === 0
+              ? html`<p class="quiet-note">extensions/ is empty — nothing to open.</p>`
+              : list.map(
+                  (e) => html`
+                    <button
+                      ?disabled=${!e.ready}
+                      title=${e.ready ? `open ${e.name}` : `extensions/${e.name}/ has no ${e.missing}`}
+                      @click=${(ev: Event) => {
+                        (ev.target as HTMLElement).closest("details")?.removeAttribute("open");
+                        void answer("tabs.add", { name: e.name });
+                      }}
+                    >
+                      ${e.name}${e.ready ? nothing : html`<em> — no ${e.missing}</em>`}
+                    </button>
+                  `
+                )}
+      </div>
+    </details>`;
   }
 
   /** Three faces, in precedence order: a drop waiting for its allow, the
@@ -173,7 +254,7 @@ class PewterShell extends SignalWatcher(LitElement) {
           ? html`<span><span class="mark">▸</span> ${shown.name} · ${shown.bytes} B · ${shown.hash}${shown.rebuilt ? " · rebuilt" : ""}</span>`
           : active
             ? html`<span><span class="mark">▸</span> ${bodyLabel(active.body)}</span>`
-            : html`<span>${list.length ? "nothing on screen" : `opening ${FIRST}…`}</span>`}
+            : html`<span>${list.length ? "nothing on screen" : this.#opened ? "no tabs open — the + in the bar opens one" : `opening ${FIRST}…`}</span>`}
         <span>${list.length} ${list.length === 1 ? "tab" : "tabs"}</span>
         ${held.length ? html`<span>${held.length} held</span>` : nothing}
         <span>${opaque.get() === null ? "frame not loaded" : opaque.get() ? "own origin" : "SAME ORIGIN — the sandbox is not holding"}</span>

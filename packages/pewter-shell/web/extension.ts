@@ -14,6 +14,8 @@
 // Where those bytes then go is tabs.ts's business. This stops at "here is the
 // document", so that the thing which fails — a compile error, a bundle the
 // page cannot read — fails before any tab exists to show it.
+import type { Extension } from "pewter";
+import { screens, screensError } from "./state";
 import { callHost, readAt, ShellCallError } from "./session";
 import { step } from "./reporter";
 
@@ -47,4 +49,21 @@ export async function buildExtension(name: string): Promise<Bundle & { html: str
     );
   }
   return { ...bundle, html };
+}
+
+/** Ask the host what `extensions/` holds, for the strip's opener (#187).
+ *
+ *  Every open of the menu asks again rather than caching: the folder is the
+ *  list, and an extension an agent wrote a minute ago should be on it without
+ *  a reload. A refusal lands in `screensError` and the menu says so — an
+ *  opener that silently shows nothing is the blankness this replaced. */
+export async function loadExtensions(): Promise<void> {
+  screensError.set("");
+  try {
+    const { extensions } = (await callHost("ext.list", {})) as { extensions: Extension[] };
+    screens.set(extensions);
+  } catch (e) {
+    screens.set([]);
+    screensError.set(e instanceof Error ? e.message : String(e));
+  }
 }
