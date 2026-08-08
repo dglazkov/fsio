@@ -240,7 +240,8 @@ the channel between this machine and the Pewter page at once.
   \`pewt tabs add terminal\` or \`pewt tabs add agent\` opens one. Their
   shared look is \`pewter-ui\`, an ordinary dependency with two imports:
   \`import "pewter-ui"\` registers its typed elements — \`<pewter-status>\`,
-  \`<pewter-menu>\` — and \`import "pewter-ui/style.css"\` is the styles.
+  \`<pewter-menu>\`, \`<pewter-markdown>\` — and
+  \`import "pewter-ui/style.css"\` is the styles.
   The elements are the kit's API: the package's \`.d.ts\` names its tags,
   so your editor completes them and \`pewt check\` fails a misuse. Before
   styling or building a screen, read \`node_modules/pewter-ui\` — one
@@ -272,6 +273,27 @@ the channel between this machine and the Pewter page at once.
   components with shadow roots — restyle those through the
   \`--pewter-*\` properties or their \`part\` names, both listed at the top
   of \`node_modules/pewter-ui/style.css\`.
+- **Text a model wrote goes in \`<pewter-markdown>\`, not in
+  \`textContent\`.** An agent answers in markdown, so text put on the page
+  as-is reads as \`**the file**\` and a fenced block arrives as three
+  backticks. One property, and it is safe to set repeatedly while a turn
+  streams:
+
+  \`\`\`ts
+  const md = document.createElement("pewter-markdown");
+  said.append(md);
+  md.text = whatTheAgentHasSaidSoFar;   // again on every chunk
+  \`\`\`
+
+  It re-parses each time, and a code fence that has not closed yet renders
+  as code rather than as backticks — which is what makes it right for
+  streaming rather than only for finished messages.
+
+  **Never build HTML from model output.** This element turns the text into a
+  token tree and renders the tree; it never makes an HTML string, and
+  \`innerHTML\` on anything an agent wrote would hand a capability to
+  whatever the model was quoting. The port your extension holds is the
+  capability, and a file an agent summarizes can contain anything.
 
   **The first draw is synchronous.** \`screen()\` renders once before it
   returns, so anything your view calls must already exist — write helpers

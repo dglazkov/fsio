@@ -11,7 +11,14 @@
     // ES2022 class field would define an own property over the top of them
     // and the element would stop reacting. This is Lit's documented setting
     // for TypeScript without decorators, and @fsio/ui's for the same reason.
-    "useDefineForClassFields": false
+    "useDefineForClassFields": false,
+    // Node only for `node:test` in test-markdown.ts, following `pewter`'s
+    // precedent, which follows @fsio/ui's. Nothing that ships from here
+    // imports a Node module: this package is bundled into an extension,
+    // where there is no Node to import. The markdown parser is the reason
+    // there are tests at all — it carries a security claim, and a claim like
+    // that should fail a build rather than a browser session.
+    "types": ["node"]
   },
   "include": ["src"]
 }
