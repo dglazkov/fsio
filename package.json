@@ -35,7 +35,8 @@
     "agent-reach-lab": "node scripts/agent-reach-lab.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "check-anchors": "wireit",
-    "read-wall-lab": "node scripts/read-wall-lab.mjs"
+    "read-wall-lab": "node scripts/read-wall-lab.mjs",
+    "kit": "npm run gallery -w packages/pewter-ui"
   },
   "wireit": {
     "build": {

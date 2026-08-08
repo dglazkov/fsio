@@ -359,6 +359,9 @@ function permission(params: Params): Promise<unknown> {
       // what was allowed.
       ask.answered = value ?? "";
       if (!value) ask.answeredLabel = "declined";
+      // Past tense, because it is: a card reading "the agent is asking" above
+      // an answer it already has is the screen saying something untrue.
+      ask.who = ask.who.replace("is asking", "asked");
       ask.onpick = null;
       resolve(value ? { outcome: { outcome: "selected", optionId: value } } : { outcome: { outcome: "cancelled" } });
     };

@@ -14,14 +14,17 @@
   "scripts": {
     "build": "wireit",
     "bundle": "wireit",
-    "test": "wireit"
+    "test": "wireit",
+    "gallery": "vite"
   },
   "wireit": {
     "build": {
-      "command": "tsc --pretty",
+      "command": "tsc --pretty && tsc -p tsconfig.gallery.json --pretty",
       "files": [
         "src/**",
+        "gallery/**",
         "tsconfig.json",
+        "tsconfig.gallery.json",
         "../../tsconfig.base.json"
       ],
       "output": [
