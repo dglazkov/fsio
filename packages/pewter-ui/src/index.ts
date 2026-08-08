@@ -1,7 +1,8 @@
 // The kit an extension imports: elements the compiler knows, and a screen
 // that follows its own state.
 //
-//     import "pewter-ui";              registers <pewter-status>, <pewter-menu>
+//     import "pewter-ui";              registers <pewter-status>, <pewter-menu>,
+//                                     <pewter-markdown>
 //     import "pewter-ui/style.css";    the page around them
 //     import { screen } from "pewter-ui";
 //
@@ -20,11 +21,15 @@
 // `--pewter-*` custom properties in tokens.ts, and the `part=` names on the
 // markup inside. Both are listed in style.css, which is where somebody
 // restyling a screen will be looking.
+import { PewterMarkdown } from "./prose.js";
 import { PewterMenu } from "./menu.js";
 import { PewterStatus } from "./status.js";
 
 export { PewterStatus } from "./status.js";
 export { PewterMenu } from "./menu.js";
+export { PewterMarkdown, renderMarkdown } from "./prose.js";
+export { parseMarkdown, parseInline } from "./markdown.js";
+export type { Block, Inline } from "./markdown.js";
 export type { PewterMenuChoice } from "./menu.js";
 export { screen } from "./screen.js";
 export type { Screen } from "./screen.js";
@@ -37,3 +42,4 @@ const define = (tag: string, ctor: CustomElementConstructor): void => {
 };
 define("pewter-status", PewterStatus);
 define("pewter-menu", PewterMenu);
+define("pewter-markdown", PewterMarkdown);
