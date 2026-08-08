@@ -126,8 +126,16 @@ class Rpc {
 
 /** The agent's words arrive as fragments, so consecutive fragments of one
  *  kind append to one block — the agent owns its line breaks, not this
- *  screen. Anything else that lands in the transcript resets the weld. */
-let streaming: { kind: string; el: HTMLElement } | null = null;
+ *  screen. Anything else that lands in the transcript resets the weld.
+ *
+ *  The welded block is a `<pewter-markdown>` and the fragments are its
+ *  source, because an agent answers in markdown: before this the screen put
+ *  the text on the page as-is, so a person read `**the file**` and a fenced
+ *  block arrived as three backticks and a wall of unwrapped code. Setting
+ *  `.text` again with more of it is the whole of streaming — the element
+ *  re-parses, and an unterminated fence renders as code rather than as
+ *  backticks while the rest is still arriving. */
+let streaming: { kind: string; el: HTMLElementTagNameMap["pewter-markdown"]; src: string } | null = null;
 
 function entry(kind: string): HTMLElement {
   const el = document.createElement("div");
@@ -146,8 +154,14 @@ function line(kind: string, text: string): HTMLElement {
 
 function stream(kind: "agent" | "thought", text: string): void {
   if (!text) return;
-  if (!streaming || streaming.kind !== kind) streaming = { kind, el: entry(kind) };
-  streaming.el.textContent += text;
+  if (!streaming || streaming.kind !== kind) {
+    const el = entry(kind);
+    const md = document.createElement("pewter-markdown");
+    el.append(md);
+    streaming = { kind, el: md, src: "" };
+  }
+  streaming.src += text;
+  streaming.el.text = streaming.src;
   log.scrollTop = log.scrollHeight;
 }
 

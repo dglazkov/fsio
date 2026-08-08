@@ -47,7 +47,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="ran">nothing run</p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="md">no markdown</p><p id="ran">nothing run</p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -210,6 +210,30 @@ const screens = await pewt.ext.list();
 document.getElementById("screens")!.textContent = screens.extensions
   .map((e) => (e.ready ? e.name : \`\${e.name} (no \${e.missing})\`))
   .join(", ");
+
+// Markdown, in the same sandbox. An agent answers in markdown and the screen
+// used to put it on the page as-is; this is the element that renders it. The
+// interesting checks are the two the parser exists for: an unclosed fence is
+// (a tilde fence here, because this whole block lives inside a template
+// literal and a backtick would end it)
+// already a code block while the rest is still arriving, and a javascript:
+// link stays text rather than becoming clickable.
+const md = document.createElement("pewter-markdown");
+document.body.append(md);
+md.text = "# hi\\n\\nsee [safe](https://e.test) and [bad](javascript:alert(1))\\n\\n~~~ts\\nconst a = 1;";
+await md.updateComplete;
+const root = md.shadowRoot!;
+document.getElementById("md")!.setAttribute(
+  "data-md",
+  [
+    root.querySelector("h1") ? "h1" : "-",
+    root.querySelector("a")?.getAttribute("href") ?? "-",
+    root.querySelectorAll("a").length,
+    root.querySelector("pre")?.hasAttribute("data-open") ? "open" : "-",
+    root.querySelector("pre code")?.textContent ?? "-",
+    root.querySelector("script") ? "SCRIPT" : "none",
+  ].join(" | ")
+);
 
 // A view that throws must put its reason on screen. The bug this pins cost a
 // session: an extension called a helper declared below its own \`screen()\`
@@ -443,6 +467,7 @@ let broke = "";
 let brokeStack = "";
 let screens = "";
 let ran = "";
+let md = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -476,6 +501,7 @@ try {
   brokeStack = await frame.locator("#broken").getAttribute("data-stack");
   screens = await frame.locator("#screens").textContent();
   ran = await frame.locator("#ran").textContent();
+  md = await frame.locator("#md").getAttribute("data-md");
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -511,6 +537,7 @@ const checks = [
   ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
   ["an extension ran a program and read its output, stderr kept apart", ran === "out:M1 err:on stderr exit 0"],
+  ["markdown an agent wrote renders as markup, and a fence still arriving is already code", md === "h1 | https://e.test | 1 | open | const a = 1; | none"],
   ["and its argv crossed as a list, so an awkward argument stayed one argument", result.calls.includes("exec") && result.execArgs?.length === 3 && result.execArgs[2] === "a b"],
   ["an extension read what extensions/ holds, half-written ones included", screens === "probe, half (no main.ts)"],
   ["an uncaught error left the sandbox instead of dying in a console", result.troubles.some((t) => t.kind === "error" && t.message.includes("uncaught, on purpose"))],
