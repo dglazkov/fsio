@@ -3,7 +3,8 @@
  * An ordinary dependency of your pewter, imported by each extension:
  *
  *   import "pewter-ui";              the typed elements — <pewter-status>,
- *                                    <pewter-menu> — see dist/index.d.ts
+ *                                    <pewter-menu>, <pewter-markdown> —
+ *                                    see dist/index.d.ts
  *   import "pewter-ui/style.css";    this stylesheet
  *
  * The stylesheet rides the same rail xterm's does: esbuild collects the
@@ -35,6 +36,33 @@
  *   pewter-status::part(button) { text-transform: uppercase; }
  *   pewter-menu::part(row)      { border-bottom-style: dashed; }
  *   pewter-menu::part(hint)     { font-style: italic; }
+ *
+ * ## <pewter-markdown>
+ *
+ * What an agent says, rendered as what it meant. One property:
+ *
+ *   const md = document.createElement("pewter-markdown");
+ *   md.text = "**done** — see `src/main.ts`";
+ *
+ * Set `.text` again with more of it while a turn streams; it re-parses, and
+ * a fence that has not closed yet renders as code rather than as backticks.
+ *
+ * Agent text becomes a token tree and never an HTML string — there is no
+ * `unsafeHTML` anywhere in this package and there must never be one. A
+ * `javascript:` link stays readable text rather than becoming clickable.
+ *
+ * Its own properties, on top of the palette:
+ *
+ *   --pewter-md-code-bg     behind a code span and a code block (both)
+ *   --pewter-md-code-font   the monospace stack
+ *   --pewter-md-gap         space between blocks
+ *   --pewter-md-rule        <hr>, and the mark on a still-open code fence
+ *   --pewter-md-quote       the bar beside a blockquote
+ *
+ * And its parts: `p`, `heading`, `code` (a block), `code-span`, `list`,
+ * `item`, `quote`, `rule`, `link`.
+ *
+ *   pewter-markdown::part(code) { max-height: 20rem; }
  *
  * `<pewter-status>` has `said` and `button`; `<pewter-menu>` has `list`,
  * `row`, `hint` and `button`. If you want more than those two hooks give
