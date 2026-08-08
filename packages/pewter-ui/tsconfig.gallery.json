@@ -1,0 +1,20 @@
+{
+  // The gallery is a page, not something this package ships: `noEmit`, and a
+  // config of its own so `dist/` stays exactly the kit.
+  //
+  // It is typechecked at all because vite strips types without looking at
+  // them, so nothing else would notice the day an element's property is
+  // renamed and the gallery keeps setting the old one. A gallery that has
+  // quietly stopped matching the elements is worse than not having one.
+  //
+  // Only `gallery` is included: the sources it imports come in transitively,
+  // and naming `src` as well would drag in test-markdown.ts, which wants the
+  // Node types this config drops.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": []
+  },
+  "include": ["gallery"]
+}
