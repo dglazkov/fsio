@@ -12,7 +12,7 @@
 // signal than two, but answering it from inside a skeleton would settle a
 // library's shape as a side effect of building something else.
 import { FsioClient, RpcError, type FsioSession } from "@fsio/client";
-import { asCommand, encodeControl, receipt, receiptError, safeRelPath } from "pewter";
+import { asCommand, encodeControl, receipt, receiptError, safeRelPath, type ProcessMethod } from "pewter";
 import { forgetHandle, saveHandle, savedHandle } from "./db";
 import { folder, gate, host, pending, phase, pickError, reconnectTo } from "./state";
 import { adoptCatalog, answer } from "./tabs";
@@ -348,8 +348,9 @@ export async function runOnHost(
   onLine: (line: string, stream: "out" | "err") => void,
   // A clone is the same conversation with a different child (`repos.clone`,
   // packages/pewt/src/clone.ts): frames in, exit code out. One reader here,
-  // so the two cannot drift.
-  kind: "run" | "repos.clone" | "repos.install" = "run"
+  // so the four cannot drift. `exec` joined them with the same frames and a
+  // different child again (packages/pewt/src/exec.ts).
+  kind: ProcessMethod = "run"
 ): Promise<{ exitCode: number | null }> {
   if (!client) throw new ShellCallError("no_session", "the shell is not connected to a host", "start one in the pewter: npm start");
   const run = client.createSession({ kind, client: "pewter-shell", ...spec }, { pollMs: 15 });

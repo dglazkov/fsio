@@ -12,7 +12,7 @@
 // field added on one side and not the other stops the build.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { METHODS, PAGE_METHODS, type Bundle as ApiBundle, type Project as ApiProject } from "pewter";
+import { METHODS, PAGE_METHODS, PROCESS_METHODS, type Bundle as ApiBundle, type Project as ApiProject } from "pewter";
 import type { Bundle } from "./bundle.js";
 import { hostAnswers, OPERATIONS, PROCESSES } from "./ops.js";
 import type { Project } from "./repos.js";
@@ -33,6 +33,23 @@ test("the API package spells exactly the operations the host serves", () => {
   // it calls any other, and one missing from either side is the drift this
   // file exists to stop.
   assert.deepEqual([...METHODS].sort(), [...OPERATIONS.map((o) => o.method), ...PROCESSES.map((o) => o.method)].sort());
+});
+
+test("every process the host serves is one the shell knows how to route", () => {
+  // The bug this exists to stop, which it did not stop the first time: `exec`
+  // was added to the host's table and to the API, and the shell's dispatch
+  // was a hand-written condition listing `run`, `repos.clone` and
+  // `repos.install`. So `pewt exec` worked from a terminal and every call
+  // from a page came back "unknown method: exec" — the fallthrough treats an
+  // unrouted method as a request, and the operation table has no entry for a
+  // process.
+  //
+  // The shell routes a process one of three ways: the streaming shape that
+  // `runOnHost` serves (`PROCESS_METHODS`, now a shared list rather than a
+  // condition), and the two that hold a live stream open in both directions
+  // and therefore have handlers of their own.
+  const routed = [...PROCESS_METHODS, "shell", "agent"];
+  assert.deepEqual(routed.sort(), PROCESSES.map((o) => o.method).sort());
 });
 
 test("the page's own list is exactly the operations the host does not answer", () => {
