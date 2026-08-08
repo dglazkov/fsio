@@ -259,6 +259,8 @@ function readJson(file) {
     return null;
   }
 }
+var PTY_CHUNK = 512;
+var PTY_CHUNK_MS = 20;
 var ptyModCache;
 async function loadPty() {
   if (ptyModCache !== void 0)
@@ -305,6 +307,11 @@ var Session = class {
   // finished segments
   proc = null;
   usesPty = false;
+  // Input waiting to reach a pty, and the timer draining it. A terminal's
+  // input queue is about a kilobyte and it discards what does not fit, so a
+  // burst written in one call is silently truncated — see `toPty`.
+  ptyPending = "";
+  ptyTimer = null;
   // Base directory for a spawned child (D22): the resolved workspace root
   // in hub mode, the shared dir otherwise. Resolved once, before the
   // policy sees it, so the judged cwd and the executed cwd cannot drift.
@@ -483,6 +490,11 @@ var Session = class {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    if (this.ptyTimer) {
+      clearTimeout(this.ptyTimer);
+      this.ptyTimer = null;
+    }
+    this.ptyPending = "";
     if (this.proc) {
       try {
         if (this.pty)
@@ -1377,6 +1389,62 @@ var HostServer = class {
       pty: !!this.ptyMod && spec.pty !== false
     };
   }
+  /** Write to a pty without losing the end of it.
+   *
+   *  A terminal's input queue is a fixed buffer in the line discipline, and
+   *  when it is full the kernel **discards** what does not fit rather than
+   *  blocking the writer. Nothing reports that: `write` returns void, node-pty
+   *  offers no drain, and the bytes are simply not there. An extension that
+   *  wrote a script in one call got a shell that ran the first third of it and
+   *  stopped, with no error anywhere (#210).
+   *
+   *  Measured on macOS, `/bin/sh` on a real pty, one `write` per burst:
+   *
+   *      1,070 bytes        60 of 60 lines
+   *      1,160 bytes        61 of 65
+   *      3,690 bytes        83 of 200   (child at a prompt)
+   *      3,690 bytes        66 of 200   (child in `sleep 2`)
+   *      15,090 bytes       78 of 800
+   *
+   *  The survivor count plateaus around 66 regardless of how much is written,
+   *  which is the signature of a fixed queue rather than of a slow reader.
+   *
+   *  So: never hand the line discipline more than it holds. Chunks go out
+   *  under the limit, one per tick, and the same burst then arrives whole —
+   *  3,690 bytes measured at 200 of 200 with the child reading. A burst that
+   *  arrives while the child reads nothing at all is still lost after the
+   *  first chunk-full, and no amount of pacing changes that (measured: 65 of
+   *  200 at every chunk size and delay tried). That residue is a property of
+   *  driving a terminal programmatically, and the way out of it is an
+   *  operation that runs a command and captures its output rather than a
+   *  keyboard — which is #210's open question, not something this can fix.
+   *
+   *  Keystrokes are unaffected: anything that fits in one chunk is written
+   *  immediately, on this tick, with no timer involved. */
+  toPty(s, data) {
+    s.ptyPending += data;
+    if (s.ptyTimer)
+      return;
+    if (s.ptyPending.length <= PTY_CHUNK) {
+      const all = s.ptyPending;
+      s.ptyPending = "";
+      s.pty?.write(all);
+      return;
+    }
+    const pump = () => {
+      s.ptyTimer = null;
+      if (s.done || !s.pty) {
+        s.ptyPending = "";
+        return;
+      }
+      const piece = s.ptyPending.slice(0, PTY_CHUNK);
+      s.ptyPending = s.ptyPending.slice(PTY_CHUNK);
+      s.pty.write(piece);
+      if (s.ptyPending)
+        s.ptyTimer = setTimeout(pump, PTY_CHUNK_MS);
+    };
+    pump();
+  }
   startShell(s) {
     const spec = s.spawn;
     const { cmd, args: cmdArgs, cwd, pty: usePty } = this.resolveShell(spec, s.root ?? this.sharedDir);
@@ -1614,7 +1682,7 @@ var HostServer = class {
         if (!s.proc)
           break;
         if (s.pty)
-          s.pty.write(Buffer.from(frame.payload).toString("utf8"));
+          this.toPty(s, Buffer.from(frame.payload).toString("utf8"));
         else
           s.child.stdin.write(Buffer.from(frame.payload));
         break;
