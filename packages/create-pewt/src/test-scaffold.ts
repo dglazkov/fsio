@@ -5,6 +5,7 @@
 // for, the extension layout the bundler compiles, and the four things
 // .gitignore sorts by what deletes them.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -169,8 +170,9 @@ test("the repos rows and the terminal agree about the shell verb (#198)", () => 
   // reads it and skips its picker. The page between them carries it unread,
   // so this agreement — the whole contract — lives in these two files.
   const repos = read(root, "extensions/repos/main.ts");
-  // One call for both verbs, each row naming which extension it opens.
-  assert.match(repos, /pewt\.tabs\.add\(\{ name, title: repo, args: \{ repo \} \}\)/);
+  // One call for both verbs, each row naming which extension it opens. The
+  // title falls back for the pewter itself, which has no repo name.
+  assert.match(repos, /pewt\.tabs\.add\(\{ name, title: repo \?\? "this pewter", args: \{ repo \} \}\)/);
   assert.match(repos, /openTab\("terminal", repo\.name\)/);
   const terminal = read(root, "extensions/terminal/main.ts");
   assert.match(terminal, /import \{ pewt, args, explain \} from "pewter"/);
@@ -196,6 +198,25 @@ test("the agent tab is the ACP client, and the repos rows know how to open it", 
   assert.match(agent, /await args/);
 });
 
+test("an agent can be started in the pewter itself, not only in a project", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // `extensions/` is at the pewter root, so an agent asked to write a screen
+  // has to start above the repos rather than inside one. The header's verb is
+  // the only way to say that from the page: closing the agent tab and opening
+  // it bare reaches the same place, but nothing on a page opens an extension
+  // (#187), so without this the pewter-wide agent needs a terminal.
+  const repos = read(root, "extensions/repos/main.ts");
+  assert.match(repos, /openTab\("agent", null\)/);
+  // Both ends of that argument, the way the shell verb's is pinned above: the
+  // header sends `{repo: null}` and the agent screen has to mean the pewter
+  // by it rather than fall through to its picker. `null` is a value `repo`
+  // carries, so `"repo" in` is what tells it from an argument that is absent.
+  const agent = read(root, "extensions/agent/main.ts");
+  assert.match(agent, /"repo" in openedWith/);
+  assert.match(agent, /typeof where === "string" \|\| where === null/);
+});
+
 test("the stylesheet import compiles under the checker the scaffold declares", () => {
   const root = path.join(into(), "p");
   scaffold({ root });
@@ -213,16 +234,39 @@ test("everything sorts by what deletes it", () => {
   scaffold({ root });
   const ignored = read(root, ".gitignore");
   // Your work is not committed, which is what lets a pewter be pushed
-  // somewhere public.
-  assert.match(ignored, /^repos\/$/m);
+  // somewhere public. Anchored: an earlier bare `repos/` matched a directory
+  // of that name at any depth and swallowed `extensions/repos/`, and the
+  // assertion here was written in the same shape, so it pinned the bug
+  // instead of catching it. The real check is the git one below.
+  assert.match(ignored, /^\/repos\/$/m);
   // Regenerated: the channel and this pewter's own state.
-  assert.match(ignored, /^\.fsio\/$/m);
-  assert.match(ignored, /^\.pewter\/$/m);
+  assert.match(ignored, /^\/\.fsio\/$/m);
+  assert.match(ignored, /^\/\.pewter\/$/m);
   // Committed: the pewter itself. Absent from the ignore file on purpose.
   for (const kept of ["AGENTS.md", "package.json", "tsconfig.json", "extensions/"]) {
     assert.doesNotMatch(ignored, new RegExp(`^${kept.replace(".", "\\.")}$`, "m"));
   }
   assert.ok(fs.statSync(path.join(root, "repos")).isDirectory(), "repos/ exists on disk though it is never in history");
+});
+
+test("a clone brings the screens back — git agrees, not just the ignore file", () => {
+  const root = path.join(into(), "p");
+  scaffold({ root });
+  // The one assertion that would have caught the anchoring bug. A `.gitignore`
+  // is a set of patterns with real semantics, and reading it as strings is how
+  // `extensions/repos/` — the first screen a pewter shows — spent a day being
+  // silently uncommittable while NARRATIVE.md promised a clone restores it.
+  // So ask git, which is the only thing that actually decides.
+  if (spawnSync("git", ["init", "--quiet"], { cwd: root }).status !== 0) return; // no git here; nothing to prove
+  const ignores = (rel: string): boolean => spawnSync("git", ["check-ignore", "-q", rel], { cwd: root }).status === 0;
+  for (const kept of ["extensions/repos/main.ts", "extensions/agent/main.ts", "extensions/terminal/main.ts", "AGENTS.md", "package.json", "tsconfig.json"]) {
+    assert.ok(!ignores(kept), `${kept} must be committable — a clone that does not restore it is not the pewter`);
+  }
+  // And the other direction still holds: your work, the channel and the
+  // remembered answers stay out of history.
+  for (const dropped of ["repos/anything", ".fsio/x", ".pewter/grants.json", "node_modules/x"]) {
+    assert.ok(ignores(dropped), `${dropped} must stay out of history`);
+  }
 });
 
 test("tsconfig covers extensions/, which is what `pewt check` compiles", () => {

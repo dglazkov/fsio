@@ -29,7 +29,7 @@
 // shadow root and no host element to be, so what it needs is lit-html's
 // `render()` plus something to call it again at the right moment. That
 // something is thirty lines, and this is them.
-import { render } from "lit";
+import { html, render } from "lit";
 import { Signal } from "@lit-labs/signals";
 
 /** A screen, once it is on the page. */
@@ -46,11 +46,43 @@ export interface Screen {
   drawn(): Promise<void>;
 }
 
+/** What a screen shows when its own view throws.
+ *
+ *  Styled inline rather than through the kit's stylesheet, because a screen
+ *  can throw before anything it imported has had a chance to matter, and an
+ *  error message that depends on the thing that broke is not an error
+ *  message. The colours are literals for the same reason — a `--pewter-*`
+ *  custom property is a promise about a stylesheet being present.
+ *
+ *  The first line is the message, because that is what a person reads. The
+ *  stack is under it, because that is what fixes it. */
+function failure(e: unknown): unknown {
+  const said = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  const stack = e instanceof Error && e.stack ? e.stack : "";
+  return html`
+    <div style="margin:0;padding:1.25rem 1.5rem;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#b3261e;background:#fff0ee;border:1px solid #f2b8b5;border-radius:8px">
+      <strong style="display:block;margin-bottom:0.5rem;font-size:1rem">This screen could not draw.</strong>
+      <div style="margin-bottom:0.75rem;color:#5f1512">${said}</div>
+      ${stack ? html`<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:12px;opacity:0.85">${stack}</pre>` : nothingAtAll}
+      <div style="margin-top:0.85rem;font-size:12px;opacity:0.75">
+        It is <code>extensions/</code> in your pewter — the file is yours to read and change.
+      </div>
+    </div>
+  `;
+}
+
+/** lit renders `undefined` as nothing, and importing `nothing` for one branch
+ *  is more ceremony than the branch is worth. */
+const nothingAtAll = undefined;
+
 /** Render `view()` into `root`, and again whenever a signal it read changes.
  *
  *  There is no way to stop it, and that is not an oversight: a screen lives
  *  as long as its tab, and the tab closing takes the whole document with
- *  it. */
+ *  it.
+ *
+ *  A `view()` that throws does not leave a blank pane: the reason is rendered
+ *  where the screen would have been (`failure`, above). */
 export function screen(root: HTMLElement | DocumentFragment, view: () => unknown): Screen {
   // The template as a computed: reading it is what subscribes to every
   // signal the view touched, and it re-subscribes on every draw — so a
@@ -74,7 +106,23 @@ export function screen(root: HTMLElement | DocumentFragment, view: () => unknown
   let waiting: (() => void)[] = [];
 
   const draw = (): void => {
-    render(drawn.get(), root);
+    // A view that throws puts its reason on screen instead of nothing. This
+    // is the whole of `failure()`'s reason for existing: before it, a screen
+    // that threw left the pane the shell's own background — indistinguishable
+    // from a frame that never mounted — and the only record was a console the
+    // person who wrote the screen may not be able to reach at all. An agent
+    // building an extension cannot open devtools; a human has to think to.
+    //
+    // The throw still reaches the console, because a stack in devtools is
+    // better than a stack in a <pre> when you have devtools open.
+    let tree: unknown;
+    try {
+      tree = drawn.get();
+    } catch (e) {
+      console.error("pewter-ui: the screen's view threw", e);
+      tree = failure(e);
+    }
+    render(tree, root);
     // Re-armed after the read, not before: a watcher stops notifying once it
     // has notified, and the read is what tells it which signals to watch
     // this time round.

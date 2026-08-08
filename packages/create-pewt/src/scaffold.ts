@@ -202,13 +202,19 @@ export function scaffold(opts: ScaffoldOptions): string[] {
     `# Your work. The pewter holds no opinion about it, and this line is why
 # you can push a pewter to a public repository without publishing anything
 # you have worked on.
-repos/
+#
+# Anchored with a leading slash, and that slash is load-bearing: a bare
+# \`repos/\` matches a directory of that name at any depth, which silently
+# swallowed \`extensions/repos/\` — the first screen a pewter shows. A clone
+# came back with no Projects screen, which is the one thing NARRATIVE.md
+# promises a clone does not do.
+/repos/
 
 # The channel and this pewter's own state. \`.pewter/\` also holds the answers
 # the host remembers (grants.json), which is a second reason it is here: what
 # you allowed on your machine is not something a clone of this should inherit.
-.fsio/
-.pewter/
+/.fsio/
+/.pewter/
 
 node_modules/
 `
@@ -266,6 +272,14 @@ the channel between this machine and the Pewter page at once.
   components with shadow roots — restyle those through the
   \`--pewter-*\` properties or their \`part\` names, both listed at the top
   of \`node_modules/pewter-ui/style.css\`.
+
+  **The first draw is synchronous.** \`screen()\` renders once before it
+  returns, so anything your view calls must already exist — write helpers
+  as \`function\` declarations, which hoist, rather than \`const\` arrows,
+  which do not. Getting this wrong is a \`TypeError\` on the first draw and
+  \`pewt check\` cannot see it, because the ordering is a runtime fact.
+  The screen shows the error where it would have drawn, so you are not
+  reading a blank pane trying to guess.
 - Projects live in \`repos/\`, each its own git repository, and none of them
   are committed here. \`pewt repos create <name>\` starts one, \`pewt repos
   clone <url>\` fetches one, and the Projects screen offers both.

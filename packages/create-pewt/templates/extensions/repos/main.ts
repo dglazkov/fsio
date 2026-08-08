@@ -9,6 +9,12 @@
 // `screen()` from `pewter-ui`. There is one description of what a project
 // row looks like and one place each fact lives, so a row cannot go stale
 // while something else on the screen is up to date.
+//
+// Two levels, and the layout says which is which. A row's verbs are about
+// that project. The header's verb is about the pewter itself — the folder the
+// rows live in, and where `extensions/` is — so an agent asked to write a
+// screen starts in the place the screen has to land. It is the same operation
+// the rows use, differing only in the place it names.
 import { explain, pewt, type Project } from "pewter";
 import { html, nothing } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
@@ -57,8 +63,13 @@ const ui = screen(document.body, () => {
   return html`
     <main class="screen">
       <header>
-        <h1>Projects</h1>
-        <p class="note">${note()}</p>
+        <div>
+          <h1>Projects</h1>
+          <p class="note">${note()}</p>
+        </div>
+        <span class="verbs">
+          <button ?disabled=${busy.get()} @click=${() => openTab("agent", null)}>agent in this pewter</button>
+        </span>
       </header>
       <ul id="list">
         ${repos?.length === 0
@@ -102,8 +113,18 @@ const ui = screen(document.body, () => {
  *  this screen invents — an extension cannot make a script runnable by
  *  drawing a button for it. `install` leads when node_modules is missing
  *  (every fresh clone), because the scripts will not run without it — and
- *  unlike clone, install is asked about (#193). */
-const row = (repo: Project) => html`
+ *  unlike clone, install is asked about (#193).
+ *
+ *  **A `function`, not a `const` arrow, and that is load-bearing.** `screen()`
+ *  draws once synchronously before it returns, so anything the view calls has
+ *  to exist by then — and a `const` below the `screen()` call does not. This
+ *  one would get away with it, because the first draw has `projects === null`
+ *  and never reaches here; the next screen someone writes will not be so
+ *  lucky, and the failure is a blank pane whose reason is only in the console.
+ *  Declarations hoist. Write helpers as declarations and the ordering stops
+ *  being something anyone has to know. */
+function row(repo: Project) {
+  return html`
   <li>
     <span>
       ${repo.name}
@@ -122,18 +143,22 @@ const row = (repo: Project) => html`
     </span>
   </li>
 `;
+}
 
 async function refresh(): Promise<void> {
   const { repos } = await pewt.repos.list();
   projects.set(repos);
 }
 
-/** Open an extension in a new tab, pointed at this project. The tab opens
- *  with `{repo}` (#198) — an argument to a screen, not a grant: the host
- *  still asks before the shell or the agent itself starts. */
-function openTab(name: "terminal" | "agent", repo: string): void {
+/** Open an extension in a new tab, pointed at a place. `repo` names a
+ *  project; `null` is the pewter itself — the two values the agent and
+ *  terminal screens' own pickers offer, so every way of naming a place agrees
+ *  on what one is. The tab opens with `{repo}` (#198) — an argument to a
+ *  screen, not a grant: the host still asks before the shell or the agent
+ *  itself starts. */
+function openTab(name: "terminal" | "agent", repo: string | null): void {
   error.set("");
-  pewt.tabs.add({ name, title: repo, args: { repo } }).catch(complain);
+  pewt.tabs.add({ name, title: repo ?? "this pewter", args: { repo } }).catch(complain);
 }
 
 // ---- running something, and watching it run

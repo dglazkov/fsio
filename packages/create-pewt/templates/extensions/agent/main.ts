@@ -441,13 +441,21 @@ stop.addEventListener("click", () => {
   if (live) live.rpc.notify("session/cancel", { sessionId: live.sessionId });
 });
 
-// Opened with `{repo}` — the repos row's agent verb — this screen skips its
-// picker and goes straight there. Opened bare, it offers the choice. Either
-// way the host asks before anything starts: the argument opened a screen,
-// not a process.
+// Opened with `{repo}` — a repos row's agent verb, or the pewter-wide one in
+// that screen's header — this screen skips its picker and goes straight
+// there. `repo` names a project; `null` is the pewter itself. Those are the
+// same two values the picker above offers, so both screens mean one thing by
+// "where", and the CLI's twin spelling reaches the second one too:
+// `pewt tabs add agent '{"repo":null}'`.
+//
+// Opened bare — or with a `repo` that is neither — it offers the choice, so a
+// malformed argument lands on the picker rather than on an assumption. Either
+// way the host asks before anything starts: the argument opened a screen, not
+// a process.
 const openedWith = (await args) as { repo?: unknown } | undefined;
-if (openedWith && typeof openedWith.repo === "string") {
-  await open(openedWith.repo);
+const where = openedWith && "repo" in openedWith ? openedWith.repo : undefined;
+if (typeof where === "string" || where === null) {
+  await open(where);
 } else {
   await offer();
 }
