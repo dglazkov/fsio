@@ -71,14 +71,14 @@ setTimeout(() => process.exit(7), 50);
 interface Ctx {
   p: Pewter;
   dir: NodeDirectory;
-  open(spec: Record<string, unknown>): Promise<{ agent: AgentAttachment; seen: unknown[] }>;
+  open(spec: Record<string, unknown>): Promise<{ agent: AgentAttachment; seen: unknown[]; started: Record<string, unknown> }>;
 }
 
 /** A pewter with an adapter "installed" in it, a host on it, and one call
  *  away from an agent. Temp is fine: F9 is Chrome's file observer, and
  *  nothing here opens a browser. */
 async function withHost(
-  opts: { script?: string; version?: string; asker?: Asker; allowAgents?: boolean; allowRuns?: boolean; install?: boolean },
+  opts: { script?: string; version?: string; asker?: Asker; allowAgents?: boolean; allowRuns?: boolean; install?: boolean; installAs?: string },
   fn: (ctx: Ctx) => Promise<void>
 ): Promise<void> {
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pewt-agent-"));
@@ -91,7 +91,10 @@ async function withHost(
     const pkgDir = path.join(root, "node_modules", ...PKG.split("/"));
     fs.mkdirSync(pkgDir, { recursive: true });
     fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: PKG, version: opts.version ?? ADAPTERS[0]!.measured }));
-    const bin = path.join(root, "node_modules", ".bin", ADAPTERS[0]!.bin);
+    // `installAs` puts the same binary under a name the catalog has never
+    // heard of — what installing somebody else's ACP adapter looks like on
+    // disk, which is all it takes to be startable now (#201).
+    const bin = path.join(root, "node_modules", ".bin", opts.installAs ?? ADAPTERS[0]!.bin);
     fs.mkdirSync(path.dirname(bin), { recursive: true });
     fs.writeFileSync(bin, opts.script ?? ECHO);
     fs.chmodSync(bin, 0o755);
@@ -117,8 +120,12 @@ async function withHost(
       dir,
       open: async (spec) => {
         const seen: unknown[] = [];
-        const agent = await agentOnHost(dir, spec, { onMessage: (m) => seen.push(m), pollMs: 5 });
-        return { agent, seen };
+        // What the host said it started rides the same event that resolves
+        // the handle, so a test that wants it has to be holding a callback
+        // before the await — same as a real client.
+        let started: Record<string, unknown> = {};
+        const agent = await agentOnHost(dir, spec, { onMessage: (m) => seen.push(m), onStart: (i) => (started = i), pollMs: 5 });
+        return { agent, seen, started };
       },
     });
   } finally {
@@ -261,11 +268,18 @@ test("a pewter with no adapter refuses, and says what to install", async () => {
   });
 });
 
-test("a name nobody lists never starts, and a project that is not there does not either", async () => {
+test("a name nobody lists is refused for not being installed, not for being unlisted (#201)", async () => {
+  // The catalog used to be a gate: a name not on it could never start, so
+  // installing some other ACP adapter with your own hands got you a pinned
+  // dependency that was unstartable, and NARRATIVE.md's "which agents your
+  // pewter can run is a line in package.json" was true only intersected with
+  // a list in this repository. It informs now and does not gate — so the
+  // refusal a stranger's adapter gets is about the machine rather than about
+  // this build's opinions.
   await withHost({}, async ({ open }) => {
     await assert.rejects(
       () => open({ agent: "totally-not-an-agent" }),
-      (e: unknown) => e instanceof CallError && e.reason === "refused" && /no adapter named/.test(e.message)
+      (e: unknown) => e instanceof CallError && e.reason === "refused" && /is not installed in this pewter/.test(e.message)
     );
     await assert.rejects(
       () => open({ repo: "nope" }),
@@ -413,4 +427,41 @@ test("the pipe says where the agent's last words went, rather than pretending it
     assert.match(err, /pewt serve/);
     assert.match(err, /issues\/98/);
   });
+});
+
+
+test("an adapter this build never heard of starts, and says nobody measured it", async () => {
+  // What #201 is for: an adapter is an ordinary dependency, so what makes one
+  // startable is that npm put it in node_modules/.bin — not that somebody
+  // added it to a list here.
+  const asked: string[] = [];
+  await withHost({ asker: { ask: async (q) => (asked.push(q), "y") }, installAs: "puppet-acp" }, async ({ open }) => {
+    const { agent, started } = await open({ agent: "puppet-acp" });
+    assert.equal(started["agent"], "puppet-acp");
+    // Three-valued, and this is the state that did not exist before: nobody
+    // measured this adapter, which is not the same claim as "it does not
+    // ask" and must not be shown as one.
+    assert.equal(started["asks"], null);
+    assert.match(asked[0]!, /nobody has measured whether it asks/);
+    agent.send({ jsonrpc: "2.0", method: "leave", params: { code: 0 } });
+    assert.equal((await agent.exit).exitCode, 0);
+    await agent.close();
+  });
+});
+
+test("an agent name from the wire still cannot become a path", async () => {
+  // The catalog was doing this job as a side effect of gating. It no longer
+  // gates, so the rule is explicit — and these are the shapes that would
+  // have escaped node_modules/.bin.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pewt-agent-name-"));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "p", pewter: {} }));
+  const p = pewterAt(root)!;
+  for (const bad of ["../../bin/sh", "/bin/sh", "./x", "a/b", "..", ".hidden", ""]) {
+    assert.throws(
+      () => planAgent(p, { agent: bad }),
+      (e: unknown) => e instanceof AgentError && e.code === "bad_agent",
+      JSON.stringify(bad)
+    );
+  }
+  fs.rmSync(root, { recursive: true, force: true });
 });

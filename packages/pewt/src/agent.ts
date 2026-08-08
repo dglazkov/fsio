@@ -28,7 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import type { HostLogger, KindContext, KindHandler, KindSession } from "@fsio/host";
-import { ADAPTERS, findAdapter, installLine, resolve, type Adapter } from "./agents.js";
+import { ADAPTERS, findAdapter, installLine, resolve, unlisted, type Adapter } from "./agents.js";
 import { classify, isJsonRpc, LineSplitter, toAgentLine } from "./framing.js";
 import { isSegment, type Pewter } from "./pewter.js";
 
@@ -131,18 +131,32 @@ export function planAgent(p: Pewter, spec: AgentSpec): AgentPlan {
       );
     }
   } else {
-    adapter = findAdapter(asked);
+    // The catalog informs; it does not gate (#201). A name it knows brings
+    // the measured facts with it; a name it does not is still startable, and
+    // what makes it so is that npm put it in `node_modules/.bin` — not that
+    // somebody added it to a list in this repository. NARRATIVE.md's "which
+    // agents your pewter can run is a line in package.json" is only true
+    // this way round.
+    adapter = findAdapter(asked) ?? unlisted(String(asked));
     if (!adapter) {
-      throw new AgentError("unknown_agent", `no adapter named ${JSON.stringify(String(asked))}`, `this build knows: ${ADAPTERS.map((a) => a.name).join(", ")} — \`pewt agents\` lists them`);
+      throw new AgentError(
+        "bad_agent",
+        `${JSON.stringify(String(asked))} is not an adapter name`,
+        "an adapter is a program in this pewter's node_modules/.bin — `pewt agents` lists the ones this build knows about"
+      );
     }
   }
 
   const found = resolve(p, adapter);
   if (!found) {
+    // An unlisted name has no install line to suggest — this build does not
+    // know what package provides it, which is the honest half of not gating.
     throw new AgentError(
       "not_installed",
       `${adapter.name} is not installed in this pewter`,
-      `${installLine(adapter)} — it is pinned in your lockfile and comes back with \`git clone && npm i\``
+      adapter.asks === null
+        ? `nothing in node_modules/.bin is called ${adapter.name} — install the package that provides it, then try again`
+        : `${installLine(adapter)} — it is pinned in your lockfile and comes back with \`git clone && npm i\``
     );
   }
 
