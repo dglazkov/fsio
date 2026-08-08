@@ -21,7 +21,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { HostLogger, KindContext, KindHandler, KindSession } from "@fsio/host";
-import type { Pewter } from "./pewter.js";
+import { isSegment, type Pewter } from "./pewter.js";
 
 /** What the page or the terminal asked to run. */
 export interface RunSpec {
@@ -68,7 +68,6 @@ export class RunError extends Error {
  *  final frame cannot overtake the output it follows. */
 export type RunFrame = { o: string } | { e: string } | { end: number | null };
 
-const isSegment = (name: string): boolean => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
 
 /** Resolve a spec against the disk, or refuse it. Nothing is spawned here:
  *  the host asks its question between this and the spawn, and a question
@@ -227,7 +226,7 @@ export function runKind(p: Pewter, log: HostLogger): KindHandler {
  *  existing build can call back in without ceremony"). It lives in the
  *  pewter's own `node_modules/.bin`, and the child's cwd is a project inside
  *  the pewter, so `pewt` finds this same pewter by walking up. */
-function childEnv(p: Pewter): NodeJS.ProcessEnv {
+export function childEnv(p: Pewter): NodeJS.ProcessEnv {
   const bin = path.join(p.root, "node_modules", ".bin");
   const current = process.env["PATH"] ?? "";
   return { ...process.env, PATH: current.includes(bin) ? current : `${bin}${path.delimiter}${current}` };
@@ -256,7 +255,7 @@ export function stopTree(child: ChildProcess, alreadyDone: boolean): void {
 
 /** Bytes in, whole lines out. Trailing `\r` goes with the newline so a tool
  *  writing CRLF does not put a stray carriage return in every frame. */
-function splitter(onLine: (line: string) => void): { push(chunk: Buffer): void; flush(): void } {
+export function splitter(onLine: (line: string) => void): { push(chunk: Buffer): void; flush(): void } {
   let buf = "";
   return {
     push(chunk: Buffer): void {

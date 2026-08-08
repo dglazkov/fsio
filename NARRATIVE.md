@@ -259,9 +259,41 @@ host asks before starting anything.
 Typing `pewt run build --repo fsio` in a terminal does the same thing, and
 exits with the script's own exit code the way `npm run` does.
 
+### One program
+
+A script is what a project already declares. Sometimes you want something it
+does not:
+
+```ts
+const out: string[] = [];
+const { exitCode } = await pewt.exec("git", ["log", "-1", "--format=%cI"], {
+  repo: "fsio",
+  onOutput: (line) => out.push(line),
+});
+```
+
+The program and each argument are separate strings and reach the operating
+system that way. There is no shell in between, so nothing is quoted,
+expanded or split, no alias applies, and none of your rc files run. There is
+no terminal either: stdout and stderr arrive apart, as whole lines, and the
+exit code is the answer rather than something to find in a stream. Nothing is
+on its stdin, so a program that would have asked you something ends instead
+of waiting forever.
+
+A pipeline belongs on your side of it — `git log --format=%cd` and a
+`reduce`, not `| sort | uniq -c`. That is a real constraint and it is the
+point: what a screen wants is a value, and the joining is code you can read.
+
+This is `run`'s opposite. `run` can only start what a project already
+declares, so the set of runnable things is a file; `exec` can start anything
+on your machine, which is why the host asks first and why the answer it
+remembers names the program. `pewt exec --repo fsio git log -1` is the same
+thing from a terminal, and everything after the program belongs to the
+program, the way `env` and `nice` take their flags.
+
 ### Terminals
 
-A script is what a project already declares. A terminal is everything else:
+A terminal is everything else:
 
 ```sh
 pewt shell --repo fsio
@@ -450,10 +482,10 @@ there is nothing to run.
 ```
 PEWTER      serve · check · doctor · api   (doctor, api not built)
 PROJECTS    repos {create, clone, install, link, rm} · template {new, apply}   (link, rm, template not built)
-RUNNING     run · shell · agent · agents
+RUNNING     run · exec · shell · agent · agents
 THE PAGE    tabs {list, add, update, close, focus} · open · fling
             files {list, show, drop}
-EXTENDING   ext {new, rm, bundle}
+EXTENDING   ext {list, new, rm, bundle}   (new, rm not built)
 THE RECORD  grants {list, revoke} · sessions {log, replay}   (sessions not built)
 SHARING     publish · share · join · workspaces   (not built)
 ```
@@ -563,7 +595,8 @@ narrower than the question that produced it:
 |---|---|---|
 | `run build --repo fsio` | any run in `fsio`, `npm install` included | `run/fsio` |
 | `agent pi-acp --repo fsio` | `pi-acp` in `fsio` | `agent/pi-acp/fsio` |
-| `shell` | nothing — there is no third answer | — |
+| `exec git --repo fsio` | `git` in `fsio` | `exec/git/fsio` |
+| `shell --repo fsio` | a shell in `fsio`, unconfined | `shell/fsio` |
 
 A run's grant is the project rather than the script, because a script is a
 line in that project's `package.json` and the next one is a line away: what
@@ -572,10 +605,21 @@ because the line you read before answering was whether *that* adapter asks
 before it edits, and carrying that answer over to different software would
 answer a question nobody asked.
 
-A shell has no standing grant at all. It is unconfined — its own question
-says so — so an `always` would mean "always, anything", and there is nothing
-in the question to scope it with. Typing `a` there is denied and told why,
-rather than quietly treated as `allow once`.
+An exec's names the program as well as the project, and that is the whole
+difference between it and a shell: a command has a name, so what you allowed
+can be written down and read back. A grant on `git` is not a grant on
+anything else.
+
+A shell's grant covers the project, and its sentence says out loud what that
+means: *a shell in fsio — unconfined, so this covers anything you can do*. A
+shell had no standing grant at all until 2026-08-07, and the argument for
+that was sound — an `always` on something unconfined really does mean
+"always, anything". What changed is the order of the work rather than the
+argument. Nothing here has users yet, and the first screen that wanted facts
+about a project was asking a human at a terminal on every single reading,
+forever. Make it possible, watch how it gets used, tighten it then. The
+honesty stays in the wording rather than in a refusal: the sentence describes
+the capability instead of scoping it down to sound narrower than it is.
 
 `pewt grants` lists what this pewter remembers and `pewt grants revoke <id>`
 takes one back, which the very next question feels: the host reads the file

@@ -20,7 +20,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { HostServer } from "@fsio/host";
-import { shellSpec } from "pewter";
+import { describeGrant, shellSpec } from "pewter";
 import { spawnGate, type Asker } from "./ask.js";
 import { CallError } from "./call.js";
 import { NodeDirectory } from "./node-fs.js";
@@ -109,21 +109,48 @@ test("a shell takes what you type and exits with the code you give it", async ()
   });
 });
 
-test("a shell has no `always`, and typing one is denied rather than downgraded", async () => {
-  // The one question with two answers instead of three. A shell is
-  // unconfined — its own prompt says so — so an "always" would be "always,
-  // anything", and there is nothing in the question to scope it with. Almost
-  // everybody typing `a` here has just typed `a` at a run, so being told what
-  // happened matters more than being quietly given the narrower thing.
+test("a shell can be remembered now, and the sentence says how broad that is", async () => {
+  // Reversed on 2026-08-07 with the owner. A shell had two answers instead of
+  // three, because it is unconfined and an "always" really does mean "always,
+  // anything" — the argument was sound and is kept in grants.ts. What changed
+  // is the timing: nothing has users, and the first screen that wanted facts
+  // about a project was asking a human at a terminal on every single reading.
+  // Make it possible, watch how it is used, tighten it then.
+  //
+  // What is not softened is the wording. A grant on a shell is described as
+  // what it is, because scoping the sentence rather than the capability would
+  // be the dishonest half of this.
   const asked: string[] = [];
   const asker: Asker = { ask: async (q) => (asked.push(q), "a") };
   await withHost({ asker }, async ({ p, open }) => {
-    await assert.rejects(
-      () => open({ cmd: "/bin/sh" }),
-      (e: unknown) => e instanceof CallError && e.reason === "refused" && /a shell has no standing grant/.test(e.message)
+    const { shell } = await open({ cmd: "/bin/sh" });
+    shell.write("exit 0\n");
+    await shell.exit;
+    assert.match(asked[0]!, /allow once \/ allow always \/ deny {2}\[o\/a\/D\]/);
+    const grants = JSON.parse(fs.readFileSync(p.grants, "utf8")) as { grants: { kind: "shell"; repo?: string }[] };
+    assert.deepEqual(
+      grants.grants.map((g) => g.kind),
+      ["shell"]
     );
-    assert.match(asked[0]!, /allow once \/ deny {2}\[y\/N\]/);
-    assert.equal(fs.existsSync(p.grants), false, "a denied shell must write nothing down");
+    assert.equal(describeGrant(grants.grants[0]!), "a shell in the pewter itself — unconfined, so this covers anything you can do");
+  });
+});
+
+test("a remembered shell starts without asking again", async () => {
+  const asked: string[] = [];
+  const asker: Asker = { ask: async (q) => (asked.push(q), "a") };
+  await withHost({ asker }, async ({ p, open }) => {
+    const first = await open({ cmd: "/bin/sh" });
+    first.shell.write("exit 0\n");
+    await first.shell.exit;
+    assert.equal(asked.length, 1);
+    // The grants file is re-read at every question, so the second one is
+    // answered by the first one's memory rather than by the human.
+    const second = await open({ cmd: "/bin/sh" });
+    second.shell.write("exit 0\n");
+    await second.shell.exit;
+    assert.equal(asked.length, 1, "the second shell must not have asked");
+    assert.ok(fs.existsSync(p.grants));
   });
 });
 

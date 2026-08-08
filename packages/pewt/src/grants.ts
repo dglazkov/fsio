@@ -88,15 +88,24 @@ function asGrant(row: unknown): Grant {
     throw new GrantsError("unreadable", `${GRANTS_FILE} has a grant ${why}`, FIX);
   };
   if (!row || typeof row !== "object") return bad("that is not an object");
-  const { kind, adapter, repo, granted } = row as Record<string, unknown>;
-  if (kind !== "run" && kind !== "agent") return bad(`with kind ${JSON.stringify(kind)} — a grant is for a run or an agent`);
+  const { kind, adapter, cmd, repo, granted } = row as Record<string, unknown>;
+  if (kind !== "run" && kind !== "agent" && kind !== "exec" && kind !== "shell") {
+    return bad(`with kind ${JSON.stringify(kind)} — a grant is for a run, an exec, a shell or an agent`);
+  }
+  // Each kind carries exactly what scopes it and nothing else. A row with a
+  // field its kind has no use for was written by hand and got something
+  // wrong, and guessing which half was meant is guessing at what somebody
+  // allowed.
   if (kind === "agent" && typeof adapter !== "string") return bad("for an agent with no adapter named");
-  if (kind === "run" && adapter !== undefined) return bad("for a run with an adapter on it");
+  if (kind !== "agent" && adapter !== undefined) return bad(`for a ${kind} with an adapter on it`);
+  if (kind === "exec" && typeof cmd !== "string") return bad("for an exec with no program named");
+  if (kind !== "exec" && cmd !== undefined) return bad(`for a ${kind} with a program on it`);
   if (repo !== undefined && typeof repo !== "string") return bad("whose repo is not a name");
   if (typeof granted !== "string") return bad("with no date on it");
   return {
     kind,
     ...(typeof adapter === "string" ? { adapter } : {}),
+    ...(typeof cmd === "string" ? { cmd } : {}),
     ...(typeof repo === "string" ? { repo } : {}),
     granted,
   };

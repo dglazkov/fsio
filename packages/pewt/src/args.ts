@@ -5,7 +5,7 @@ import { byArgv, COMMAND_LIST } from "./ops.js";
 export type Parsed =
   | { kind: "help"; text: string }
   | { kind: "error"; message: string }
-  | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean; allowShells: boolean; allowAgents: boolean }
+  | { kind: "serve"; dir: string | null; url: string | null; open: boolean; allowRuns: boolean; allowShells: boolean; allowAgents: boolean; allowExec: boolean }
   | { kind: "check"; dir: string | null; json: boolean }
   | { kind: "op"; dir: string | null; json: boolean; method: string; params: unknown }
   | { kind: "process"; dir: string | null; json: boolean; dryRun: boolean; method: string; spec: Record<string, unknown> };
@@ -44,6 +44,7 @@ serve:
   --no-open      print the URL and open nothing
   --allow-runs   allow every \`run\` without asking on this terminal
   --allow-shells allow every \`shell\` without asking on this terminal
+  --allow-exec   allow every \`exec\` without asking on this terminal
   --allow-agents allow every \`agent\` without asking on this terminal
 
 The allow flags are separate because these are separate capabilities:
@@ -53,8 +54,9 @@ anything, or something that can run a coding agent on your projects.
 Answering a host's question with \`a\` records a standing grant in
 .pewter/grants.json, and questions of that shape are not asked again. A grant
 is narrower than any flag: a run's covers one project, an agent's covers one
-adapter in one project, and a shell gets none at all — it is unconfined, so an
-\`always\` there would be \`always, anything\`. \`pewt grants\` lists them and
+adapter in one project, an exec's covers one program in one project, and a
+shell's covers a project and says out loud that a shell is unconfined, so it
+is broad. \`pewt grants\` lists them and
 \`pewt grants revoke <id>\` takes one back, which the next question feels.
 
 The file is in .pewter/, which a pewter git-ignores, so a grant does not
@@ -71,6 +73,13 @@ an ssh url if your keys are set up, or a public one.
 lifecycle scripts, which is the first execution of what a clone fetched. The
 question rides the run rung — \`--allow-runs\` covers it, and a standing
 \`run/<project>\` grant answers it.
+
+\`pewt exec\` runs one program and prints what it printed. The program and each
+argument are separate words and reach the OS that way — no shell runs, so
+nothing is quoted, expanded or split, and no rc file of yours is read. It is
+\`run\`'s opposite: \`run\` starts only what a project already declares, and this
+starts anything on your machine, which is why it is asked about and why the
+grant it records names the program.
 
 \`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
 stdin, the agent's own messages out on stdout. Whatever is on the other end
@@ -95,7 +104,8 @@ you are writing, which is not necessarily a moment with a host up, so it reads
 the disk here and answers here. That is also why there is no \`pewt.check()\`
 for an extension to call.
 
-It starts a process and does not ask, unlike \`run\`, \`shell\` and \`agent\`. A
+It starts a process and does not ask, unlike \`run\`, \`exec\`, \`shell\` and
+\`agent\`. A
 typechecker reads your extensions and never runs them, which is what \`ext
 bundle\` already does.
 
@@ -119,17 +129,29 @@ export function parseArgs(argv: string[]): Parsed {
   let dryRun = false;
   let allowRuns = false;
   let allowShells = false;
+  let allowExec = false;
   let allowAgents = false;
   const rest: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
+    // `exec` hands everything after the program name to the program, flags
+    // included. Without this, `pewt exec git log -1` is a usage error about
+    // `-1`, which is a flag belonging to git and not to pewt — and almost
+    // every interesting argument to an interesting program starts with a
+    // dash. The pewt flags go before the program, the way `env` and `nice`
+    // take theirs.
+    if (rest[0] === "exec" && rest.length > 1) {
+      rest.push(a);
+      continue;
+    }
     if (a === "--help" || a === "-h" || a === "help") return { kind: "help", text: USAGE };
     else if (a === "--json") json = true;
     else if (a === "--no-open") open = false;
     else if (a === "--dry-run") dryRun = true;
     else if (a === "--allow-runs") allowRuns = true;
     else if (a === "--allow-shells") allowShells = true;
+    else if (a === "--allow-exec") allowExec = true;
     else if (a === "--allow-agents") allowAgents = true;
     else if (a === "--dir" || a === "--url" || a === "--repo") {
       const value = argv[++i];
@@ -147,7 +169,7 @@ export function parseArgs(argv: string[]): Parsed {
   if (rest.length === 0) return { kind: "help", text: USAGE };
   if (rest[0] === "serve") {
     if (rest.length > 1) return { kind: "error", message: `serve takes no arguments (got ${rest.slice(1).join(" ")})` };
-    return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents };
+    return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents, allowExec };
   }
   if (rest[0] === "check") {
     if (rest.length > 1) return { kind: "error", message: `check takes no arguments (got ${rest.slice(1).join(" ")}) — it compiles all of extensions/` };

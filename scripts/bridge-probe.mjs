@@ -47,7 +47,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="ran">nothing run</p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -191,6 +191,18 @@ beat.set("second");
 await drawing.drawn();
 drawnInto.setAttribute("data-drew", drawnInto.textContent ?? "");
 
+// A program, from inside the sandbox (#210's open question, settled by
+// letting extensions run things). argv goes out as a list — the awkward
+// argument is the point, because there is no shell on the other end to
+// re-split it — and stdout and stderr arrive apart.
+const ran = document.getElementById("ran")!;
+const execOut: string[] = [];
+const execCode = await pewt.exec("git", ["log", "--format=%cI", "a b"], {
+  repo: "site",
+  onOutput: (line, stream) => execOut.push(\`\${stream}:\${line}\`),
+});
+ran.textContent = \`\${execOut.join(" ")} exit \${execCode.exitCode}\`;
+
 // What the folder holds, asked from inside the sandbox (#187). The shell's
 // own opener reads exactly this, so an extension and the strip's + are two
 // callers of one operation — which is the claim the two front ends make.
@@ -242,7 +254,7 @@ const PARENT = `<!doctype html>
 <body>
 <script type="module">
   const html = ${JSON.stringify(html).replace(/</g, "\\u003c")};
-  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [], troubles: [] };
+  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [], troubles: [], execArgs: null };
 
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts allow-forms");
@@ -282,6 +294,7 @@ const PARENT = `<!doctype html>
         return;
       }
       window.__result.calls.push(call.method);
+      if (call.method === "exec") window.__result.execArgs = call.params.args;
       window.__result.wire = call.v;
       // The page's own operations, answered by the page. This stand-in keeps
       // the list the real shell keeps, which is all a tab is at this level.
@@ -333,6 +346,15 @@ const PARENT = `<!doctype html>
         // relayed unchanged (packages/pewt/src/run.ts).
         post({ type: "pewt:event", event: { o: "compiling " + call.params.repo } });
         post({ type: "pewt:event", event: { e: "one warning" } });
+        post({ ok: true, result: { exitCode: 0 } });
+        return;
+      }
+      if (call.method === "exec") {
+        // A run's frames with a different child (packages/pewt/src/exec.ts),
+        // which is the claim: one shape, two children, one reader. No
+        // backticks in here — this whole block is inside a template literal.
+        post({ type: "pewt:event", event: { o: "M1" } });
+        post({ type: "pewt:event", event: { e: "on stderr" } });
         post({ ok: true, result: { exitCode: 0 } });
         return;
       }
@@ -397,7 +419,7 @@ page.on("pageerror", (e) => {
 });
 await page.goto(url);
 
-const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [], troubles: [] };
+const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [], troubles: [], execArgs: null };
 let result = empty;
 let rendered = "";
 let streamed = "";
@@ -420,6 +442,7 @@ let quietDisplay = "";
 let broke = "";
 let brokeStack = "";
 let screens = "";
+let ran = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -452,6 +475,7 @@ try {
   broke = await frame.locator("#broken").getAttribute("data-broke");
   brokeStack = await frame.locator("#broken").getAttribute("data-stack");
   screens = await frame.locator("#screens").textContent();
+  ran = await frame.locator("#ran").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -486,6 +510,8 @@ const checks = [
   ["the kit's status line spoke, offered, and acted", kitsaid === "kit acted"],
   ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
+  ["an extension ran a program and read its output, stderr kept apart", ran === "out:M1 err:on stderr exit 0"],
+  ["and its argv crossed as a list, so an awkward argument stayed one argument", result.calls.includes("exec") && result.execArgs?.length === 3 && result.execArgs[2] === "a b"],
   ["an extension read what extensions/ holds, half-written ones included", screens === "probe, half (no main.ts)"],
   ["an uncaught error left the sandbox instead of dying in a console", result.troubles.some((t) => t.kind === "error" && t.message.includes("uncaught, on purpose"))],
   ["an unhandled rejection did too, and says which kind it is", result.troubles.some((t) => t.kind === "rejection" && t.message.includes("unhandled, on purpose"))],

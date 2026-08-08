@@ -30,6 +30,9 @@ export interface ShellPlan {
   cwd: string;
   /** `cwd`, relative to the pewter — what a human recognizes. */
   where: string;
+  /** the project under `repos/`, when the request named one. What a standing
+   *  grant is scoped to (grants.ts). */
+  repo?: string | undefined;
   /** how the request reads in one line: `shell --repo site`. */
   label: string;
   /** false when node-pty is missing and this would be pipes, not a terminal.
@@ -88,6 +91,7 @@ export function planShell(p: Pewter, spec: Readonly<Record<string, unknown>>, re
     cmd: resolved.cmd ?? process.env["SHELL"] ?? "/bin/bash",
     cwd,
     where: where(p, cwd),
+    ...(repo ? { repo } : {}),
     // `--repo site` is the spelling both front ends offer, so it is the one
     // the question shows back. A spec written by hand can name any directory
     // in the folder, and that one says where instead of pretending to a flag
