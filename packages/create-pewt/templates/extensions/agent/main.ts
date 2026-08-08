@@ -178,11 +178,55 @@ interface ToolCall {
   toolCallId?: string;
   title?: string;
   status?: string;
+  kind?: string;
+  /** The files this call is about, as the agent names them: absolute, in the
+   *  agent's own cwd. `pewterPath()` turns one into something this pewter can
+   *  open. */
+  locations?: { path?: string }[];
   content?: Block[];
 }
 
-/** One line of what a tool call is about — enough to judge a permission
- *  question without a diff viewer. A diff viewer is a fine thing to add;
+const locationsOf = (tc: ToolCall): string[] => (tc.locations ?? []).map((l) => l.path ?? "").filter(Boolean);
+
+/** The agent's absolute path → a path inside this pewter, or null.
+ *
+ *  This is what makes a file the agent named into a tab you can open, and it
+ *  is the one piece of arithmetic the screen has to do itself. `pewt.open`
+ *  takes a path relative to the pewter; an agent names files relative to
+ *  nothing — it reports absolutes, rooted at the cwd the host started it in,
+ *  which arrived on `agent.info.cwd`.
+ *
+ *  So: strip the cwd, and put back where that cwd sits in the pewter —
+ *  `repos/<project>` when this conversation is about a project, the root
+ *  when it is about the pewter itself. A path that is not under the cwd
+ *  belongs to somewhere this pewter cannot show, and null is the honest
+ *  answer: the screen leaves it as text rather than offering a tab that
+ *  would fail. */
+function pewterPath(abs: string): string | null {
+  if (!live) return null;
+  const cwd = live.cwd.replace(/\/+$/, "");
+  if (abs === cwd) return live.base || ".";
+  if (!abs.startsWith(cwd + "/")) return null;
+  const rel = abs.slice(cwd.length + 1);
+  return live.base ? `${live.base}/${rel}` : rel;
+}
+
+/** Open a file the agent named, in a tab of its own. The failure is worth
+ *  showing: a path can be deleted between the agent naming it and a click. */
+function openPath(abs: string): void {
+  const rel = pewterPath(abs);
+  if (!rel) return;
+  pewt.open(rel).catch((e: unknown) => line("error", explain(e)));
+}
+
+/** What a tool call is about, as text.
+ *
+ *  Cut at a length rather than a line count, and generously: the elements
+ *  that show this scroll their own box, so a long diff costs a scrollbar
+ *  instead of the rest of the conversation. It was 200 characters when the
+ *  detail was a bare div and any of it pushed the page around.
+ *
+ *  Still text and not a diff view. A diff view is a fine thing to add, and
  *  this file is in your pewter. */
 function summary(content: Block[] | undefined): string {
   if (!content?.length) return "";
@@ -190,37 +234,59 @@ function summary(content: Block[] | undefined): string {
     .map((c) => {
       if (c.type === "diff" && c.path) return `edit ${c.path}`;
       const t = blockText(c).trim();
-      return t.length > 200 ? t.slice(0, 200) + "…" : t;
+      return t.length > 4000 ? t.slice(0, 4000) + "\n…" : t;
     })
     .filter((t) => t)
     .join("\n");
 }
 
-const tools = new Map<string, { title: HTMLElement; status: HTMLElement; detail: HTMLElement }>();
+const tools = new Map<string, { step: HTMLElementTagNameMap["pewter-step"]; detail: HTMLPreElement }>();
+
+/** What ACP calls a tool call's status, in the four words the kit styles.
+ *  Anything unrecognized is left running rather than guessed at — a status
+ *  this build has not heard of is still a thing in progress. */
+function asState(status: string | undefined): HTMLElementTagNameMap["pewter-step"]["state"] {
+  switch (status) {
+    case "completed":
+      return "done";
+    case "failed":
+    case "error":
+      return "failed";
+    case "pending":
+      return "waiting";
+    default:
+      return "running";
+  }
+}
 
 function toolRow(tc: ToolCall): void {
   streaming = null;
   const el = entry("tool");
-  const title = document.createElement("span");
-  title.className = "tool-title";
-  title.textContent = tc.title ?? "tool call";
-  const state = document.createElement("span");
-  state.className = "tool-status";
-  state.textContent = tc.status ?? "pending";
-  const detail = document.createElement("div");
-  detail.className = "tool-detail";
+  const step = document.createElement("pewter-step");
+  step.label = tc.title ?? "tool call";
+  step.state = asState(tc.status);
+  step.paths = locationsOf(tc);
+  step.onpath = openPath;
+  const detail = document.createElement("pre");
   detail.textContent = summary(tc.content);
-  el.append(title, state, detail);
-  if (tc.toolCallId) tools.set(tc.toolCallId, { title, status: state, detail });
+  detail.hidden = !detail.textContent;
+  step.append(detail);
+  el.append(step);
+  if (tc.toolCallId) tools.set(tc.toolCallId, { step, detail });
 }
 
 function toolUpdate(tc: ToolCall): void {
   const row = tc.toolCallId ? tools.get(tc.toolCallId) : undefined;
   if (!row) return;
-  if (tc.title) row.title.textContent = tc.title;
-  if (tc.status) row.status.textContent = tc.status;
+  if (tc.title) row.step.label = tc.title;
+  if (tc.status) row.step.state = asState(tc.status);
+  const locs = locationsOf(tc);
+  if (locs.length) row.step.paths = locs;
   const more = summary(tc.content);
-  if (more) row.detail.textContent = more;
+  if (more) {
+    row.detail.textContent = more;
+    row.detail.hidden = false;
+  }
 }
 
 /** `session/update` — everything the agent narrates while it works. */
@@ -245,57 +311,73 @@ function update(params: Params): void {
   }
 }
 
-/** The agent's permission question, as a card with buttons. The promise
- *  resolves when you click, and that IS the JSON-RPC response — the agent
- *  stays parked on it for exactly as long as you take. */
+/** The agent's permission question, as a card you can answer.
+ *
+ *  The promise resolves when you click, and that IS the JSON-RPC response —
+ *  the agent stays parked on it for exactly as long as you take.
+ *
+ *  This is the moment the whole arrangement is for. An agent asking inside a
+ *  terminal draws its own prompt: nothing around it can weigh the answers,
+ *  and nothing can show you the file. Here the question is markup, so the
+ *  options carry what they mean and the files it names are one click from a
+ *  tab of their own — which is a thing a pty cannot do at all.
+ */
 function permission(params: Params): Promise<unknown> {
   const tc = (params?.["toolCall"] ?? {}) as ToolCall;
-  const options = ((params?.["options"] as { optionId?: string; name?: string }[] | undefined) ?? []).filter((o) => o.optionId);
+  const options = ((params?.["options"] as { optionId?: string; name?: string; kind?: string }[] | undefined) ?? []).filter((o) => o.optionId);
   streaming = null;
   const card = entry("permission");
-  const title = document.createElement("p");
-  title.textContent = tc.title ?? "the agent wants to do something";
-  card.append(title);
+  const ask = document.createElement("pewter-ask");
+  ask.question = tc.title ?? "the agent wants to do something";
+  // The kind of thing, when the agent said and it is not the useless one.
+  ask.who = tc.kind && tc.kind !== "other" ? `the agent is asking · ${tc.kind}` : "the agent is asking";
+  ask.paths = locationsOf(tc);
+  ask.onpath = openPath;
+  // ACP names its option kinds `allow_once`, `reject_always` and so on. The
+  // element wants what an answer *means*, not what it is called, so the two
+  // families map onto the two intents and anything else stays neutral —
+  // guessing at an unknown kind would be putting weight on the wrong button.
+  ask.choices = options.map((o) => ({
+    value: o.optionId!,
+    label: o.name ?? o.optionId!,
+    ...(o.kind?.startsWith("allow") ? { intent: "affirm" as const } : o.kind?.startsWith("reject") ? { intent: "deny" as const } : {}),
+  }));
+  // A question with no options is not answerable in its own words, and
+  // declining is the one honest answer this screen can always give.
+  ask.dismissable = options.length === 0;
   const detail = summary(tc.content);
   if (detail) {
-    const p = document.createElement("pre");
-    p.textContent = detail;
-    card.append(p);
+    const pre = document.createElement("pre");
+    pre.textContent = detail;
+    ask.append(pre);
   }
-  const verbs = document.createElement("div");
-  verbs.className = "choices";
-  card.append(verbs);
+  card.append(ask);
   return new Promise((resolve) => {
-    const settle = (optionId: string | null, name: string): void => {
-      verbs.replaceChildren();
-      const answer = document.createElement("em");
-      answer.textContent = name;
-      verbs.append(answer);
-      resolve(optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
+    ask.onpick = (value) => {
+      // The card stays on screen with the answer on it. A question that
+      // vanished when answered would leave a transcript that does not say
+      // what was allowed.
+      ask.answered = value ?? "";
+      if (!value) ask.answeredLabel = "declined";
+      ask.onpick = null;
+      resolve(value ? { outcome: { outcome: "selected", optionId: value } } : { outcome: { outcome: "cancelled" } });
     };
-    for (const o of options) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = o.name ?? o.optionId!;
-      b.addEventListener("click", () => settle(o.optionId!, b.textContent ?? ""));
-      verbs.append(b);
-    }
-    // A question with no options is not answerable in its own words, and
-    // cancelling is the one honest answer this screen can always give.
-    if (!options.length) {
-      const never = document.createElement("button");
-      never.type = "button";
-      never.textContent = "cancel";
-      never.addEventListener("click", () => settle(null, "cancelled"));
-      verbs.append(never);
-    }
   });
 }
 
 // ---- the conversation
 
 /** The one running conversation, or null. Everything the composer needs. */
-let live: { rpc: Rpc; sessionId: string } | null = null;
+let live: {
+  rpc: Rpc;
+  sessionId: string;
+  /** the absolute directory the host started the agent in, as it reported
+   *  it — what a file the agent names is relative to. */
+  cwd: string;
+  /** where that directory sits inside this pewter, so a path the agent names
+   *  can become one `pewt.open` understands. Empty is the pewter itself. */
+  base: string;
+} | null = null;
 /** Which agent's exit still means anything — an old exit must not narrate
  *  over a newer conversation. */
 let current: Agent | null = null;
@@ -398,7 +480,7 @@ async function open(repo: string | null): Promise<void> {
       mcpServers: [],
     });
     if (!made.sessionId) throw new Error("the agent answered session/new without a sessionId");
-    live = { rpc, sessionId: made.sessionId };
+    live = { rpc, sessionId: made.sessionId, cwd: info.cwd, base: repo ? `repos/${repo}` : "" };
   } catch (e) {
     line("error", explain(e));
     agent.close();
