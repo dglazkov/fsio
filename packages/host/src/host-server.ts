@@ -456,6 +456,15 @@ function readJson<T>(file: string): T | null {
 /** Minimal pty surface. Injectable via `HostServerOptions.pty` (D14):
  *  bring your own module (or a test fake — `onData`/`onExit` must accept
  *  multiple listeners). */
+/** How much goes to a pty at once, and how often.
+ *
+ *  512 is comfortably under the ~1 KB the line discipline holds (see
+ *  `toPty`), leaving room for whatever the child has already typed ahead.
+ *  20 ms is a tick the child can drain in and is invisible to a person
+ *  typing — and nothing a person types is ever big enough to be paced. */
+const PTY_CHUNK = 512;
+const PTY_CHUNK_MS = 20;
+
 export interface PtyProcess {
   pid: number;
   write(data: string): void;
@@ -517,6 +526,11 @@ class Session {
   doneSegs: { gen: number; endTotal: number }[] = []; // finished segments
   proc: PtyProcess | ChildProcess | null = null;
   usesPty = false;
+  // Input waiting to reach a pty, and the timer draining it. A terminal's
+  // input queue is about a kilobyte and it discards what does not fit, so a
+  // burst written in one call is silently truncated — see `toPty`.
+  ptyPending = "";
+  ptyTimer: ReturnType<typeof setTimeout> | null = null;
   // Base directory for a spawned child (D22): the resolved workspace root
   // in hub mode, the shared dir otherwise. Resolved once, before the
   // policy sees it, so the judged cwd and the executed cwd cannot drift.
@@ -707,6 +721,14 @@ class Session {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    // Input still on its way to a pty that is about to be killed. Dropped
+    // rather than flushed: the process is going, and a timer holding a
+    // reference to a dead session is how a host stops exiting.
+    if (this.ptyTimer) {
+      clearTimeout(this.ptyTimer);
+      this.ptyTimer = null;
+    }
+    this.ptyPending = "";
     if (this.proc) {
       try {
         if (this.pty) this.pty.kill();
@@ -1689,6 +1711,63 @@ export class HostServer {
     };
   }
 
+  /** Write to a pty without losing the end of it.
+   *
+   *  A terminal's input queue is a fixed buffer in the line discipline, and
+   *  when it is full the kernel **discards** what does not fit rather than
+   *  blocking the writer. Nothing reports that: `write` returns void, node-pty
+   *  offers no drain, and the bytes are simply not there. An extension that
+   *  wrote a script in one call got a shell that ran the first third of it and
+   *  stopped, with no error anywhere (#210).
+   *
+   *  Measured on macOS, `/bin/sh` on a real pty, one `write` per burst:
+   *
+   *      1,070 bytes        60 of 60 lines
+   *      1,160 bytes        61 of 65
+   *      3,690 bytes        83 of 200   (child at a prompt)
+   *      3,690 bytes        66 of 200   (child in `sleep 2`)
+   *      15,090 bytes       78 of 800
+   *
+   *  The survivor count plateaus around 66 regardless of how much is written,
+   *  which is the signature of a fixed queue rather than of a slow reader.
+   *
+   *  So: never hand the line discipline more than it holds. Chunks go out
+   *  under the limit, one per tick, and the same burst then arrives whole —
+   *  3,690 bytes measured at 200 of 200 with the child reading. A burst that
+   *  arrives while the child reads nothing at all is still lost after the
+   *  first chunk-full, and no amount of pacing changes that (measured: 65 of
+   *  200 at every chunk size and delay tried). That residue is a property of
+   *  driving a terminal programmatically, and the way out of it is an
+   *  operation that runs a command and captures its output rather than a
+   *  keyboard — which is #210's open question, not something this can fix.
+   *
+   *  Keystrokes are unaffected: anything that fits in one chunk is written
+   *  immediately, on this tick, with no timer involved. */
+  private toPty(s: Session, data: string): void {
+    s.ptyPending += data;
+    if (s.ptyTimer) return; // a drain is already running; order is the queue's
+    // The common case, and the one that must not be delayed: a keystroke, a
+    // pasted line, a resize's worth of nothing. Straight through.
+    if (s.ptyPending.length <= PTY_CHUNK) {
+      const all = s.ptyPending;
+      s.ptyPending = "";
+      s.pty?.write(all);
+      return;
+    }
+    const pump = (): void => {
+      s.ptyTimer = null;
+      if (s.done || !s.pty) {
+        s.ptyPending = "";
+        return;
+      }
+      const piece = s.ptyPending.slice(0, PTY_CHUNK);
+      s.ptyPending = s.ptyPending.slice(PTY_CHUNK);
+      s.pty.write(piece);
+      if (s.ptyPending) s.ptyTimer = setTimeout(pump, PTY_CHUNK_MS);
+    };
+    pump();
+  }
+
   private startShell(s: Session): void {
     const spec = s.spawn!;
     const { cmd, args: cmdArgs, cwd, pty: usePty } = this.resolveShell(spec, s.root ?? this.sharedDir);
@@ -1936,7 +2015,7 @@ export class HostServer {
           break;
         }
         if (!s.proc) break;
-        if (s.pty) s.pty.write(Buffer.from(frame.payload).toString("utf8"));
+        if (s.pty) this.toPty(s, Buffer.from(frame.payload).toString("utf8"));
         else s.child!.stdin!.write(Buffer.from(frame.payload));
         break;
       }
