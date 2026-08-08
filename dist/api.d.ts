@@ -371,6 +371,18 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
+/** The methods that are a *process* rather than a request: frames while it
+ *  runs, an exit code as the answer. The shell routes these down a session of
+ *  their own instead of asking the host's operation table, which has no entry
+ *  for any of them.
+ *
+ *  Listed here rather than written into the shell's dispatch, for the same
+ *  reason `PAGE_METHODS` is: a hand-written condition drifts. `exec` was
+ *  added to the API and to the host and not to that condition, so every call
+ *  from a page came back "unknown method: exec" while the command line worked
+ *  — which is the failure this list exists to make impossible. */
+export declare const PROCESS_METHODS: readonly ["run", "exec", "repos.clone", "repos.install"];
+export type ProcessMethod = (typeof PROCESS_METHODS)[number];
 export declare const METHODS: readonly ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "exec", "shell", "agent", ...("files.drop" | "files.fling" | "files.list" | "files.open" | "files.show" | "tabs.add" | "tabs.close" | "tabs.focus" | "tabs.list" | "tabs.update")[]];
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */

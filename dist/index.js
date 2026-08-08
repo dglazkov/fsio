@@ -16,7 +16,7 @@
 // is "ready" — see wire.ts for what was measured about the alternative.
 import { apiFor, Channel } from "./api.js";
 import { hello, isConnect } from "./wire.js";
-export { PewtError, explain, METHODS } from "./api.js";
+export { PewtError, explain, METHODS, PROCESS_METHODS } from "./api.js";
 export { Channel, apiFor } from "./api.js";
 export * from "./agent.js";
 export * from "./shell.js";

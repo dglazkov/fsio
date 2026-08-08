@@ -1,5 +1,5 @@
 import { type PewtApi } from "./api.js";
-export { PewtError, explain, METHODS, type PewtApi, type Project, type Bundle, type Extension, type RunOptions, type RunResult, type CloneOptions, type CloneResult, type InstallOptions, type FileTabOptions, type OpenResult, type FlingResult } from "./api.js";
+export { PewtError, explain, METHODS, PROCESS_METHODS, type ProcessMethod, type PewtApi, type Project, type Bundle, type Extension, type RunOptions, type RunResult, type CloneOptions, type CloneResult, type InstallOptions, type FileTabOptions, type OpenResult, type FlingResult } from "./api.js";
 export { Channel, apiFor } from "./api.js";
 export * from "./agent.js";
 export * from "./shell.js";

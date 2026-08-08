@@ -41,6 +41,17 @@ export function explain(e) {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
+/** The methods that are a *process* rather than a request: frames while it
+ *  runs, an exit code as the answer. The shell routes these down a session of
+ *  their own instead of asking the host's operation table, which has no entry
+ *  for any of them.
+ *
+ *  Listed here rather than written into the shell's dispatch, for the same
+ *  reason `PAGE_METHODS` is: a hand-written condition drifts. `exec` was
+ *  added to the API and to the host and not to that condition, so every call
+ *  from a page came back "unknown method: exec" while the command line worked
+ *  — which is the failure this list exists to make impossible. */
+export const PROCESS_METHODS = ["run", "exec", "repos.clone", "repos.install"];
 export const METHODS = ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "exec", "shell", "agent", ...PAGE_METHODS];
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
