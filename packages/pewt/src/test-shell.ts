@@ -291,3 +291,36 @@ test("stdin ending leaves the shell, and lets it finish first", async () => {
     assert.equal(outcome.exitCode, 0);
   });
 });
+
+test("a burst bigger than the terminal's input queue arrives whole (#210)", async () => {
+  // The bug an extension found by hand: a terminal's input queue is a fixed
+  // buffer in the line discipline, and what does not fit is *discarded* — no
+  // error, no short write, just a shell that ran the first third of a script.
+  // Measured before the fix: 3,690 bytes in one write arrived as 83 of 200
+  // lines with the child at a prompt. The host now chunks under the limit
+  // (host-server.ts `toPty`), so the same burst arrives complete.
+  await withHost({}, async ({ open }) => {
+    const { shell, said } = await open({ cmd: "/bin/sh" });
+    // Echo off, so a marker in the output is the command having run rather
+    // than the pty repeating what it was handed.
+    shell.write("stty -echo\n");
+    const LINES = 200;
+    let burst = "";
+    for (let i = 0; i < LINES; i++) burst += `printf 'M%d\\n' ${i}\n`;
+    assert.ok(burst.length > 3000, "the burst has to exceed the queue to be testing anything");
+    // One call, the way an extension writes it.
+    shell.write(burst);
+    // Settle rather than `until`, so the failure names the damage. Waiting on
+    // the last marker would time out with "never saw M199", which is true and
+    // says nothing about how much of the script ran.
+    const last = new RegExp(`M${LINES - 1}(?=\\r?\\n)`);
+    const deadline = Date.now() + PATIENCE_MS;
+    while (!last.test(said()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+    const seen = new Set([...said().matchAll(/M(\d+)(?=\r?\n)/g)].map((m) => Number(m[1])));
+    const missing = [];
+    for (let i = 0; i < LINES; i++) if (!seen.has(i)) missing.push(i);
+    assert.deepEqual(missing, [], `${missing.length} of ${LINES} lines were swallowed by the pty`);
+    shell.write("exit 0\n");
+    await shell.exit;
+  });
+});
