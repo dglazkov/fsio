@@ -73,6 +73,31 @@ if (typeof window !== "undefined" && window.parent !== window) {
   // shell can name its own opaque one. The shell answers the frame it
   // recognizes by identity, not by what this message claims to be.
   window.parent.postMessage(hello(), "*");
+
+  // What escaped, reported out of the frame (#210).
+  //
+  // An extension's console is inside an opaque-origin iframe. A human has to
+  // think to open devtools; an agent that wrote the screen cannot open one at
+  // all — which is how a `TypeError` on a first draw cost a whole session,
+  // with the page's own report showing a healthy bundle and nothing wrong.
+  // These two listeners are what put the reason in the folder instead.
+  //
+  // Listening rather than wrapping: an error that reaches here has already
+  // gone unhandled, so nothing is being intercepted and no behaviour changes.
+  // The console still gets it, because devtools is better than a report when
+  // you have devtools.
+  //
+  // `screen()` in `pewter-ui` dispatches a synthetic `error` event for a
+  // throw it caught and drew, which is how a contained failure still gets
+  // reported — it renders, so nothing else would ever say it happened.
+  addEventListener("error", (e: ErrorEvent) => {
+    const where = e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined;
+    channel.trouble("error", e.message || String(e.error), e.error instanceof Error ? e.error.stack : undefined, where);
+  });
+  addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => {
+    const why: unknown = e.reason;
+    channel.trouble("rejection", why instanceof Error ? `${why.name}: ${why.message}` : String(why), why instanceof Error ? why.stack : undefined);
+  });
 }
 
 /** The API. Everything an extension can ask for, and nothing else. */

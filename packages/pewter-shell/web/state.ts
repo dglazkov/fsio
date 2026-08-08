@@ -1,7 +1,7 @@
 // Page state, as signals. The components render from these; session.ts and
 // tabs.ts write them. The plain modules stay framework-free.
 import { signal } from "@lit-labs/signals";
-import { noTabs, type Extension, type TabsState } from "pewter";
+import { noTabs, type Extension, type TabsState, type Trouble } from "pewter";
 
 /** What the host calls this pewter. It arrives with the session, and it is
  *  what the page's own storage is keyed by: one origin serves every pewter
@@ -63,6 +63,24 @@ export interface OpenExtension {
 }
 export const opened = signal<Record<string, OpenExtension>>({});
 export const extError = signal<string>("");
+
+/** What broke inside an extension's frame, newest last (#210).
+ *
+ *  An extension's console is inside an opaque-origin iframe: a human has to
+ *  think to open devtools, and an agent that wrote the screen cannot open one
+ *  at all. So the frame reports what escaped and this is where it lands —
+ *  read by the footer, and written into `report.json`, which is a file in the
+ *  folder the person or agent doing the fixing is already looking at.
+ *
+ *  Kept whole rather than counted: a stack is the useful half, and a count
+ *  tells you only that today was worse than yesterday. */
+export interface FrameTrouble extends Trouble {
+  /** which extension's frame it came out of. */
+  from: string;
+  /** when, so a report says whether this is the run you are looking at. */
+  at_ms: number;
+}
+export const troubles = signal<FrameTrouble[]>([]);
 
 /** What `extensions/` holds, for the strip's opener — null until it is asked
  *  for, and asked for again every time the menu opens, because the folder is

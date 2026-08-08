@@ -75,6 +75,23 @@ function failure(e: unknown): unknown {
  *  is more ceremony than the branch is worth. */
 const nothingAtAll = undefined;
 
+/** Re-announce a caught throw as a window `error` event, so whatever is
+ *  listening for the uncaught ones hears this one too.
+ *
+ *  Guarded on `window` because a screen is renderable wherever there is a
+ *  DOM, and guarded on `ErrorEvent` because jsdom-ish environments have had
+ *  both with and without it. A report that throws while reporting would be
+ *  the worst of this file. */
+function reportOutward(e: unknown): void {
+  if (typeof window === "undefined" || typeof ErrorEvent === "undefined") return;
+  const said = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  try {
+    window.dispatchEvent(new ErrorEvent("error", { message: said, error: e }));
+  } catch {
+    // Nothing to do about it, and nothing worth breaking the draw for.
+  }
+}
+
 /** Render `view()` into `root`, and again whenever a signal it read changes.
  *
  *  There is no way to stop it, and that is not an oversight: a screen lives
@@ -120,6 +137,18 @@ export function screen(root: HTMLElement | DocumentFragment, view: () => unknown
       tree = drawn.get();
     } catch (e) {
       console.error("pewter-ui: the screen's view threw", e);
+      // Say it where something outside this frame can hear (#210). Catching
+      // this error is what saves the screen — and a saved screen is a failure
+      // nobody investigates, because it works. A first-draw ordering bug
+      // recovers on the next signal write and leaves one console line behind,
+      // in a console an agent cannot open.
+      //
+      // A synthetic `error` event rather than a call into `pewter`: this
+      // package must not depend on that one — a screen is drawable outside a
+      // pewter — and the window is the seam both already share. `pewter`
+      // listens and forwards; anything else listening sees an ordinary error
+      // event, which is what it is.
+      reportOutward(e);
       tree = failure(e);
     }
     render(tree, root);

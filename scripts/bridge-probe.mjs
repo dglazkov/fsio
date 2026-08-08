@@ -214,6 +214,18 @@ screen(brokenInto, () => {
 brokenInto.setAttribute("data-broke", brokenInto.textContent?.includes("could not draw") ? "said so" : "silent");
 brokenInto.setAttribute("data-stack", brokenInto.textContent?.includes("meant to throw") ? "kept" : "lost");
 
+// Two failures that nothing in the extension handles, reported out of the
+// frame rather than dying in a console nobody can open (#210). Last, so
+// everything above has already been measured.
+window.setTimeout(() => {
+  throw new Error("uncaught, on purpose");
+}, 0);
+void Promise.reject(new Error("unhandled, on purpose"));
+// Both are asynchronous by nature, so the title — which is what the probe
+// waits on — is set after they have had a turn. Without this the probe reads
+// the result before the frame has finished failing.
+await new Promise((r) => setTimeout(r, 50));
+
 document.title = "answered";
 `
 );
@@ -230,7 +242,7 @@ const PARENT = `<!doctype html>
 <body>
 <script type="module">
   const html = ${JSON.stringify(html).replace(/</g, "\\u003c")};
-  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [] };
+  window.__result = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [], troubles: [] };
 
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts allow-forms");
@@ -247,6 +259,13 @@ const PARENT = `<!doctype html>
       const post = (msg) => channel.port1.postMessage({ v: call.v, id: call.id, ...msg });
       // More for a call already running: this stand-in plays the pty, which
       // means echoing what it is typed and leaving when told to.
+      // What escaped the frame (#210). Not a call, never answered — the
+      // stand-in records it exactly as the shell does, because the claim is
+      // that a screen's failure leaves the sandbox at all.
+      if (call.type === "pewt:trouble") {
+        window.__result.troubles.push({ kind: call.kind, message: call.message, hasStack: typeof call.stack === "string" && call.stack.length > 0 });
+        return;
+      }
       if (call.type === "pewt:send") {
         if (typeof call.body.d === "string") {
           window.__result.typed.push(call.body.d);
@@ -368,10 +387,17 @@ if (!fs.existsSync(chromium.executablePath())) {
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 const errors = [];
-page.on("pageerror", (e) => errors.push(String(e)));
+// The extension now fails on purpose at the end, to prove a failure leaves
+// the sandbox at all (#210). Those two are the probe's own doing; anything
+// else arriving here is a real one and still fails the run.
+const ON_PURPOSE = ["uncaught, on purpose", "unhandled, on purpose"];
+page.on("pageerror", (e) => {
+  const said = String(e);
+  if (!ON_PURPOSE.some((m) => said.includes(m))) errors.push(said);
+});
 await page.goto(url);
 
-const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [] };
+const empty = { hello: false, calls: [], opaque: null, wire: null, typed: [], sized: null, messaged: [], tabs: [], troubles: [] };
 let result = empty;
 let rendered = "";
 let streamed = "";
@@ -461,6 +487,10 @@ const checks = [
   ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
   ["an extension read what extensions/ holds, half-written ones included", screens === "probe, half (no main.ts)"],
+  ["an uncaught error left the sandbox instead of dying in a console", result.troubles.some((t) => t.kind === "error" && t.message.includes("uncaught, on purpose"))],
+  ["an unhandled rejection did too, and says which kind it is", result.troubles.some((t) => t.kind === "rejection" && t.message.includes("unhandled, on purpose"))],
+  ["a stack came with it — the half that fixes the bug", result.troubles.every((t) => t.hasStack)],
+  ["and a caught first-draw throw is reported too, though the screen recovered", result.troubles.some((t) => t.message.includes("this screen is meant to throw"))],
   ["a view that throws puts its reason on screen instead of a blank pane", broke === "said so"],
   ["and the stack goes with it, for the reader who cannot open a console", brokeStack === "kept"],
   ["nothing threw in the page", errors.length === 0],

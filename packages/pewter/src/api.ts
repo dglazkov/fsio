@@ -13,7 +13,7 @@ import type { HeldFile } from "./files.js";
 import type { Grant } from "./grants.js";
 import { shellSpec, type Shell, type ShellOptions, type ShellResult } from "./shell.js";
 import { PAGE_METHODS, type Tab, type TabsListing, type TabsState } from "./tabs.js";
-import { asAnswer, asEvent, send, WIRE_VERSION, type ApiError, type Call } from "./wire.js";
+import { asAnswer, asEvent, send, trouble, WIRE_VERSION, type ApiError, type Call } from "./wire.js";
 
 /** A project in this pewter — a directory under `repos/`. */
 export interface Project {
@@ -358,6 +358,15 @@ export class Channel {
       this.#post(message);
     });
     return { id, answer };
+  }
+
+  /** Say that this frame broke, out loud, where the folder can carry it.
+   *
+   *  Queued like anything else when the port has not landed — a screen that
+   *  throws on its first line throws before the handshake, and that is the
+   *  report most worth having. */
+  trouble(kind: "error" | "rejection", message: string, stack?: string, at?: string): void {
+    this.#post(trouble(kind, message, stack, at));
   }
 
   /** Send more to a call already in flight — a keystroke, a window size, a
