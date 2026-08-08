@@ -11,7 +11,7 @@
 import { agentSpec } from "./agent.js";
 import { shellSpec } from "./shell.js";
 import { PAGE_METHODS } from "./tabs.js";
-import { asAnswer, asEvent, send, WIRE_VERSION } from "./wire.js";
+import { asAnswer, asEvent, send, trouble, WIRE_VERSION } from "./wire.js";
 /** The operation said no. Thrown rather than returned, because
  *  `await pewt.repos.list()` should read like every other call an extension
  *  makes — and because an error that has to be checked for is an error that
@@ -82,6 +82,14 @@ export class Channel {
             this.#post(message);
         });
         return { id, answer };
+    }
+    /** Say that this frame broke, out loud, where the folder can carry it.
+     *
+     *  Queued like anything else when the port has not landed — a screen that
+     *  throws on its first line throws before the handshake, and that is the
+     *  report most worth having. */
+    trouble(kind, message, stack, at) {
+        this.#post(trouble(kind, message, stack, at));
     }
     /** Send more to a call already in flight — a keystroke, a window size, a
      *  request to stop. Nothing comes back: what a shell has to say arrives as

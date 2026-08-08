@@ -57,6 +57,25 @@ export function asSend(value) {
     const msg = value;
     return typeof msg.id === "number" ? msg : null;
 }
+export function asTrouble(value) {
+    if (!isType(value, "pewt:trouble"))
+        return null;
+    const msg = value;
+    if (msg.kind !== "error" && msg.kind !== "rejection")
+        return null;
+    return typeof msg.message === "string" ? msg : null;
+}
+/** How much of a stack rides the folder. A stack is unbounded and a report is
+ *  a file somebody reads; the first frames are where the answer is. */
+const STACK_MAX = 2000;
+export const trouble = (kind, message, stack, at) => ({
+    v: WIRE_VERSION,
+    type: "pewt:trouble",
+    kind,
+    message,
+    ...(stack ? { stack: stack.length > STACK_MAX ? `${stack.slice(0, STACK_MAX)}…` : stack } : {}),
+    ...(at ? { at } : {}),
+});
 export const event = (id, payload) => ({ v: WIRE_VERSION, id, type: "pewt:event", event: payload });
 export const send = (id, body) => ({ v: WIRE_VERSION, id, type: "pewt:send", body });
 export const answer = (id, result) => ({ v: WIRE_VERSION, id, ok: true, result });

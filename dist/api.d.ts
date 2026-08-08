@@ -363,6 +363,12 @@ export declare class Channel {
         id: number;
         answer: Promise<unknown>;
     };
+    /** Say that this frame broke, out loud, where the folder can carry it.
+     *
+     *  Queued like anything else when the port has not landed — a screen that
+     *  throws on its first line throws before the handshake, and that is the
+     *  report most worth having. */
+    trouble(kind: "error" | "rejection", message: string, stack?: string, at?: string): void;
     /** Send more to a call already in flight — a keystroke, a window size, a
      *  request to stop. Nothing comes back: what a shell has to say arrives as
      *  events on the call it belongs to. */
