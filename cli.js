@@ -2,7 +2,7 @@
 // pewt — generated bundle; source: packages/pewt (github.com/dglazkov/fsio)
 
 // dist/cli.js
-import path16 from "node:path";
+import path17 from "node:path";
 
 // dist/ops.js
 import { asTabCommand, bodyLabel, describeGrant, grantId as grantId2, shellSpec, sizeText } from "pewter";
@@ -133,6 +133,7 @@ function findPewter(from2 = process.cwd()) {
 function ensureState(p) {
   fs2.mkdirSync(p.build, { recursive: true });
 }
+var isSegment = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
 
 // dist/bundle.js
 var BundleError = class extends Error {
@@ -345,13 +346,18 @@ function asGrant(row) {
   };
   if (!row || typeof row !== "object")
     return bad("that is not an object");
-  const { kind, adapter, repo, granted } = row;
-  if (kind !== "run" && kind !== "agent")
-    return bad(`with kind ${JSON.stringify(kind)} \u2014 a grant is for a run or an agent`);
+  const { kind, adapter, cmd, repo, granted } = row;
+  if (kind !== "run" && kind !== "agent" && kind !== "exec" && kind !== "shell") {
+    return bad(`with kind ${JSON.stringify(kind)} \u2014 a grant is for a run, an exec, a shell or an agent`);
+  }
   if (kind === "agent" && typeof adapter !== "string")
     return bad("for an agent with no adapter named");
-  if (kind === "run" && adapter !== void 0)
-    return bad("for a run with an adapter on it");
+  if (kind !== "agent" && adapter !== void 0)
+    return bad(`for a ${kind} with an adapter on it`);
+  if (kind === "exec" && typeof cmd !== "string")
+    return bad("for an exec with no program named");
+  if (kind !== "exec" && cmd !== void 0)
+    return bad(`for a ${kind} with a program on it`);
   if (repo !== void 0 && typeof repo !== "string")
     return bad("whose repo is not a name");
   if (typeof granted !== "string")
@@ -359,6 +365,7 @@ function asGrant(row) {
   return {
     kind,
     ...typeof adapter === "string" ? { adapter } : {},
+    ...typeof cmd === "string" ? { cmd } : {},
     ...typeof repo === "string" ? { repo } : {},
     granted
   };
@@ -784,7 +791,7 @@ var filesOpen = definePage({
   // Whether a window was already on it is the half nobody asks for and
   // everybody wants next: `pewt open` twice is one tab, on purpose, and a
   // second id would be the more surprising answer to report.
-  render: ({ id, path: path17, reused }) => `${path17} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
+  render: ({ id, path: path18, reused }) => `${path18} \u2192 ${id}${reused ? "  \xB7 the window already on it, brought forward" : ""}`
 });
 var filesFling = definePage({
   method: "files.fling",
@@ -874,6 +881,25 @@ var runProcess = {
   // that is not in that file is not runnable however well-formed it looks.
   parse: (params) => ({ script: str(params, "script"), ...repoOf(params) })
 };
+var execProcess = {
+  method: "exec",
+  cli: ["exec"],
+  summary: "run a program and read what it printed",
+  usage: "<program> [args\u2026]",
+  repo: true,
+  fromArgv: (argv) => {
+    if (!argv.length || !argv[0])
+      throw new OpError("usage", "exec takes a program and its arguments");
+    return { cmd: argv[0], args: argv.slice(1) };
+  },
+  parse: (params) => {
+    const given = params?.["args"] ?? [];
+    if (!Array.isArray(given) || given.some((a) => typeof a !== "string")) {
+      throw new OpError("bad_params", "args must be a list of strings");
+    }
+    return { cmd: str(params, "cmd"), args: given, ...repoOf(params) };
+  }
+};
 function repoOf(params) {
   const value = params?.["repo"];
   if (value === void 0 || value === null)
@@ -960,7 +986,7 @@ var installProcess = {
   // refused before any question is asked.
   parse: (params) => ({ name: str(params, "name") })
 };
-var PROCESSES = [runProcess, shellProcess, agentProcess, cloneProcess, installProcess];
+var PROCESSES = [runProcess, execProcess, shellProcess, agentProcess, cloneProcess, installProcess];
 var COMMAND_LIST = [
   ...OPERATIONS.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: false })),
   ...PROCESSES.map((o) => ({ cli: o.cli, usage: o.usage, summary: o.summary, repo: o.repo }))
@@ -1002,6 +1028,7 @@ serve:
   --no-open      print the URL and open nothing
   --allow-runs   allow every \`run\` without asking on this terminal
   --allow-shells allow every \`shell\` without asking on this terminal
+  --allow-exec   allow every \`exec\` without asking on this terminal
   --allow-agents allow every \`agent\` without asking on this terminal
 
 The allow flags are separate because these are separate capabilities:
@@ -1011,8 +1038,9 @@ anything, or something that can run a coding agent on your projects.
 Answering a host's question with \`a\` records a standing grant in
 .pewter/grants.json, and questions of that shape are not asked again. A grant
 is narrower than any flag: a run's covers one project, an agent's covers one
-adapter in one project, and a shell gets none at all \u2014 it is unconfined, so an
-\`always\` there would be \`always, anything\`. \`pewt grants\` lists them and
+adapter in one project, an exec's covers one program in one project, and a
+shell's covers a project and says out loud that a shell is unconfined, so it
+is broad. \`pewt grants\` lists them and
 \`pewt grants revoke <id>\` takes one back, which the next question feels.
 
 The file is in .pewter/, which a pewter git-ignores, so a grant does not
@@ -1029,6 +1057,13 @@ an ssh url if your keys are set up, or a public one.
 lifecycle scripts, which is the first execution of what a clone fetched. The
 question rides the run rung \u2014 \`--allow-runs\` covers it, and a standing
 \`run/<project>\` grant answers it.
+
+\`pewt exec\` runs one program and prints what it printed. The program and each
+argument are separate words and reach the OS that way \u2014 no shell runs, so
+nothing is quoted, expanded or split, and no rc file of yours is read. It is
+\`run\`'s opposite: \`run\` starts only what a project already declares, and this
+starts anything on your machine, which is why it is asked about and why the
+grant it records names the program.
 
 \`pewt agent\` is a pipe, not a conversation: one ACP message per line in on
 stdin, the agent's own messages out on stdout. Whatever is on the other end
@@ -1053,7 +1088,8 @@ you are writing, which is not necessarily a moment with a host up, so it reads
 the disk here and answers here. That is also why there is no \`pewt.check()\`
 for an extension to call.
 
-It starts a process and does not ask, unlike \`run\`, \`shell\` and \`agent\`. A
+It starts a process and does not ask, unlike \`run\`, \`exec\`, \`shell\` and
+\`agent\`. A
 typechecker reads your extensions and never runs them, which is what \`ext
 bundle\` already does.
 
@@ -1076,10 +1112,15 @@ function parseArgs(argv) {
   let dryRun = false;
   let allowRuns = false;
   let allowShells = false;
+  let allowExec = false;
   let allowAgents = false;
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (rest[0] === "exec" && rest.length > 1) {
+      rest.push(a);
+      continue;
+    }
     if (a === "--help" || a === "-h" || a === "help")
       return { kind: "help", text: USAGE };
     else if (a === "--json")
@@ -1092,6 +1133,8 @@ function parseArgs(argv) {
       allowRuns = true;
     else if (a === "--allow-shells")
       allowShells = true;
+    else if (a === "--allow-exec")
+      allowExec = true;
     else if (a === "--allow-agents")
       allowAgents = true;
     else if (a === "--dir" || a === "--url" || a === "--repo") {
@@ -1120,7 +1163,7 @@ function parseArgs(argv) {
   if (rest[0] === "serve") {
     if (rest.length > 1)
       return { kind: "error", message: `serve takes no arguments (got ${rest.slice(1).join(" ")})` };
-    return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents };
+    return { kind: "serve", dir, url, open, allowRuns, allowShells, allowAgents, allowExec };
   }
   if (rest[0] === "check") {
     if (rest.length > 1)
@@ -1476,8 +1519,8 @@ var FsioClient = class {
         const readJson2 = async (f) => JSON.parse(await (await (await dir.getFileHandle(f)).getFile()).text());
         const entry = { id: name, kind: null, status: null };
         try {
-          const spawn5 = await readJson2("spawn.json");
-          const p = spawn5.params ?? spawn5;
+          const spawn6 = await readJson2("spawn.json");
+          const p = spawn6.params ?? spawn6;
           entry.kind = p.kind ?? "echo";
           entry.client = p.client;
           entry.origin = p.origin;
@@ -2402,7 +2445,6 @@ var RunError = class extends Error {
     this.name = "RunError";
   }
 };
-var isSegment = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
 function planRun(p, spec) {
   const script = spec.script;
   if (typeof script !== "string" || script === "") {
@@ -3021,12 +3063,11 @@ var AgentError = class extends Error {
     this.name = "AgentError";
   }
 };
-var isSegment2 = (name) => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
 function planAgent(p, spec) {
   let cwd = p.root;
   const repo = spec.repo;
   if (repo !== void 0) {
-    if (typeof repo !== "string" || !isSegment2(repo)) {
+    if (typeof repo !== "string" || !isSegment(repo)) {
       throw new AgentError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
     }
     cwd = path10.join(p.repos, repo);
@@ -3457,7 +3498,7 @@ async function pipeAgent(dir, spec, streams, opts = {}) {
 // dist/serve.js
 import fs15 from "node:fs";
 import os2 from "node:os";
-import path15 from "node:path";
+import path16 from "node:path";
 
 // ../host/dist/host-server.js
 import fs12 from "node:fs";
@@ -3540,6 +3581,8 @@ function readJson(file) {
     return null;
   }
 }
+var PTY_CHUNK = 512;
+var PTY_CHUNK_MS = 20;
 var ptyModCache;
 async function loadPty() {
   if (ptyModCache !== void 0)
@@ -3586,6 +3629,11 @@ var Session = class {
   // finished segments
   proc = null;
   usesPty = false;
+  // Input waiting to reach a pty, and the timer draining it. A terminal's
+  // input queue is about a kilobyte and it discards what does not fit, so a
+  // burst written in one call is silently truncated — see `toPty`.
+  ptyPending = "";
+  ptyTimer = null;
   // Base directory for a spawned child (D22): the resolved workspace root
   // in hub mode, the shared dir otherwise. Resolved once, before the
   // policy sees it, so the judged cwd and the executed cwd cannot drift.
@@ -3764,6 +3812,11 @@ var Session = class {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    if (this.ptyTimer) {
+      clearTimeout(this.ptyTimer);
+      this.ptyTimer = null;
+    }
+    this.ptyPending = "";
     if (this.proc) {
       try {
         if (this.pty)
@@ -4658,6 +4711,62 @@ var HostServer = class {
       pty: !!this.ptyMod && spec.pty !== false
     };
   }
+  /** Write to a pty without losing the end of it.
+   *
+   *  A terminal's input queue is a fixed buffer in the line discipline, and
+   *  when it is full the kernel **discards** what does not fit rather than
+   *  blocking the writer. Nothing reports that: `write` returns void, node-pty
+   *  offers no drain, and the bytes are simply not there. An extension that
+   *  wrote a script in one call got a shell that ran the first third of it and
+   *  stopped, with no error anywhere (#210).
+   *
+   *  Measured on macOS, `/bin/sh` on a real pty, one `write` per burst:
+   *
+   *      1,070 bytes        60 of 60 lines
+   *      1,160 bytes        61 of 65
+   *      3,690 bytes        83 of 200   (child at a prompt)
+   *      3,690 bytes        66 of 200   (child in `sleep 2`)
+   *      15,090 bytes       78 of 800
+   *
+   *  The survivor count plateaus around 66 regardless of how much is written,
+   *  which is the signature of a fixed queue rather than of a slow reader.
+   *
+   *  So: never hand the line discipline more than it holds. Chunks go out
+   *  under the limit, one per tick, and the same burst then arrives whole —
+   *  3,690 bytes measured at 200 of 200 with the child reading. A burst that
+   *  arrives while the child reads nothing at all is still lost after the
+   *  first chunk-full, and no amount of pacing changes that (measured: 65 of
+   *  200 at every chunk size and delay tried). That residue is a property of
+   *  driving a terminal programmatically, and the way out of it is an
+   *  operation that runs a command and captures its output rather than a
+   *  keyboard — which is #210's open question, not something this can fix.
+   *
+   *  Keystrokes are unaffected: anything that fits in one chunk is written
+   *  immediately, on this tick, with no timer involved. */
+  toPty(s, data) {
+    s.ptyPending += data;
+    if (s.ptyTimer)
+      return;
+    if (s.ptyPending.length <= PTY_CHUNK) {
+      const all = s.ptyPending;
+      s.ptyPending = "";
+      s.pty?.write(all);
+      return;
+    }
+    const pump = () => {
+      s.ptyTimer = null;
+      if (s.done || !s.pty) {
+        s.ptyPending = "";
+        return;
+      }
+      const piece = s.ptyPending.slice(0, PTY_CHUNK);
+      s.ptyPending = s.ptyPending.slice(PTY_CHUNK);
+      s.pty.write(piece);
+      if (s.ptyPending)
+        s.ptyTimer = setTimeout(pump, PTY_CHUNK_MS);
+    };
+    pump();
+  }
   startShell(s) {
     const spec = s.spawn;
     const { cmd, args: cmdArgs, cwd, pty: usePty } = this.resolveShell(spec, s.root ?? this.sharedDir);
@@ -4895,7 +5004,7 @@ var HostServer = class {
         if (!s.proc)
           break;
         if (s.pty)
-          s.pty.write(Buffer.from(frame.payload).toString("utf8"));
+          this.toPty(s, Buffer.from(frame.payload).toString("utf8"));
         else
           s.child.stdin.write(Buffer.from(frame.payload));
         break;
@@ -5009,13 +5118,117 @@ var HostServer = class {
   }
 };
 
+// dist/exec.js
+import { spawn as spawn5 } from "node:child_process";
+import path13 from "node:path";
+var ExecError = class extends Error {
+  code;
+  hint;
+  constructor(code, message, hint) {
+    super(message);
+    this.code = code;
+    this.hint = hint;
+    this.name = "ExecError";
+  }
+};
+function asExecSpec(spec) {
+  return spec;
+}
+var PROGRAM = /^[A-Za-z0-9_][A-Za-z0-9_.+-]*$/;
+function planExec(p, spec) {
+  const cmd = spec.cmd;
+  if (typeof cmd !== "string" || cmd === "")
+    throw new ExecError("bad_params", "exec needs a program to run");
+  if (!PROGRAM.test(cmd)) {
+    throw new ExecError("bad_program", `${JSON.stringify(cmd)} is not a program name`, "name the program the way a terminal would \u2014 `git`, not a path to it");
+  }
+  const given = spec.args ?? [];
+  if (!Array.isArray(given) || given.some((a) => typeof a !== "string")) {
+    throw new ExecError("bad_params", "exec's arguments must be a list of strings", "each argument is its own string \u2014 there is no shell here to split one for you");
+  }
+  const args = given;
+  const repo = spec.repo;
+  let cwd = p.root;
+  let where4 = ".";
+  if (repo !== void 0) {
+    if (typeof repo !== "string" || !isSegment(repo)) {
+      throw new ExecError("bad_repo", `${JSON.stringify(String(repo))} is not a project name`, "a project is a directory under repos/ \u2014 `pewt repos` lists them");
+    }
+    cwd = path13.join(p.repos, repo);
+    where4 = `repos/${repo}`;
+  }
+  return {
+    cmd,
+    args,
+    ...typeof repo === "string" ? { repo } : {},
+    cwd,
+    label: `exec ${[cmd, ...args].join(" ")}${typeof repo === "string" ? ` --repo ${repo}` : ""}`,
+    where: where4
+  };
+}
+function execKind(p, log) {
+  return (ctx) => {
+    let plan;
+    try {
+      plan = planExec(p, asExecSpec(ctx.spec));
+    } catch (e) {
+      throw e instanceof ExecError && e.hint ? new ExecError(e.code, `${e.message} \u2014 ${e.hint}`) : e;
+    }
+    const child = spawn5(plan.cmd, plan.args, {
+      cwd: plan.cwd,
+      env: childEnv(p),
+      // No stdin. A program that wants to ask something has nobody to ask,
+      // and a program that would have blocked on a prompt now ends instead —
+      // which is the honest outcome for something nobody is sitting at.
+      stdio: ["ignore", "pipe", "pipe"],
+      // Its own group, so stopping this stops what it started.
+      detached: true
+    });
+    const say = (frame) => ctx.write(JSON.stringify(frame));
+    let lines = 0;
+    const out = splitter((line) => {
+      lines++;
+      say({ o: line });
+    });
+    const err = splitter((line) => {
+      lines++;
+      say({ e: line });
+    });
+    child.stdout?.on("data", (chunk) => out.push(chunk));
+    child.stderr?.on("data", (chunk) => err.push(chunk));
+    let done = false;
+    const finish = (code, signal) => {
+      if (done)
+        return;
+      done = true;
+      out.flush();
+      err.flush();
+      const exitCode = code ?? (signal ? 128 : null);
+      say({ end: exitCode });
+      log.info(`${plan.label} \u2192 exit ${exitCode ?? "?"}${signal ? ` (${signal})` : ""} \xB7 ${lines} line${lines === 1 ? "" : "s"}`);
+      ctx.exit(exitCode);
+    };
+    child.on("close", (code, signal) => finish(code, signal));
+    child.on("error", (e) => {
+      const why = e.code === "ENOENT" ? `pewt: ${plan.cmd} is not on this machine's PATH` : `pewt: could not start ${plan.cmd} \u2014 ${e.message}`;
+      say({ e: why });
+      finish(127, null);
+    });
+    log.info(`${plan.label} \u2192 ${plan.cmd} in ${plan.where}/ (pid ${child.pid ?? "?"})`);
+    return {
+      result: { cmd: plan.cmd, args: plan.args, repo: plan.repo ?? null, where: plan.where, childPid: child.pid ?? null },
+      onClose: () => stopTree(child, done)
+    };
+  };
+}
+
 // dist/ask.js
 import readline from "node:readline/promises";
 import { describeGrant as describeGrant2 } from "pewter";
 
 // dist/shell.js
 import fs13 from "node:fs";
-import path13 from "node:path";
+import path14 from "node:path";
 import { repoOfCwd } from "pewter";
 var ShellError = class extends Error {
   code;
@@ -5044,6 +5257,7 @@ function planShell(p, spec, resolved) {
     cmd: resolved.cmd ?? process.env["SHELL"] ?? "/bin/bash",
     cwd,
     where: where3(p, cwd),
+    ...repo ? { repo } : {},
     // `--repo site` is the spelling both front ends offer, so it is the one
     // the question shows back. A spec written by hand can name any directory
     // in the folder, and that one says where instead of pretending to a flag
@@ -5053,7 +5267,7 @@ function planShell(p, spec, resolved) {
   };
 }
 function where3(p, dir) {
-  const rel = path13.relative(p.root, dir);
+  const rel = path14.relative(p.root, dir);
   return rel === "" ? p.name : rel;
 }
 
@@ -5079,9 +5293,9 @@ function terminalAsker() {
   };
 }
 var stamp = () => (/* @__PURE__ */ new Date()).toTimeString().slice(0, 8);
-var STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents", "repos.install": "--allow-runs" };
+var STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents", exec: "--allow-exec", "repos.install": "--allow-runs" };
 function spawnGate(p, opts, log) {
-  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents, "repos.install": opts.allowRuns };
+  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents, exec: opts.allowExec, "repos.install": opts.allowRuns };
   return async (spec, info) => {
     if (info.kind === "repos.clone") {
       log.info(`\u25CF repos.clone \u2014 git will fetch into repos/, executing nothing (${from(info.origin)})`);
@@ -5094,9 +5308,9 @@ function spawnGate(p, opts, log) {
     const kind = info.kind;
     let plan;
     try {
-      plan = kind === "run" ? runQuestion(p, spec) : kind === "shell" ? shellQuestion(p, spec, info) : kind === "agent" ? agentQuestion(p, spec) : installQuestion(p, spec);
+      plan = kind === "run" ? runQuestion(p, spec) : kind === "shell" ? shellQuestion(p, spec, info) : kind === "agent" ? agentQuestion(p, spec) : kind === "exec" ? execQuestion(p, spec) : installQuestion(p, spec);
     } catch (e) {
-      const message = e instanceof RunError || e instanceof ShellError || e instanceof AgentError || e instanceof InstallError ? [e.message, e.hint].filter(Boolean).join(" \u2014 ") : e instanceof Error ? e.message : String(e);
+      const message = e instanceof RunError || e instanceof ShellError || e instanceof AgentError || e instanceof InstallError || e instanceof ExecError ? [e.message, e.hint].filter(Boolean).join(" \u2014 ") : e instanceof Error ? e.message : String(e);
       log.warn(`\u2717 ${message}`);
       return { allow: false, reason: message };
     }
@@ -5163,7 +5377,28 @@ function shellQuestion(p, spec, info) {
     // to show than a run has: the program, where it starts, and the one thing
     // a person cannot see from the outside — that nothing confines it.
     lines: [plan.cmd, `cwd ${plan.where}/`, plan.pty ? "a terminal, unconfined \u2014 it can do anything you can" : "no pty (node-pty missing): pipes, so no job control and no full-screen programs"],
-    flag: STARTS.shell
+    flag: STARTS.shell,
+    // A shell grant covers the project and says out loud that it is broad.
+    // It had none at all until 2026-08-07 — the argument was that "always"
+    // on something unconfined means "always, anything", which is still true.
+    // The owner's call was that the model is being locked down before anybody
+    // has lived in it; see packages/pewter/src/grants.ts for the whole note.
+    grant: { kind: "shell", ...plan.repo !== void 0 ? { repo: plan.repo } : {} }
+  };
+}
+function execQuestion(p, spec) {
+  const plan = planExec(p, asExecSpec(spec));
+  return {
+    label: plan.label,
+    // The whole command, as it will be handed to the OS. There is no shell
+    // between this line and the process, so what is printed here is exactly
+    // what runs — no expansion, no quoting to squint at.
+    lines: [[plan.cmd, ...plan.args].join(" "), `cwd ${plan.where}/`, "one program, no shell, nothing on its stdin"],
+    flag: STARTS.exec,
+    // The program and the project. This is what an argv buys over a shell:
+    // "git in site" is a thing a person can be shown and can revoke, where a
+    // shell can only ever be remembered broadly.
+    grant: { kind: "exec", cmd: plan.cmd, ...plan.repo !== void 0 ? { repo: plan.repo } : {} }
   };
 }
 function agentQuestion(p, spec) {
@@ -5206,12 +5441,6 @@ ${t}    ?   ${first}
   (plan.grant ? `${t}      allow once / allow always / deny  [o/a/D] ` : `${t}      allow once / deny  [y/N] `))).trim().toLowerCase();
   const always = answer === "a" || answer === "always";
   const once = answer === "o" || answer === "once" || answer === "y" || answer === "yes";
-  if (always && !plan.grant) {
-    const reason = "a shell has no standing grant \u2014 it is unconfined, so an `always` here would be `always, anything`";
-    log.warn(`${stamp()}    \u2717 denied \u2014 ${plan.label}
-${stamp()}      ${reason}`);
-    return { allow: false, reason };
-  }
   if (always) {
     let recorded;
     try {
@@ -5417,7 +5646,7 @@ function asRpcError(e, method, log) {
 // dist/open.js
 import { execFile as execFile3 } from "node:child_process";
 import fs14 from "node:fs";
-import path14 from "node:path";
+import path15 from "node:path";
 var CHROMIUMS = [
   { id: "com.google.Chrome", name: "Google Chrome" },
   { id: "com.microsoft.edgemac", name: "Microsoft Edge" },
@@ -5439,7 +5668,7 @@ async function openInChromium(url, platform = process.platform) {
 }
 function hasClientDirs(fsioDir) {
   try {
-    return fs14.readdirSync(path14.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
+    return fs14.readdirSync(path15.join(fsioDir, "client"), { withFileTypes: true }).some((e) => e.isDirectory());
   } catch {
     return false;
   }
@@ -5482,12 +5711,14 @@ async function serve(p, opts = {}) {
       asker,
       ...opts.allowRuns !== void 0 ? { allowRuns: opts.allowRuns } : {},
       ...opts.allowShells !== void 0 ? { allowShells: opts.allowShells } : {},
-      ...opts.allowAgents !== void 0 ? { allowAgents: opts.allowAgents } : {}
+      ...opts.allowAgents !== void 0 ? { allowAgents: opts.allowAgents } : {},
+      ...opts.allowExec !== void 0 ? { allowExec: opts.allowExec } : {}
     }, log),
     logger: log
   });
   server.registerKind("pewt", pewtKind(p, router, log));
   server.registerKind("run", runKind(p, log));
+  server.registerKind("exec", execKind(p, log));
   server.registerKind("agent", agentKind(p, log));
   server.registerKind("repos.clone", cloneKind(p, log));
   server.registerKind("repos.install", installKind(p, log));
@@ -5520,7 +5751,7 @@ pewter \xB7 ${p.root}`];
 function unaskedPolicy(p, opts, asker) {
   const standing = grantLine(p);
   if (!asker.ask) {
-    const told2 = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null].filter(Boolean);
+    const told2 = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null, opts.allowExec ? "programs" : null].filter(Boolean);
     const list = told2.length > 1 ? `${told2.slice(0, -1).join(", ")} and ${told2[told2.length - 1]}` : told2[0];
     const cannot = list ? `this host has no terminal to ask in. It allows ${list} because it was told to in advance, and denies everything else.` : "this host has no terminal to ask in, so it denies every run, shell and agent. Restart it with --allow-runs, --allow-shells or --allow-agents to allow them.";
     return standing ? `${cannot}
@@ -5530,6 +5761,7 @@ function unaskedPolicy(p, opts, asker) {
     opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : null,
     opts.allowShells ? "--allow-shells: every `pewt shell` starts without asking." : null,
     opts.allowAgents ? "--allow-agents: every `pewt agent` starts without asking." : null,
+    opts.allowExec ? "--allow-exec: every `pewt exec` starts without asking." : null,
     standing
   ].filter((line) => line !== null);
   return told.length ? told.join("\n  ") : null;
@@ -5559,7 +5791,7 @@ async function stop(server, p, signal) {
 ${signal} \u2014 closing sessions\u2026`);
   await server.close();
   server.cleanServiceDir(true);
-  const clientDir = path15.join(p.fsio, "client");
+  const clientDir = path16.join(p.fsio, "client");
   const reports = fs15.existsSync(clientDir) ? fs15.readdirSync(clientDir).length : 0;
   console.log(reports ? `done; .fsio swept, ${reports} page report${reports === 1 ? "" : "s"} kept.` : "done; .fsio removed.");
 }
@@ -5648,6 +5880,7 @@ if (parsed.kind === "check") {
     open: parsed.open,
     allowRuns: parsed.allowRuns,
     allowShells: parsed.allowShells,
+    allowExec: parsed.allowExec,
     allowAgents: parsed.allowAgents
   }).catch((e) => {
     console.error(`pewt: ${e instanceof Error ? e.message : String(e)}`);
@@ -5684,7 +5917,7 @@ if (parsed.kind === "check") {
     }
     if (parsed.method === "shell") {
       const cwd = typeof parsed.spec["cwd"] === "string" ? parsed.spec["cwd"] : ".";
-      const where4 = path16.join(pewter.name, cwd);
+      const where4 = path17.join(pewter.name, cwd);
       console.log(parsed.json ? JSON.stringify({ dryRun: true, cwd, where: where4 }, null, 2) : `would open  a shell
        cwd  ${where4}/
 
