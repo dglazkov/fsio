@@ -455,6 +455,7 @@ async function open(repo: string | null): Promise<void> {
     if (current !== agent) return;
     rpc.fail("the agent exited");
     live = null;
+    gone();
     turn(false);
     say.disabled = true;
     send.disabled = true;
@@ -493,15 +494,44 @@ async function open(repo: string | null): Promise<void> {
 }
 
 /** One turn: your words in, the agent's stream back, an end reason. */
+/** Prompts typed while the agent was busy, oldest first.
+ *
+ *  ACP runs one turn per session, so a second prompt cannot simply be sent.
+ *  This screen used to refuse: `send` went disabled and Enter did nothing,
+ *  so what you typed sat in the box until you noticed the turn had ended and
+ *  pressed Enter again. Holding it here instead means a thought typed while
+ *  the agent works is not a thing you have to remember to re-send.
+ *
+ *  Only what is still waiting is in here. Once a prompt is sent it belongs
+ *  to the transcript like any other. */
+const queue: string[] = [];
+
 async function ask(): Promise<void> {
   const text = say.value.trim();
-  if (!text || !live || turning) return;
+  if (!text || !live) return;
   say.value = "";
+  if (turning) {
+    // Queued rather than dropped, and shown rather than held silently — a
+    // page keeping something you typed where you cannot see it is the same
+    // as losing it.
+    queue.push(text);
+    line("queued", text);
+    return;
+  }
+  await send1(text);
+}
+
+/** One prompt, and then whatever was typed while it ran.
+ *
+ *  The drain is a loop rather than a recursive call at the end of `send1`,
+ *  so a long queue does not build a stack, and so the rule stays in one
+ *  place: nothing is sent while a turn is in flight. */
+async function send1(text: string): Promise<void> {
   line("user", text);
   turn(true);
   try {
-    const done = await live.rpc.request<{ stopReason?: string }>("session/prompt", {
-      sessionId: live.sessionId,
+    const done = await live!.rpc.request<{ stopReason?: string }>("session/prompt", {
+      sessionId: live!.sessionId,
       prompt: [{ type: "text", text }],
     });
     if (done.stopReason && done.stopReason !== "end_turn") line("note", `turn ended: ${done.stopReason}`);
@@ -511,11 +541,29 @@ async function ask(): Promise<void> {
     turn(false);
     streaming = null;
   }
+  // A conversation that ended while this turn ran takes its queue with it —
+  // `gone()` has already said so. Nothing is sent into a dead session.
+  while (live && queue.length) {
+    const next = queue.shift()!;
+    await send1(next);
+  }
+}
+
+/** The agent is gone and the queue will never be sent. Said out loud,
+ *  because these are words somebody typed and nothing else is going to
+ *  mention them again. */
+function gone(): void {
+  if (!queue.length) return;
+  const n = queue.length;
+  queue.length = 0;
+  line("note", `${n} queued prompt${n === 1 ? "" : "s"} never sent — the agent is gone`);
 }
 
 function turn(on: boolean): void {
   turning = on;
-  send.disabled = on || !live;
+  // `send` stays live during a turn: it queues now rather than refusing, and
+  // a disabled button would say the opposite.
+  send.disabled = !live;
   stop.hidden = !on;
 }
 
