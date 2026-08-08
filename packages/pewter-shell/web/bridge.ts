@@ -32,7 +32,7 @@
 // extension can ask for any operation, which is stated plainly in
 // NARRATIVE.md's "Looking into the Future" and is the honest description of where
 // this stands.
-import { asCall, asSend, asTrouble, answer, connect, event, isHello, PAGE_METHODS, refusal, type Trouble } from "pewter";
+import { asCall, asSend, asTrouble, answer, connect, event, isHello, PAGE_METHODS, PROCESS_METHODS, refusal, type ProcessMethod, type Trouble } from "pewter";
 import { agentOnHost, callHost, runOnHost, shellOnHost, ShellCallError } from "./session";
 import { opaque, served, troubles } from "./state";
 import { answer as answerHere } from "./tabs";
@@ -159,11 +159,11 @@ async function serve(data: unknown, port: MessagePort, name: string, live: Map<n
     const result =
       PAGE_METHODS.includes(call.method as (typeof PAGE_METHODS)[number])
         ? await answerHere(call.method, call.params)
-        : call.method === "run" || call.method === "repos.clone" || call.method === "repos.install"
+        : PROCESS_METHODS.includes(call.method as ProcessMethod)
         ? await runOnHost(
             call.params as Record<string, unknown>,
             (line, stream) => port.postMessage(event(call.id, stream === "out" ? { o: line } : { e: line })),
-            call.method
+            call.method as ProcessMethod
           )
         : call.method === "shell"
           ? await serveShell(call.id, call.params as Record<string, unknown>, port, live)
