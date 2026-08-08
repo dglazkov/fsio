@@ -18,7 +18,7 @@ body {
 #term {
   flex: 1;
   min-height: 0;
-  background: #17191c;
+  background: var(--pewter-slab);
 }
 #term .xterm {
   padding: 0.65rem 0.8rem;

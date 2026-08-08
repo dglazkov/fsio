@@ -58,7 +58,7 @@ export class PewterMarkdown extends LitElement {
            The private copies are what the rules below read, so a screen that
            sets none of them still gets something readable. */
         --_md-code-bg: var(--pewter-md-code-bg, var(--_wash));
-        --_md-code-font: var(--pewter-md-code-font, ui-monospace, SFMono-Regular, Menlo, monospace);
+        --_md-code-font: var(--pewter-md-code-font, var(--_mono));
         --_md-gap: var(--pewter-md-gap, 0.75rem);
         --_md-rule: var(--pewter-md-rule, var(--_line));
         --_md-quote: var(--pewter-md-quote, var(--_line-strong));
