@@ -75,6 +75,20 @@ export interface RunResult {
   exitCode: number | null;
 }
 
+/** What an exec does while it runs. The same stream a run has: whole lines,
+ *  in order, with stderr kept apart. */
+export interface ExecOptions {
+  /** a project under `repos/`. Omit it to run in the pewter itself. */
+  repo?: string;
+  onOutput?: (line: string, stream: "out" | "err") => void;
+}
+
+/** A finished exec. 127 is this host's answer for a program that is not on
+ *  the machine — the reason arrives on `onOutput` in words first. */
+export interface ExecResult {
+  exitCode: number | null;
+}
+
 /** The operation said no. Thrown rather than returned, because
  *  `await pewt.repos.list()` should read like every other call an extension
  *  makes — and because an error that has to be checked for is an error that
@@ -170,6 +184,20 @@ export interface PewtApi {
    *  capability this API grants. The host asks a human before it starts
    *  anything, so this call can wait a while and can come back refused. */
   run(script: string, options?: RunOptions): Promise<RunResult>;
+  /** Run a program and read what it printed.
+   *
+   *  The program and its arguments are separate strings and reach the OS that
+   *  way: there is no shell, so nothing is quoted, expanded, or split, and no
+   *  rc file runs. There is no terminal either — output is stdout and stderr,
+   *  kept apart, arriving as whole lines, and the call answers with the exit
+   *  code. A pipeline belongs on this side: `git log --format=%cd` and a
+   *  `reduce` rather than `| sort | uniq -c`.
+   *
+   *  This is `run`'s sibling and its opposite: `run` can only start what a
+   *  project already declares, and this can start anything on the machine. The
+   *  host asks a human at its own terminal first, so it can wait a while and
+   *  can come back refused. */
+  exec(cmd: string, args?: string[], options?: ExecOptions): Promise<ExecResult>;
   /** Open a shell on your machine, in the pewter or in a project.
    *
    *  It resolves once the shell is running — which means after a human at
@@ -314,7 +342,7 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export const METHODS = ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS] as const;
+export const METHODS = ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "exec", "shell", "agent", ...PAGE_METHODS] as const;
 
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
@@ -469,6 +497,21 @@ export function apiFor(channel: Channel): PewtApi {
             else if (typeof line.e === "string") onOutput(line.e, "err");
           })
       ) as Promise<RunResult>;
+    },
+    exec: (cmd, args = [], options = {}) => {
+      const { onOutput } = options;
+      return channel.call(
+        "exec",
+        { cmd, args, ...(options.repo !== undefined ? { repo: options.repo } : {}) },
+        onOutput &&
+          ((event: unknown) => {
+            // `run`'s frames, deliberately: the two are one shape with a
+            // different child, so there is one reader for both.
+            const line = event as { o?: unknown; e?: unknown };
+            if (typeof line.o === "string") onOutput(line.o, "out");
+            else if (typeof line.e === "string") onOutput(line.e, "err");
+          })
+      ) as Promise<ExecResult>;
     },
     shell: (options = {}) => {
       // Two promises, because a shell has two moments worth waiting for.

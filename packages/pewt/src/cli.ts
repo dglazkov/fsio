@@ -92,6 +92,7 @@ if (parsed.kind === "check") {
     open: parsed.open,
     allowRuns: parsed.allowRuns,
     allowShells: parsed.allowShells,
+    allowExec: parsed.allowExec,
     allowAgents: parsed.allowAgents,
   }).catch((e: unknown) => {
     // A second host on the same folder is an operator message, not a crash.

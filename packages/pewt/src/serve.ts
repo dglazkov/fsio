@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { HostServer, type HostLogger } from "@fsio/host";
 import { agentKind } from "./agent.js";
+import { execKind } from "./exec.js";
 import { spawnGate, terminalAsker, type Asker } from "./ask.js";
 import { cloneKind } from "./clone.js";
 import { installKind } from "./install.js";
@@ -53,6 +54,8 @@ export interface ServeOptions {
   allowShells?: boolean;
   /** allow every agent without asking. Separate again, for the same reason. */
   allowAgents?: boolean;
+  /** allow every exec without asking. Separate again, for the same reason. */
+  allowExec?: boolean;
   log?: HostLogger;
   /** where the question goes. The default is this process's terminal; tests
    *  pass their own. */
@@ -103,6 +106,7 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
         ...(opts.allowRuns !== undefined ? { allowRuns: opts.allowRuns } : {}),
         ...(opts.allowShells !== undefined ? { allowShells: opts.allowShells } : {}),
         ...(opts.allowAgents !== undefined ? { allowAgents: opts.allowAgents } : {}),
+        ...(opts.allowExec !== undefined ? { allowExec: opts.allowExec } : {}),
       },
       log
     ),
@@ -110,6 +114,7 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
   });
   server.registerKind("pewt", pewtKind(p, router, log));
   server.registerKind("run", runKind(p, log));
+  server.registerKind("exec", execKind(p, log));
   server.registerKind("agent", agentKind(p, log));
   server.registerKind("repos.clone", cloneKind(p, log));
   server.registerKind("repos.install", installKind(p, log));
@@ -159,7 +164,7 @@ export async function serve(p: Pewter, opts: ServeOptions = {}): Promise<HostSer
 function unaskedPolicy(p: Pewter, opts: ServeOptions, asker: Asker): string | null {
   const standing = grantLine(p);
   if (!asker.ask) {
-    const told = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null].filter(Boolean);
+    const told = [opts.allowRuns ? "runs" : null, opts.allowShells ? "shells" : null, opts.allowAgents ? "agents" : null, opts.allowExec ? "programs" : null].filter(Boolean);
     const list = told.length > 1 ? `${told.slice(0, -1).join(", ")} and ${told[told.length - 1]}` : told[0];
     // A host with no terminal still honours what somebody already answered:
     // "cannot ask" is about the question, not about the memory of one.
@@ -174,6 +179,7 @@ function unaskedPolicy(p: Pewter, opts: ServeOptions, asker: Asker): string | nu
     opts.allowRuns ? "--allow-runs: every `pewt run` starts without asking." : null,
     opts.allowShells ? "--allow-shells: every `pewt shell` starts without asking." : null,
     opts.allowAgents ? "--allow-agents: every `pewt agent` starts without asking." : null,
+    opts.allowExec ? "--allow-exec: every `pewt exec` starts without asking." : null,
     standing,
   ].filter((line): line is string => line !== null);
   return told.length ? told.join("\n  ") : null;

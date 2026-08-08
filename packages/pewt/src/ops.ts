@@ -588,6 +588,28 @@ export const runProcess: ProcessOperation = {
   parse: (params) => ({ script: str(params, "script"), ...repoOf(params) }),
 };
 
+export const execProcess: ProcessOperation = {
+  method: "exec",
+  cli: ["exec"],
+  summary: "run a program and read what it printed",
+  usage: "<program> [args…]",
+  repo: true,
+  fromArgv: (argv) => {
+    if (!argv.length || !argv[0]) throw new OpError("usage", "exec takes a program and its arguments");
+    // Everything after the program is an argument, verbatim. No splitting and
+    // no quoting rules of our own: the shell the human typed at already did
+    // that, and there is no second shell on the other end to do it again.
+    return { cmd: argv[0], args: argv.slice(1) };
+  },
+  parse: (params) => {
+    const given = (params as Record<string, unknown> | null)?.["args"] ?? [];
+    if (!Array.isArray(given) || given.some((a) => typeof a !== "string")) {
+      throw new OpError("bad_params", "args must be a list of strings");
+    }
+    return { cmd: str(params, "cmd"), args: given as string[], ...repoOf(params) };
+  },
+};
+
 /** The optional project name, in the one shape every operation reads it. */
 function repoOf(params: unknown): { repo?: string } {
   const value = (params as Record<string, unknown> | null)?.["repo"];
@@ -675,7 +697,7 @@ export const installProcess: ProcessOperation = {
   parse: (params) => ({ name: str(params, "name") }),
 };
 
-export const PROCESSES: ProcessOperation[] = [runProcess, shellProcess, agentProcess, cloneProcess, installProcess];
+export const PROCESSES: ProcessOperation[] = [runProcess, execProcess, shellProcess, agentProcess, cloneProcess, installProcess];
 
 export const processByMethod = (method: string): ProcessOperation | undefined =>
   PROCESSES.find((o) => o.method === method);

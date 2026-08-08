@@ -33,6 +33,7 @@ import type { Pewter } from "./pewter.js";
 import { asAgentSpec, AgentError, planAgent, type AgentPlan } from "./agent.js";
 import { GRANTS_FILE, GrantsError, readGrants, recordGrant, standingGrant } from "./grants.js";
 import { asInstallSpec, planInstall, InstallError, type InstallPlan } from "./install.js";
+import { asExecSpec, ExecError, planExec, type ExecPlan } from "./exec.js";
 import { asRunSpec, planRun, RunError, type RunPlan } from "./run.js";
 import { planShell, ShellError, type ShellPlan } from "./shell.js";
 
@@ -77,13 +78,16 @@ export interface GateOptions {
   allowShells?: boolean;
   /** allow every agent without asking. */
   allowAgents?: boolean;
+  /** allow every exec without asking. Its own flag, like the others (P3):
+   *  a host told it may run programs has not been told it may open shells. */
+  allowExec?: boolean;
   /** where the question goes. */
   asker: Asker;
 }
 
 /** The kinds that start something, and the flag that answers yes to each in
  *  advance. Everything else is the API, which starts nothing. */
-const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents", "repos.install": "--allow-runs" } as const;
+const STARTS = { run: "--allow-runs", shell: "--allow-shells", agent: "--allow-agents", exec: "--allow-exec", "repos.install": "--allow-runs" } as const;
 
 /** The host's spawn policy (D12): consulted for every session, and the only
  *  thing standing between a page and a process on this machine.
@@ -96,7 +100,7 @@ export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnP
   // `repos.install` shares run's flag and run's grant on purpose (#193): the
   // question wears install's own words, but what is being trusted is the same
   // project whose code a run executes.
-  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents, "repos.install": opts.allowRuns };
+  const told = { run: opts.allowRuns, shell: opts.allowShells, agent: opts.allowAgents, exec: opts.allowExec, "repos.install": opts.allowRuns };
   return async (spec, info) => {
     // The one kind that starts a process and is not asked about, so it does
     // not ride the "starts nothing" branch below unremarked. Settled in #189
@@ -121,10 +125,12 @@ export function spawnGate(p: Pewter, opts: GateOptions, log: HostLogger): SpawnP
             ? shellQuestion(p, spec, info)
             : kind === "agent"
               ? agentQuestion(p, spec)
-              : installQuestion(p, spec);
+              : kind === "exec"
+                ? execQuestion(p, spec)
+                : installQuestion(p, spec);
     } catch (e) {
       const message =
-        e instanceof RunError || e instanceof ShellError || e instanceof AgentError || e instanceof InstallError
+        e instanceof RunError || e instanceof ShellError || e instanceof AgentError || e instanceof InstallError || e instanceof ExecError
           ? [e.message, e.hint].filter(Boolean).join(" — ")
           : e instanceof Error
             ? e.message
@@ -234,6 +240,28 @@ function shellQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>, info:
     // a person cannot see from the outside — that nothing confines it.
     lines: [plan.cmd, `cwd ${plan.where}/`, plan.pty ? "a terminal, unconfined — it can do anything you can" : "no pty (node-pty missing): pipes, so no job control and no full-screen programs"],
     flag: STARTS.shell,
+    // A shell grant covers the project and says out loud that it is broad.
+    // It had none at all until 2026-08-07 — the argument was that "always"
+    // on something unconfined means "always, anything", which is still true.
+    // The owner's call was that the model is being locked down before anybody
+    // has lived in it; see packages/pewter/src/grants.ts for the whole note.
+    grant: { kind: "shell", ...(plan.repo !== undefined ? { repo: plan.repo } : {}) },
+  };
+}
+
+function execQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Question {
+  const plan: ExecPlan = planExec(p, asExecSpec(spec));
+  return {
+    label: plan.label,
+    // The whole command, as it will be handed to the OS. There is no shell
+    // between this line and the process, so what is printed here is exactly
+    // what runs — no expansion, no quoting to squint at.
+    lines: [[plan.cmd, ...plan.args].join(" "), `cwd ${plan.where}/`, "one program, no shell, nothing on its stdin"],
+    flag: STARTS.exec,
+    // The program and the project. This is what an argv buys over a shell:
+    // "git in site" is a thing a person can be shown and can revoke, where a
+    // shell can only ever be remembered broadly.
+    grant: { kind: "exec", cmd: plan.cmd, ...(plan.repo !== undefined ? { repo: plan.repo } : {}) },
   };
 }
 
@@ -291,15 +319,6 @@ export async function askToStart(p: Pewter, asker: Asker, plan: Question, origin
   // `y` still means once. It is what this question took before there was a
   // third answer, and it is what a hand types.
   const once = answer === "o" || answer === "once" || answer === "y" || answer === "yes";
-
-  if (always && !plan.grant) {
-    // Typed `a` at a shell, almost certainly straight after answering `a` to a
-    // run. Denied rather than quietly downgraded to once: the answer meant
-    // something this question cannot do, and being told why is the point.
-    const reason = "a shell has no standing grant — it is unconfined, so an `always` here would be `always, anything`";
-    log.warn(`${stamp()}    ✗ denied — ${plan.label}\n${stamp()}      ${reason}`);
-    return { allow: false, reason };
-  }
 
   if (always) {
     let recorded: { grant: Grant; already: boolean };

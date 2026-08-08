@@ -30,7 +30,7 @@ import type { Readable, Writable } from "node:stream";
 import type { HostLogger, KindContext, KindHandler, KindSession } from "@fsio/host";
 import { ADAPTERS, findAdapter, installLine, resolve, type Adapter } from "./agents.js";
 import { classify, isJsonRpc, LineSplitter, toAgentLine } from "./framing.js";
-import type { Pewter } from "./pewter.js";
+import { isSegment, type Pewter } from "./pewter.js";
 
 /** Pipes, never a pty (#18): a pty echoes input and rewrites newlines, and
  *  newline-delimited JSON survives neither. */
@@ -99,7 +99,6 @@ export class AgentError extends Error {
   }
 }
 
-const isSegment = (name: string): boolean => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
 
 /** Resolve a spec against the disk, or refuse it. Nothing is spawned here:
  *  the host asks its question between this and the spawn. */

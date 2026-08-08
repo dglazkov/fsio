@@ -121,3 +121,12 @@ export function findPewter(from: string = process.cwd()): Pewter {
 export function ensureState(p: Pewter): void {
   fs.mkdirSync(p.build, { recursive: true });
 }
+
+/** Is this a name of one thing inside a directory, rather than a path?
+ *
+ *  A project arrives from a page or a terminal as a name, and the host is the
+ *  only party that ever sees a path (spec/PROTOCOL.md, threat model). So a
+ *  value that could climb out of `repos/` is refused as a name rather than
+ *  normalized into a path that works. Written three times before it moved
+ *  here (`run`, `agent`, `exec`), which is the signal for extracting one. */
+export const isSegment = (name: string): boolean => name !== "" && !name.startsWith(".") && !/[\\/]/.test(name);
