@@ -33,6 +33,17 @@ export interface Bundle {
     rebuilt: boolean;
     ms?: number;
 }
+/** One screen this pewter holds, built or not.
+ *
+ *  `ready` is false for a directory under `extensions/` that is missing an
+ *  `index.html` or a `main.ts` — the normal state of a screen somebody is in
+ *  the middle of writing. Listed rather than hidden, so what the page offers
+ *  agrees with what the folder contains. */
+export interface Extension {
+    name: string;
+    ready: boolean;
+    missing?: string;
+}
 /** What a run does while it is running, and what it leaves behind.
  *
  *  `onOutput` is called with whole lines, in order, as the script writes
@@ -121,6 +132,12 @@ export interface PewtApi {
         install(name: string, options?: InstallOptions): Promise<CloneResult>;
     };
     ext: {
+        /** What `extensions/` holds — every screen this pewter can open, whether
+         *  or not it is finished. The folder is the list and nothing caches it,
+         *  so a screen written a moment ago is on the next answer. */
+        list(): Promise<{
+            extensions: Extension[];
+        }>;
         /** Build an extension into one self-contained HTML file. The shell calls
          *  this to open a tab; an extension calls it to rebuild a sibling. */
         bundle(params: {
@@ -328,7 +345,7 @@ export interface FlingResult {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export declare const METHODS: readonly ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...("files.drop" | "files.fling" | "files.list" | "files.open" | "files.show" | "tabs.add" | "tabs.close" | "tabs.focus" | "tabs.list" | "tabs.update")[]];
+export declare const METHODS: readonly ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...("files.drop" | "files.fling" | "files.list" | "files.open" | "files.show" | "tabs.add" | "tabs.close" | "tabs.focus" | "tabs.list" | "tabs.update")[]];
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
 export declare class Channel {

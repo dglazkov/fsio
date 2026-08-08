@@ -41,7 +41,7 @@ export function explain(e) {
  *  The page's own methods are in it too, and an extension cannot tell them
  *  apart — which is the claim: one API, and where an operation is answered is
  *  the implementation's business rather than the caller's. */
-export const METHODS = ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS];
+export const METHODS = ["repos.list", "repos.create", "repos.clone", "repos.install", "ext.list", "ext.bundle", "agents.list", "grants.list", "grants.revoke", "run", "shell", "agent", ...PAGE_METHODS];
 /** The extension's end of the channel. One per extension, made by
  *  `connectTo` and used by `pewt`. */
 export class Channel {
@@ -166,6 +166,7 @@ export function apiFor(channel) {
             },
         },
         ext: {
+            list: () => channel.call("ext.list"),
             bundle: (params) => channel.call("ext.bundle", params),
         },
         run: (script, options = {}) => {
