@@ -146,6 +146,27 @@ var BundleError = class extends Error {
   }
 };
 var NAME = /^[a-z0-9][a-z0-9-]*$/;
+async function listExtensions(p) {
+  let entries;
+  try {
+    entries = await fs3.readdir(p.extensions, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith(".") || !NAME.test(e.name))
+      continue;
+    const at = path3.join(p.extensions, e.name);
+    const lacks = [];
+    for (const what of ["index.html", "main.ts"]) {
+      if (!await exists(path3.join(at, what)))
+        lacks.push(what);
+    }
+    found.push(lacks.length === 0 ? { name: e.name, ready: true } : { name: e.name, ready: false, missing: lacks.join(" and ") });
+  }
+  return found.sort((a, b) => a.name.localeCompare(b.name));
+}
 async function bundleExtension(p, name) {
   if (!NAME.test(name)) {
     throw new BundleError("bad_name", `${JSON.stringify(name)} is not an extension name`, "an extension is a directory under extensions/, named in lowercase with hyphens");
@@ -545,6 +566,26 @@ var reposCreate = define({
   },
   render: ({ repo }) => `${repo.name} \u2192 repos/${repo.name}/ \u2014 a git repository${repo.branch ? ` on ${repo.branch}` : ""}, ready to work in`
 });
+var extList = define({
+  method: "ext.list",
+  cli: ["ext"],
+  summary: "the screens this pewter holds",
+  usage: "",
+  fromArgv: (argv) => {
+    if (argv.length)
+      throw new OpError("usage", "ext takes no arguments \u2014 `pewt ext bundle <name>` builds one");
+    return {};
+  },
+  parse: () => ({}),
+  // Unasked, and it reads a directory the caller was already granted. The
+  // same reasoning as `ext.bundle` beside it (#189).
+  run: async (p) => ({ extensions: await listExtensions(p) }),
+  render: ({ extensions }) => {
+    if (extensions.length === 0)
+      return "no extensions yet \u2014 extensions/ is empty, so the page has nothing to show.";
+    return extensions.map((e) => e.ready ? `  ${e.name}` : `  ${e.name} \u2014 no ${e.missing}, so it cannot be opened`).join("\n");
+  }
+});
 var extBundle = define({
   method: "ext.bundle",
   cli: ["ext", "bundle"],
@@ -800,6 +841,7 @@ var filesDrop = definePage({
 var OPERATIONS = [
   reposList,
   reposCreate,
+  extList,
   extBundle,
   agentsList,
   grantsList,
