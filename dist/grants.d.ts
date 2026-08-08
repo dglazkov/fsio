@@ -1,10 +1,14 @@
 /** One remembered answer. */
 export interface Grant {
-    /** which question this answers. `shell` is deliberately not one of them. */
-    kind: "run" | "agent";
+    /** which question this answers. */
+    kind: "run" | "agent" | "exec" | "shell";
     /** the adapter, on an agent grant. A run has none: a script is named by the
      *  project, not by a roster. */
     adapter?: string;
+    /** the program, on an exec grant — `git`. The whole reason an exec can be
+     *  remembered when a shell can only be remembered broadly: an argv names
+     *  what runs, and a name is something a person can be shown. */
+    cmd?: string;
     /** the project under `repos/`, or absent for the pewter itself. */
     repo?: string;
     /** when it was answered, ISO 8601. */
