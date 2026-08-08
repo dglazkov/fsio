@@ -56,7 +56,8 @@
         "./packages/create-pewt:build",
         "./packages/pewt:build",
         "./packages/pewter-shell:build",
-        "./packages/bench:build"
+        "./packages/bench:build",
+        "./packages/puppet-acp:build"
       ]
     },
     "test": {

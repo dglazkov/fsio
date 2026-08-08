@@ -100,3 +100,16 @@ export function agentSpec(options: AgentOptions = {}): { agent?: string; repo?: 
     ...(options.repo !== undefined ? { repo: options.repo } : {}),
   };
 }
+
+/** The one fact worth reading before starting an agent, in words, for all
+ *  three states.
+ *
+ *  Here rather than at each call site because there were four of them — the
+ *  host's question, `pewt agents`, `pewt agent --dry-run`, and the screen —
+ *  and the third one was found saying "it edits with its own hands" about an
+ *  adapter nobody had measured, which is a claim rather than a gap. Both
+ *  sides of the wire spell this shape, so both sides say it the same way. */
+export function describeAsks(asks: boolean | null): string {
+  if (asks === null) return "nobody has measured whether it asks before it edits";
+  return asks ? "asks before it edits" : "edits with its own hands";
+}

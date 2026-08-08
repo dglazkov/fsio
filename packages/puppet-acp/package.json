@@ -1,0 +1,21 @@
+{
+  "name": "puppet-acp",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A scripted ACP agent for driving Pewter's agent screen. Test asset, never shipped.",
+  "bin": {
+    "puppet-acp": "./dist/puppet.js"
+  },
+  "scripts": {
+    "build": "wireit"
+  },
+  "wireit": {
+    "build": {
+      "command": "tsc --pretty && chmod +x dist/puppet.js",
+      "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "output": ["dist/**"],
+      "clean": "if-file-deleted"
+    }
+  }
+}
