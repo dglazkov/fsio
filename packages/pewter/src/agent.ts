@@ -42,7 +42,10 @@ export interface AgentEntry {
   installed: boolean;
   version: string | null;
   /** does it send `session/request_permission` before it changes a file? */
-  asks: boolean;
+  /** null when nobody measured it — an adapter this build does not know.
+   *  Three states: "it asks", "it does not", and "nobody checked", which is
+   *  not the same claim and must not be shown as one. */
+  asks: boolean | null;
   /** the version `asks` was measured against. */
   measured: string;
   /** true when the installed version is not the measured one, so `asks`
@@ -73,7 +76,10 @@ export interface AgentStarted {
   agent: string;
   title: string;
   version: string | null;
-  asks: boolean;
+  /** null when nobody measured it — an adapter this build does not know.
+   *  Three states: "it asks", "it does not", and "nobody checked", which is
+   *  not the same claim and must not be shown as one. */
+  asks: boolean | null;
   unmeasured: boolean;
   /** the working directory, relative to the pewter. */
   where: string;

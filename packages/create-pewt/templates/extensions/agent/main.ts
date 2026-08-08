@@ -386,6 +386,12 @@ let live: {
 let current: Agent | null = null;
 let turning = false;
 
+/** The one fact worth reading before you start an agent, in three states.
+ *  "Nobody measured this" is not "it does not ask", and an unlisted adapter
+ *  (#201) is genuinely unmeasured. */
+const describeAsks = (asks: boolean | null): string =>
+  asks === null ? "nobody has measured whether it asks" : asks ? "asks before it edits" : "edits with its own hands";
+
 /** Where the agent runs, and which agent it would be. Asked fresh every time
  *  the picker shows, so a project cloned — or an adapter installed — since
  *  the last conversation is on the list. */
@@ -401,11 +407,11 @@ async function offer(): Promise<void> {
       // is a line you type, and the roster knows the lines — hints, not
       // choices, because there is nothing to pick yet.
       note.textContent = "this pewter has no ACP adapter installed — an adapter is an ordinary dependency:";
-      places.hints = agents.map((a) => `${a.install} — ${a.asks ? "asks before it edits" : "edits with its own hands"}`);
+      places.hints = agents.map((a) => `${a.install} — ${describeAsks(a.asks)}`);
       return;
     }
     const first = installed[0]!;
-    note.textContent = `${first.title}${first.version ? ` ${first.version}` : ""} — ${first.asks ? "asks before it edits" : "edits with its own hands"}. The host asks before it starts one.`;
+    note.textContent = `${first.title}${first.version ? ` ${first.version}` : ""} — ${describeAsks(first.asks)}. The host asks before it starts one.`;
     places.choices = [{ value: null, label: "this pewter" }, ...repos.map((r) => ({ value: r.name, label: r.name }))];
     places.onpick = (where) => void open(where);
   } catch (e) {
@@ -445,8 +451,11 @@ async function open(repo: string | null): Promise<void> {
   // the first prompt rather than found out after the first edit.
   line(
     "note",
-    (info.asks ? "this agent asks before it changes a file" : "this agent edits with its own hands — it will not ask first") +
-      (info.unmeasured ? " (measured against a different version than yours)" : "")
+    (info.asks === null
+      ? "nobody has measured whether this agent asks before it changes a file — assume it does not"
+      : info.asks
+        ? "this agent asks before it changes a file"
+        : "this agent edits with its own hands — it will not ask first") + (info.unmeasured ? " (measured against a different version than yours)" : "")
   );
 
   rpc.onNotification("session/update", update);

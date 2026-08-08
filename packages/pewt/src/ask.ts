@@ -276,9 +276,16 @@ function agentQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Ques
       // reason the roster carries a measured column at all. A version nobody
       // measured says so here rather than in a footnote — this is the moment
       // the answer matters.
-      plan.adapter.asks
-        ? `it asks before it edits${plan.unmeasured ? ` (measured at ${plan.adapter.measured}, this is ${plan.version ?? "unknown"})` : ""}`
-        : "it edits with its own hands — nothing will ask you again",
+      // Three answers, because "nobody measured this" is not "it does not
+      // ask". An adapter this build has never heard of is startable now
+      // (#201) and its behaviour is genuinely unknown; saying so is the
+      // whole point of the line, and defaulting it to either claim would be
+      // inventing a measurement at the exact moment somebody is deciding.
+      plan.adapter.asks === null
+        ? "nobody has measured whether it asks before it edits — assume it does not"
+        : plan.adapter.asks
+          ? `it asks before it edits${plan.unmeasured ? ` (measured at ${plan.adapter.measured}, this is ${plan.version ?? "unknown"})` : ""}`
+          : "it edits with its own hands — nothing will ask you again",
     ],
     flag: STARTS.agent,
     // The adapter as well as the project, unlike a run. The line above is the

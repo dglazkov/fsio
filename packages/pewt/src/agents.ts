@@ -42,9 +42,13 @@ export interface Adapter {
    *  it. A pewter installs whatever its lockfile says, and this column
    *  describing different software than the one running is worse than no
    *  column — `roster()` says so when the two differ. */
-  asks: boolean;
-  /** the version `asks` was measured against. */
-  measured: string;
+  /** null when nobody has measured this adapter — an unlisted one. Three
+   *  states, because "we did not measure it" is not the same claim as "it
+   *  does not ask", and a screen that showed them alike would be inventing
+   *  a measurement. */
+  asks: boolean | null;
+  /** the version `asks` was measured against, or null when nothing was. */
+  measured: string | null;
 }
 
 /** What this build knows. Two entries, because two are what anybody has
@@ -89,9 +93,9 @@ export interface RosterEntry {
   installed: boolean;
   /** the version in this pewter's `node_modules`, or null when absent. */
   version: string | null;
-  asks: boolean;
-  /** the version `asks` was measured against. */
-  measured: string;
+  asks: boolean | null;
+  /** the version `asks` was measured against, or null when nothing was. */
+  measured: string | null;
   /** true when the installed version is not the measured one — `asks` is then
    *  a claim about a different build, and saying so is cheaper than being
    *  quietly wrong about whether anything will ask before a file changes. */
@@ -133,6 +137,29 @@ export const findAdapter = (name: unknown): Adapter | null =>
  *  yet; a binary with no package is a leftover. What runs is the binary, so
  *  it is the one that decides, and the version comes off the package beside
  *  it. */
+/** A name that may be looked for in `node_modules/.bin`.
+ *
+ *  The catalog used to be the allow-list: a name not on it was refused, which
+ *  also meant a name from the wire could never become a path. The catalog no
+ *  longer gates (#201), so this rule has to do that job on its own — one
+ *  segment, no separators, no leading dot. An extension that can name
+ *  `../../bin/sh` is naming a path, and the page is never trusted with one
+ *  (spec/PROTOCOL.md, threat model). */
+const BIN_NAME = /^[a-z0-9][a-z0-9._-]*$/i;
+
+/** What this pewter would start for a name the catalog has never heard of.
+ *
+ *  The whole of #201's "the catalog informs, it never gates": an adapter is
+ *  an ordinary dependency, so what makes one startable is that npm put it in
+ *  `node_modules/.bin` — not that somebody added it to a list in this
+ *  repository. What the catalog still supplies is the part only measurement
+ *  can: whether it asks before it edits. For an unlisted adapter nobody has
+ *  measured that, and `asks: null` says so rather than guessing. */
+export function unlisted(name: string): Adapter | null {
+  if (!BIN_NAME.test(name)) return null;
+  return { name, pkg: name, bin: name, title: name, asks: null, measured: null };
+}
+
 export function resolve(p: Pewter, adapter: Adapter): { bin: string; version: string | null } | null {
   const bin = path.join(p.root, "node_modules", ".bin", adapter.bin);
   try {
