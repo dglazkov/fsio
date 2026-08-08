@@ -32,9 +32,9 @@
 // extension can ask for any operation, which is stated plainly in
 // NARRATIVE.md's "Looking into the Future" and is the honest description of where
 // this stands.
-import { asCall, asSend, answer, connect, event, isHello, PAGE_METHODS, refusal } from "pewter";
+import { asCall, asSend, asTrouble, answer, connect, event, isHello, PAGE_METHODS, refusal, type Trouble } from "pewter";
 import { agentOnHost, callHost, runOnHost, shellOnHost, ShellCallError } from "./session";
-import { opaque, served } from "./state";
+import { opaque, served, troubles } from "./state";
 import { answer as answerHere } from "./tabs";
 import { log, reporter } from "./reporter";
 
@@ -121,6 +121,17 @@ async function serve(data: unknown, port: MessagePort, name: string, live: Map<n
   const more = asSend(data);
   if (more) {
     live.get(more.id)?.(more.body);
+    return;
+  }
+
+  // The frame broke (#210). Not a call and never answered — it belongs to the
+  // screen rather than to anything anyone asked for. Recorded and logged, so
+  // it reaches `report.json` and the terminal running `pewt serve` reads the
+  // same sentence a person on the page does.
+  const broke = asTrouble(data);
+  if (broke) {
+    noteTrouble(name, broke);
+    log(`${name}: ${broke.kind === "rejection" ? "unhandled rejection" : "error"} — ${broke.message}${broke.at ? ` (${broke.at})` : ""}`);
     return;
   }
 
@@ -226,4 +237,14 @@ function record(method: string, ok: boolean, t0: number): void {
   served.set([...served.get(), { method, ok, ms }]);
   reporter.event("api-call", { method, ok, ms });
   log(`${method} → ${ok ? "ok" : "refused"} (${ms} ms)`);
+}
+
+/** How many broken-frame reports the page keeps. Enough to see a first-draw
+ *  failure and the redraws after it; not a log. */
+const TROUBLE_KEEP = 25;
+
+/** Record what a frame said broke, for the footer and the report. */
+function noteTrouble(from: string, said: Trouble): void {
+  const next = [...troubles.get(), { ...said, from, at_ms: Date.now() }];
+  troubles.set(next.length > TROUBLE_KEEP ? next.slice(next.length - TROUBLE_KEEP) : next);
 }

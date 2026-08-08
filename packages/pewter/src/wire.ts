@@ -114,6 +114,35 @@ export interface Send {
   body: unknown;
 }
 
+/** Extension → shell, on the port: the frame broke, and nothing else is going
+ *  to say so.
+ *
+ *  An extension's errors land in a console inside an opaque-origin iframe.
+ *  A human has to think to open devtools; an agent that wrote the screen
+ *  cannot open one at all, which is how a `TypeError` on a first draw cost a
+ *  session (#210). This is the message that gets it out of the frame and into
+ *  the folder, where whoever has to fix it is already looking.
+ *
+ *  Not tied to a call — a frame can break before it asks anything, and that
+ *  is exactly the case worth reporting. Advisory in both directions: a shell
+ *  that has never heard of it ignores an unknown `type`, and a frame built
+ *  before it simply never sends one, so `WIRE_VERSION` does not move (the
+ *  same reasoning as `tabs.add`'s optional `args` in #199). */
+export interface Trouble {
+  v: number;
+  type: "pewt:trouble";
+  /** `error` is a throw that reached the top; `rejection` is a promise
+   *  nobody handled. Kept apart because they are found in different ways —
+   *  an unhandled rejection is usually a missing `await`. */
+  kind: "error" | "rejection";
+  message: string;
+  /** the stack, when there was one. Trimmed by the sender, because this
+   *  rides the folder and a stack is unbounded. */
+  stack?: string;
+  /** where the browser said it happened, when it said. */
+  at?: string;
+}
+
 /** Why the answer was no. `code` is the operation's own word for it and
  *  `hint` is what to do instead — both travel from the host untouched, so an
  *  extension can act on them rather than parse a sentence. */
@@ -159,6 +188,26 @@ export function asSend(value: unknown): Send | null {
   const msg = value as Send;
   return typeof msg.id === "number" ? msg : null;
 }
+
+export function asTrouble(value: unknown): Trouble | null {
+  if (!isType(value, "pewt:trouble")) return null;
+  const msg = value as Trouble;
+  if (msg.kind !== "error" && msg.kind !== "rejection") return null;
+  return typeof msg.message === "string" ? msg : null;
+}
+
+/** How much of a stack rides the folder. A stack is unbounded and a report is
+ *  a file somebody reads; the first frames are where the answer is. */
+const STACK_MAX = 2000;
+
+export const trouble = (kind: Trouble["kind"], message: string, stack?: string, at?: string): Trouble => ({
+  v: WIRE_VERSION,
+  type: "pewt:trouble",
+  kind,
+  message,
+  ...(stack ? { stack: stack.length > STACK_MAX ? `${stack.slice(0, STACK_MAX)}…` : stack } : {}),
+  ...(at ? { at } : {}),
+});
 
 export const event = (id: number, payload: unknown): Event => ({ v: WIRE_VERSION, id, type: "pewt:event", event: payload });
 

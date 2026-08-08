@@ -19,7 +19,7 @@ import { SignalWatcher } from "@lit-labs/signals";
 import { tokens, panel } from "@fsio/ui";
 import { bodyLabel } from "pewter";
 import { forgetFolder, grantPending, pickFolder, regrant } from "../session";
-import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, reconnectTo, screens, screensError, served, tabs } from "../state";
+import { extError, folder, gate, host, opaque, opened, pending, phase, pickError, reconnectTo, screens, screensError, served, tabs, troubles } from "../state";
 import { answer, chipsOf, openFirst, setStage } from "../tabs";
 import { loadExtensions } from "../extension";
 
@@ -244,6 +244,11 @@ class PewterShell extends SignalWatcher(LitElement) {
     // instead. `bodyLabel` is the same reading `pewt tabs` prints in a
     // terminal, which is the point of it living in the shared package.
     const active = list.find((t) => t.id === activeId);
+    // The newest thing a frame said broke (#210). On the footer because a
+    // failure the error boundary contained leaves no other trace on screen —
+    // the screen works, and only the console and the report know otherwise.
+    const trouble = troubles.get();
+    const broke = trouble.length ? trouble[trouble.length - 1] : null;
     const calls = served.get();
     const last = calls[calls.length - 1];
     return html`
@@ -260,6 +265,7 @@ class PewterShell extends SignalWatcher(LitElement) {
         <span>${opaque.get() === null ? "frame not loaded" : opaque.get() ? "own origin" : "SAME ORIGIN — the sandbox is not holding"}</span>
         <span>host ${host.get()}</span>
         ${last ? html`<span>${last.method} → ${last.ok ? "ok" : "refused"} (${last.ms} ms)</span>` : nothing}
+        ${broke ? html`<span class="bad" title=${broke.stack ?? ""}>${broke.from} ${broke.kind === "rejection" ? "rejection" : "error"}: ${broke.message}</span>` : nothing}
       </footer>
     `;
   }

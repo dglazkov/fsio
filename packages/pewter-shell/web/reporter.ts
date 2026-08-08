@@ -8,7 +8,7 @@
 import { hasObserver } from "@fsio/client";
 import { createReporter } from "@fsio/ui";
 import { bodyLabel } from "pewter";
-import { content, opaque, opened, served, tabs } from "./state";
+import { content, opaque, opened, served, tabs, troubles } from "./state";
 
 export const { reporter, logText, log, step } = createReporter({
   page: "pewter-shell",
@@ -30,6 +30,16 @@ export const { reporter, logText, log, step } = createReporter({
       // whole `open`/`fling` split turns on: delete the file, and a window
       // says so while a copy carries on.
       views: [...content.get().values()].map((v) => ({ key: v.key, viewer: v.viewer, size: v.size, missing: v.missing })),
+      // What broke inside an extension's frame (#210). The reason this is in
+      // the report at all: an extension's console is inside an opaque-origin
+      // iframe, so a screen that fails is silent everywhere a human or an
+      // agent would look. Here it is a file in the folder, beside everything
+      // else about what the page is doing.
+      //
+      // Whole, with the stack, rather than a count — the stack is the useful
+      // half, and a report that says "3 errors" sends you back to the console
+      // this exists to replace.
+      troubles: troubles.get().map((t) => ({ from: t.from, kind: t.kind, message: t.message, at: t.at ?? null, stack: t.stack ?? null, at_ms: t.at_ms })),
       // The claim the sandbox exists to make, as a fact a script can fail on.
       // null means no frame has loaded yet, which is not the same as false.
       opaqueOrigin: opaque.get(),
