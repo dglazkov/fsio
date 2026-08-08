@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// The shebang needs an executable bit, and `tsc` rewrites this file without
+// one on every build; npm only sets it at install time. The build chmods it
+// (package.json, wireit `build`) — same reason as packages/pewt/src/cli.ts,
+// which is where the whole story is written down.
 // `npm create pewt@latest <dir>` — make a pewter.
 //
 //     npm create pewt@latest ~/Documents/code/work-pewter

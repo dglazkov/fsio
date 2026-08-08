@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 // `pewt` — the command line for a pewter.
 //
+// The shebang above needs an executable bit to matter, and `tsc` rewrites
+// this file without one on every build. npm sets it at install time, which
+// is enough for a pewter that installed this package and not enough for one
+// that `file:`-links it: that pewter's `node_modules/.bin/pewt` is a symlink
+// straight at this file rather than a generated shim, so after any rebuild
+// `npm start` there dies with "Permission denied" until somebody reinstalls.
+// The build therefore chmods it (package.json, wireit `build`).
+//
 // It runs inside a pewter and nowhere else: outside one it is not installed,
 // so there is nothing to run. Inside one, every command but `serve` is a
 // call over the folder to the host — the same session, the same methods, and

@@ -20,7 +20,7 @@
   },
   "wireit": {
     "build": {
-      "command": "tsc --pretty",
+      "command": "tsc --pretty && chmod +x dist/cli.js",
       "files": [
         "src/**",
         "tsconfig.json",
