@@ -59,6 +59,52 @@ export interface Bundle {
  *  name may contain rather than resolved and checked afterwards. */
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
+/** One screen this pewter holds. */
+export interface Extension {
+  /** its directory name under `extensions/`, which is what opens it. */
+  name: string;
+  /** false when the directory is not something `bundleExtension` could
+   *  build. Reported rather than hidden: a half-written screen is the normal
+   *  state of one you are in the middle of writing, and a list that silently
+   *  omitted it would be a list that disagrees with your own folder. */
+  ready: boolean;
+  /** what it is missing, when it is not ready. */
+  missing?: string;
+}
+
+/** What `extensions/` holds — the twin of `bundleExtension`, and the answer
+ *  to "what can this page open".
+ *
+ *  Both front ends need it for the same reason and neither could ask before:
+ *  the page's only door to an extension was a name somebody already knew
+ *  (#187), and an agent that writes a screen had no way to confirm the pewter
+ *  can see it. Reading the directory is the whole implementation — the folder
+ *  is the list, and nothing caches it, so a screen written a second ago is on
+ *  the next answer. */
+export async function listExtensions(p: Pewter): Promise<Extension[]> {
+  let entries;
+  try {
+    entries = await fs.readdir(p.extensions, { withFileTypes: true });
+  } catch {
+    // No `extensions/` at all is an empty pewter, not a broken one. The
+    // caller draws "nothing to open" either way.
+    return [];
+  }
+  const found: Extension[] = [];
+  for (const e of entries) {
+    // A dotfile is not a screen, and neither is `env.d.ts` — only directories
+    // are, which is the same rule `bundleExtension` resolves against.
+    if (!e.isDirectory() || e.name.startsWith(".") || !NAME.test(e.name)) continue;
+    const at = path.join(p.extensions, e.name);
+    const lacks: string[] = [];
+    for (const what of ["index.html", "main.ts"]) {
+      if (!(await exists(path.join(at, what)))) lacks.push(what);
+    }
+    found.push(lacks.length === 0 ? { name: e.name, ready: true } : { name: e.name, ready: false, missing: lacks.join(" and ") });
+  }
+  return found.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function bundleExtension(p: Pewter, name: string): Promise<Bundle> {
   if (!NAME.test(name)) {
     throw new BundleError(

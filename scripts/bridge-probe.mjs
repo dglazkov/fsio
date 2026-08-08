@@ -47,7 +47,7 @@ const ext = path.join(root, "extensions", "probe");
 fs.mkdirSync(ext, { recursive: true });
 fs.writeFileSync(
   path.join(ext, "index.html"),
-  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
+  `<body><p id="out">nothing yet</p><pre id="log"></pre><p id="code">no run yet</p><p id="cloned">no clone yet</p><pre id="cprog"></pre><form id="form"><input id="field" /><button>go</button></form><p id="formed">no submit yet</p><pre id="term"></pre><p id="left">no shell yet</p><pre id="acp"></pre><p id="agentinfo">no agent yet</p><p id="tabbed">no tab yet</p><p id="filed">no file yet</p><p id="granted">nothing asked</p><p id="opened">opened with nothing</p><p id="picked">no pick yet</p><p id="drawn"></p><p id="screens">nothing listed</p><div id="broken"></div><script type="module" src="./main.ts"></script></body>`
 );
 // Top-level await on the first line, on purpose: this is the shape that
 // deadlocks against a load-event handshake.
@@ -191,6 +191,14 @@ beat.set("second");
 await drawing.drawn();
 drawnInto.setAttribute("data-drew", drawnInto.textContent ?? "");
 
+// What the folder holds, asked from inside the sandbox (#187). The shell's
+// own opener reads exactly this, so an extension and the strip's + are two
+// callers of one operation — which is the claim the two front ends make.
+const screens = await pewt.ext.list();
+document.getElementById("screens")!.textContent = screens.extensions
+  .map((e) => (e.ready ? e.name : \`\${e.name} (no \${e.missing})\`))
+  .join(", ");
+
 // A view that throws must put its reason on screen. The bug this pins cost a
 // session: an extension called a helper declared below its own \`screen()\`
 // call, the first draw is synchronous, and the pane went blank — which looks
@@ -309,6 +317,13 @@ const PARENT = `<!doctype html>
         post({ ok: true, result: { exitCode: 0 } });
         return;
       }
+      if (call.method === "ext.list") {
+        // The page's own door to a screen (#187). Half-written screens are on
+        // the list on purpose — a menu that hides one disagrees with the
+        // folder it is describing.
+        post({ ok: true, result: { extensions: [{ name: "probe", ready: true }, { name: "half", ready: false, missing: "main.ts" }] } });
+        return;
+      }
       if (call.method === "repos.create") {
         post({ ok: true, result: { repo: { name: call.params.name, git: true } } });
         return;
@@ -378,6 +393,7 @@ let kitdrew = "";
 let quietDisplay = "";
 let broke = "";
 let brokeStack = "";
+let screens = "";
 try {
   // Short on purpose. The failure this exists to catch is a hang, and a
   // generous timeout would turn a deadlock into a slow pass on a busy
@@ -409,6 +425,7 @@ try {
   quietDisplay = await frame.locator("#quiet").evaluate((el) => getComputedStyle(el).display);
   broke = await frame.locator("#broken").getAttribute("data-broke");
   brokeStack = await frame.locator("#broken").getAttribute("data-stack");
+  screens = await frame.locator("#screens").textContent();
 } catch (e) {
   result = await page.evaluate(() => window.__result ?? empty);
   errors.push(e instanceof Error ? e.message : String(e));
@@ -443,6 +460,7 @@ const checks = [
   ["the kit's status line spoke, offered, and acted", kitsaid === "kit acted"],
   ["a hidden element stays hidden — the kit's block box does not defeat the attribute", quietDisplay === "none"],
   ["a screen redrew from a signal, and drawn() waited for it", kitdrew === "second"],
+  ["an extension read what extensions/ holds, half-written ones included", screens === "probe, half (no main.ts)"],
   ["a view that throws puts its reason on screen instead of a blank pane", broke === "said so"],
   ["and the stack goes with it, for the reader who cannot open a console", brokeStack === "kept"],
   ["nothing threw in the page", errors.length === 0],

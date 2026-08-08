@@ -23,7 +23,7 @@
 // command to a page and a receipt back.
 import { asTabCommand, bodyLabel, describeGrant, grantId, shellSpec, sizeText, type Grant, type HeldFile, type TabsListing } from "pewter";
 import { roster, type RosterEntry } from "./agents.js";
-import { bundleExtension, BundleError, type Bundle } from "./bundle.js";
+import { bundleExtension, BundleError, listExtensions, type Bundle, type Extension } from "./bundle.js";
 import { GrantsError, readGrants, revokeGrant } from "./grants.js";
 import { createRepo, listRepos, ReposError, type Project } from "./repos.js";
 import type { Pewter } from "./pewter.js";
@@ -170,6 +170,25 @@ export const reposCreate = define<{ name: string }, { repo: Project }>({
     }
   },
   render: ({ repo }) => `${repo.name} → repos/${repo.name}/ — a git repository${repo.branch ? ` on ${repo.branch}` : ""}, ready to work in`,
+});
+
+export const extList = define<Record<string, never>, { extensions: Extension[] }>({
+  method: "ext.list",
+  cli: ["ext"],
+  summary: "the screens this pewter holds",
+  usage: "",
+  fromArgv: (argv) => {
+    if (argv.length) throw new OpError("usage", "ext takes no arguments — `pewt ext bundle <name>` builds one");
+    return {};
+  },
+  parse: () => ({}),
+  // Unasked, and it reads a directory the caller was already granted. The
+  // same reasoning as `ext.bundle` beside it (#189).
+  run: async (p) => ({ extensions: await listExtensions(p) }),
+  render: ({ extensions }) => {
+    if (extensions.length === 0) return "no extensions yet — extensions/ is empty, so the page has nothing to show.";
+    return extensions.map((e) => (e.ready ? `  ${e.name}` : `  ${e.name} — no ${e.missing}, so it cannot be opened`)).join("\n");
+  },
 });
 
 export const extBundle = define<{ name: string }, Bundle>({
@@ -501,6 +520,7 @@ export const filesDrop = definePage<{ id: string }, { id: string; name: string; 
 export const OPERATIONS: Operation[] = [
   reposList,
   reposCreate,
+  extList,
   extBundle,
   agentsList,
   grantsList,

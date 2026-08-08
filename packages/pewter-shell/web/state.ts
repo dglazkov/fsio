@@ -1,7 +1,7 @@
 // Page state, as signals. The components render from these; session.ts and
 // tabs.ts write them. The plain modules stay framework-free.
 import { signal } from "@lit-labs/signals";
-import { noTabs, type TabsState } from "pewter";
+import { noTabs, type Extension, type TabsState } from "pewter";
 
 /** What the host calls this pewter. It arrives with the session, and it is
  *  what the page's own storage is keyed by: one origin serves every pewter
@@ -63,6 +63,12 @@ export interface OpenExtension {
 }
 export const opened = signal<Record<string, OpenExtension>>({});
 export const extError = signal<string>("");
+
+/** What `extensions/` holds, for the strip's opener — null until it is asked
+ *  for, and asked for again every time the menu opens, because the folder is
+ *  the list and a screen written a minute ago should be on it (#187). */
+export const screens = signal<Extension[] | null>(null);
+export const screensError = signal<string>("");
 
 /** One file tab's bytes, decoded far enough to render.
  *

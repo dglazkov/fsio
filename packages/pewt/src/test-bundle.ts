@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { bundleExtension, BundleError, inline } from "./bundle.js";
+import { bundleExtension, BundleError, inline, listExtensions } from "./bundle.js";
 import { pewterAt, type Pewter } from "./pewter.js";
 
 function pewter(): Pewter {
@@ -207,4 +207,60 @@ test("CSS is inlined into the head", () => {
 test("an HTML file with no script tag still gets the bundle", () => {
   const html = inline("<body><h1>hi</h1></body>", "const a = 1;", "");
   assert.match(html, /<script type="module">[\s\S]*const a = 1;[\s\S]*<\/script>\s*<\/body>/);
+});
+
+// ---- what the folder holds (#187)
+//
+// The page's only door to an extension used to be a name somebody already
+// knew, which is why closing the last tab left no way back. These cover the
+// answer that door reads.
+
+test("the list is the folder, sorted, with no build in it", async () => {
+  const p = pewter();
+  extension(p, "repos");
+  extension(p, "agent");
+  const found = await listExtensions(p);
+  assert.deepEqual(
+    found.map((e) => e.name),
+    ["agent", "repos"]
+  );
+  assert.ok(
+    found.every((e) => e.ready),
+    "both are openable"
+  );
+  // Listing must not compile anything: opening a menu that builds every
+  // screen in the pewter would be a menu nobody opens twice.
+  assert.equal(fs.existsSync(p.build), false);
+});
+
+test("a half-written screen is listed and says what it lacks, rather than vanishing", async () => {
+  const p = pewter();
+  extension(p, "done");
+  // The normal state of a screen somebody is in the middle of writing — and
+  // the state an agent leaves one in between two tool calls.
+  fs.mkdirSync(path.join(p.extensions, "started"), { recursive: true });
+  fs.writeFileSync(path.join(p.extensions, "started", "index.html"), "<h1>soon</h1>");
+  const found = await listExtensions(p);
+  assert.deepEqual(
+    found.map((e) => `${e.name}:${e.ready}`),
+    ["done:true", "started:false"]
+  );
+  assert.equal(found.find((e) => e.name === "started")?.missing, "main.ts");
+});
+
+test("files beside the screens are not screens", async () => {
+  const p = pewter();
+  extension(p, "repos");
+  // The scaffold writes this one, and a directory nobody should offer.
+  fs.writeFileSync(path.join(p.extensions, "env.d.ts"), "declare module '*.css';\n");
+  fs.mkdirSync(path.join(p.extensions, ".cache"), { recursive: true });
+  assert.deepEqual(
+    (await listExtensions(p)).map((e) => e.name),
+    ["repos"]
+  );
+});
+
+test("a pewter with no extensions/ lists nothing rather than failing", async () => {
+  const p = pewter();
+  assert.deepEqual(await listExtensions(p), []);
 });
