@@ -2,7 +2,8 @@
 // that follows its own state.
 //
 //     import "pewter-ui";              registers <pewter-status>, <pewter-menu>,
-//                                     <pewter-markdown>
+//                                     <pewter-markdown>, <pewter-ask>,
+//                                     <pewter-step>
 //     import "pewter-ui/style.css";    the page around them
 //     import { screen } from "pewter-ui";
 //
@@ -21,13 +22,19 @@
 // `--pewter-*` custom properties in tokens.ts, and the `part=` names on the
 // markup inside. Both are listed in style.css, which is where somebody
 // restyling a screen will be looking.
+import { PewterAsk } from "./ask.js";
 import { PewterMarkdown } from "./prose.js";
+import { PewterStep } from "./step.js";
 import { PewterMenu } from "./menu.js";
 import { PewterStatus } from "./status.js";
 
 export { PewterStatus } from "./status.js";
 export { PewterMenu } from "./menu.js";
 export { PewterMarkdown, renderMarkdown } from "./prose.js";
+export { PewterAsk } from "./ask.js";
+export type { PewterAskChoice } from "./ask.js";
+export { PewterStep } from "./step.js";
+export type { PewterStepState } from "./step.js";
 export { parseMarkdown, parseInline } from "./markdown.js";
 export type { Block, Inline } from "./markdown.js";
 export type { PewterMenuChoice } from "./menu.js";
@@ -43,3 +50,5 @@ const define = (tag: string, ctor: CustomElementConstructor): void => {
 define("pewter-status", PewterStatus);
 define("pewter-menu", PewterMenu);
 define("pewter-markdown", PewterMarkdown);
+define("pewter-ask", PewterAsk);
+define("pewter-step", PewterStep);

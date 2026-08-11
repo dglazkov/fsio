@@ -64,6 +64,44 @@
  *
  *   pewter-markdown::part(code) { max-height: 20rem; }
  *
+ * ## <pewter-ask>
+ *
+ * A question somebody has to answer: a heading, a body you slot in, the
+ * files it is about, and choices that carry what they mean.
+ *
+ *   const ask = document.createElement("pewter-ask");
+ *   ask.question = "Write to src/main.ts?";
+ *   ask.choices = [{ value: "y", label: "allow once", intent: "affirm" },
+ *                  { value: "n", label: "reject", intent: "deny" }];
+ *   ask.paths = ["/abs/path/src/main.ts"];
+ *   ask.onpath = (p) => void pewt.open(relativeToThePewter(p));
+ *   ask.onpick = (v) => { ask.answered = v ?? ""; };
+ *
+ * `intent` is what an answer means, not what it looks like — the element
+ * decides the weight, so a screen is not choosing colours. Setting
+ * `.answered` replaces the buttons with what was chosen and leaves the card
+ * on screen, because a transcript with the answers removed is not one.
+ *
+ * Paths are a callback rather than a link: this package does not import
+ * `pewter`, so the screen decides what a path means. In a pewter that is
+ * `pewt.open()` and a real tab.
+ *
+ *   --pewter-ask-edge / --pewter-ask-bg      the card
+ *   --pewter-ask-affirm / --pewter-ask-deny  the two intents
+ *
+ * Parts: `who`, `question`, `paths`, `path`, `body`, `choices`, `choice`,
+ * `answered`.
+ *
+ * ## <pewter-step>
+ *
+ * One thing being done and how it is going — an agent's tool call, a build
+ * step, a reading. `label`, `state` (`waiting` | `running` | `done` |
+ * `failed`), `paths` and `onpath` as above, and a slot for the detail.
+ *
+ *   --pewter-step-done / --pewter-step-failed / --pewter-step-running
+ *
+ * Parts: `label`, `state`, `paths`, `path`, `detail`.
+ *
  * `<pewter-status>` has `said` and `button`; `<pewter-menu>` has `list`,
  * `row`, `hint` and `button`. If you want more than those two hooks give
  * you, the element is fifty lines in node_modules/pewter-ui — read it, and
