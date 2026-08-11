@@ -23,6 +23,14 @@
 // the bundling — the sandbox, the stylesheet inlining — belongs in the probe
 // or the rig, not here.
 import "../src/index.js";
+// The sheet is imported rather than linked from the HTML, for two reasons.
+// A `<link href="../style.css">` normalizes to `/style.css` in the browser,
+// which is not under vite's root, so it silently 404s and the page renders
+// in Times — which is what it was doing, unnoticed, until the palette landed
+// and the miss became obvious. And this is how an extension takes it
+// (`import "pewter-ui/style.css"`), so the gallery is doing the same thing a
+// screen does rather than something adjacent to it.
+import "../style.css";
 import type { PewterAskChoice } from "../src/ask.js";
 
 const app = document.getElementById("app")!;

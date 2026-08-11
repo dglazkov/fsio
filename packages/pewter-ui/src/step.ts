@@ -46,9 +46,9 @@ export class PewterStep extends LitElement {
     pathStyles,
     css`
       :host {
-        --_ok: var(--pewter-step-done, light-dark(#1c6b3f, #6fd39b));
-        --_bad: var(--pewter-step-failed, light-dark(#a3372e, #ff8f85));
-        --_busy: var(--pewter-step-running, light-dark(#2a5c9a, #86b7f0));
+        --_ok: var(--pewter-step-done, var(--_good));
+        --_no: var(--pewter-step-failed, var(--_bad));
+        --_busy: var(--pewter-step-running, var(--_cyan));
         display: block;
         font-size: 0.85rem;
       }
@@ -69,7 +69,7 @@ export class PewterStep extends LitElement {
         color: var(--_ok);
       }
       :host([state="failed"]) .state {
-        color: var(--_bad);
+        color: var(--_no);
       }
       :host([state="running"]) .state {
         color: var(--_busy);
@@ -77,7 +77,7 @@ export class PewterStep extends LitElement {
       /* A step that failed is the one worth finding again in a long
          transcript, so it keeps an edge. */
       :host([state="failed"]) {
-        border-inline-start: 2px solid var(--_bad);
+        border-inline-start: 2px solid var(--_no);
         padding-inline-start: 0.5rem;
       }
       .detail {
