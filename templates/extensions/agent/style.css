@@ -50,6 +50,17 @@ body {
   opacity: 0.55;
   font-size: 0.85rem;
 }
+/* Typed while the agent was busy, and waiting its turn. Shaped like what it
+   will become — a user entry — and dimmed, because it has not been said yet. */
+.entry.queued {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.45rem 0.7rem;
+  border-radius: 10px;
+  border: 1px dashed var(--pewter-line);
+  opacity: 0.6;
+  font-size: 0.9rem;
+}
 .entry.note {
   opacity: 0.65;
   font-size: 0.85rem;
@@ -58,49 +69,17 @@ body {
   color: var(--pewter-error);
   font-size: 0.9rem;
 }
+/* A tool call and a permission question are <pewter-step> and <pewter-ask>
+   now, and each carries its own look — so what is left here is where they
+   sit, not what they look like. Restyle their insides through the
+   --pewter-step-* and --pewter-ask-* properties, or their part names; both
+   are listed at the top of node_modules/pewter-ui/style.css. */
 .entry.tool {
-  font-size: 0.85rem;
-  opacity: 0.85;
   padding: 0.35rem 0.6rem;
   border-left: 2px solid var(--pewter-line);
 }
-.tool-status {
-  margin-left: 0.6rem;
-  opacity: 0.6;
-  font-style: italic;
-}
-.tool-detail {
-  opacity: 0.7;
-  font-size: 0.8rem;
-  white-space: pre-wrap;
-}
 .entry.permission {
-  padding: 0.7rem 0.9rem;
-  border: 1px solid var(--pewter-line-strong);
-  border-radius: 8px;
-}
-.entry.permission p {
-  margin: 0 0 0.4rem;
-}
-.entry.permission pre {
-  margin: 0 0 0.6rem;
-  font-size: 0.8rem;
-  white-space: pre-wrap;
-  opacity: 0.8;
-  max-height: 10rem;
-  overflow-y: auto;
-}
-.choices {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.choices button {
-  padding: 0.25rem 0.8rem;
-}
-.choices em {
-  font-size: 0.85rem;
-  opacity: 0.7;
+  align-self: stretch;
 }
 #composer {
   display: flex;

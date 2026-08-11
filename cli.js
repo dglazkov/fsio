@@ -157,8 +157,8 @@ the channel between this machine and the Pewter page at once.
   \`pewt tabs add terminal\` or \`pewt tabs add agent\` opens one. Their
   shared look is \`pewter-ui\`, an ordinary dependency with two imports:
   \`import "pewter-ui"\` registers its typed elements \u2014 \`<pewter-status>\`,
-  \`<pewter-menu>\`, \`<pewter-markdown>\` \u2014 and
-  \`import "pewter-ui/style.css"\` is the styles.
+  \`<pewter-menu>\`, \`<pewter-markdown>\`, \`<pewter-ask>\`,
+  \`<pewter-step>\` \u2014 and \`import "pewter-ui/style.css"\` is the styles.
   The elements are the kit's API: the package's \`.d.ts\` names its tags,
   so your editor completes them and \`pewt check\` fails a misuse. Before
   styling or building a screen, read \`node_modules/pewter-ui\` \u2014 one
@@ -211,6 +211,23 @@ the channel between this machine and the Pewter page at once.
   \`innerHTML\` on anything an agent wrote would hand a capability to
   whatever the model was quoting. The port your extension holds is the
   capability, and a file an agent summarizes can contain anything.
+- **A question goes in \`<pewter-ask>\`, a task in \`<pewter-step>\`.** Both
+  take a list of files and a callback for when one is clicked, and that
+  callback is where a screen does something no terminal can:
+
+  \`\`\`ts
+  ask.paths = ["/Users/you/pewters/dev/repos/site/src/main.ts"];
+  ask.onpath = (abs) => void pewt.open(insideThePewter(abs));
+  \`\`\`
+
+  The kit deliberately does not do that step for you: \`pewter-ui\` never
+  imports \`pewt\`, and a path is not a URL. An agent names files
+  **absolutely**, rooted at the directory the host started it in
+  (\`agent.info.cwd\`), while \`pewt.open\` takes a path relative to the
+  pewter \u2014 so strip the one and prepend where it sits, which is
+  \`repos/<project>\` or the root. \`extensions/agent/\` does this in
+  \`pewterPath()\`; a path that is not under the cwd has no tab to open and
+  the honest answer is to leave it as text.
 
   **The first draw is synchronous.** \`screen()\` renders once before it
   returns, so anything your view calls must already exist \u2014 write helpers
