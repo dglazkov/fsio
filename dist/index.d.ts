@@ -1,6 +1,10 @@
 export { PewterStatus } from "./status.js";
 export { PewterMenu } from "./menu.js";
 export { PewterMarkdown, renderMarkdown } from "./prose.js";
+export { PewterAsk } from "./ask.js";
+export type { PewterAskChoice } from "./ask.js";
+export { PewterStep } from "./step.js";
+export type { PewterStepState } from "./step.js";
 export { parseMarkdown, parseInline } from "./markdown.js";
 export type { Block, Inline } from "./markdown.js";
 export type { PewterMenuChoice } from "./menu.js";
