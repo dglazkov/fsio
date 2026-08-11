@@ -75,9 +75,9 @@ export class PewterAsk extends LitElement {
         css `
       :host {
         --_ask-edge: var(--pewter-ask-edge, var(--_line-strong));
-        --_ask-bg: var(--pewter-ask-bg, var(--_wash));
-        --_affirm: var(--pewter-ask-affirm, light-dark(#1c6b3f, #6fd39b));
-        --_deny: var(--pewter-ask-deny, light-dark(#a3372e, #ff8f85));
+        --_ask-bg: var(--pewter-ask-bg, var(--_panel));
+        --_affirm: var(--pewter-ask-affirm, var(--_good));
+        --_deny: var(--pewter-ask-deny, var(--_bad));
         display: block;
         border: 1px solid var(--_ask-edge);
         border-radius: 10px;
@@ -105,13 +105,13 @@ export class PewterAsk extends LitElement {
         margin-top: 0.55rem;
       }
       .choices button {
-        border: 1px solid var(--_line);
+        border: 1px solid var(--_line-control);
         border-radius: 7px;
         padding: 0.25rem 0.7rem;
         font-size: 0.85rem;
       }
       .choices button:hover:not(:disabled) {
-        background: var(--_raised);
+        background: var(--_control-hover);
       }
       /* Weight, from what the answer means. An agent offering "allow once"
          and "reject" is offering two very different things, and a row of
