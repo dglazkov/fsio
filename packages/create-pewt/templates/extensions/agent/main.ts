@@ -10,7 +10,7 @@
 //
 // One tab is one conversation with one agent. For a second one, open another
 // tab: `pewt tabs add agent`.
-import { pewt, args, explain, type Agent } from "pewter";
+import { pewt, args, describeAsks, explain, type Agent } from "pewter";
 // The shared look, an ordinary dependency of this pewter — the same
 // arrangement as an ACP adapter. The bare import registers the kit's
 // elements; the css import is the styles. Both queries below come back
@@ -386,12 +386,6 @@ let live: {
 let current: Agent | null = null;
 let turning = false;
 
-/** The one fact worth reading before you start an agent, in three states.
- *  "Nobody measured this" is not "it does not ask", and an unlisted adapter
- *  (#201) is genuinely unmeasured. */
-const describeAsks = (asks: boolean | null): string =>
-  asks === null ? "nobody has measured whether it asks" : asks ? "asks before it edits" : "edits with its own hands";
-
 /** Where the agent runs, and which agent it would be. Asked fresh every time
  *  the picker shows, so a project cloned — or an adapter installed — since
  *  the last conversation is on the list. */
@@ -452,7 +446,7 @@ async function open(repo: string | null): Promise<void> {
   line(
     "note",
     (info.asks === null
-      ? "nobody has measured whether this agent asks before it changes a file — assume it does not"
+      ? `${describeAsks(null)} — assume it does not`
       : info.asks
         ? "this agent asks before it changes a file"
         : "this agent edits with its own hands — it will not ask first") + (info.unmeasured ? " (measured against a different version than yours)" : "")

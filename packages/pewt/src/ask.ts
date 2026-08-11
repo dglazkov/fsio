@@ -28,7 +28,7 @@
 // a restart.
 import readline from "node:readline/promises";
 import type { HostLogger, SpawnPolicy } from "@fsio/host";
-import { describeGrant, type Grant, type GrantKey } from "pewter";
+import { describeAsks, describeGrant, type Grant, type GrantKey } from "pewter";
 import type { Pewter } from "./pewter.js";
 import { asAgentSpec, AgentError, planAgent, type AgentPlan } from "./agent.js";
 import { GRANTS_FILE, GrantsError, readGrants, recordGrant, standingGrant } from "./grants.js";
@@ -282,9 +282,9 @@ function agentQuestion(p: Pewter, spec: Readonly<Record<string, unknown>>): Ques
       // whole point of the line, and defaulting it to either claim would be
       // inventing a measurement at the exact moment somebody is deciding.
       plan.adapter.asks === null
-        ? "nobody has measured whether it asks before it edits — assume it does not"
+        ? `${describeAsks(null)} — assume it does not`
         : plan.adapter.asks
-          ? `it asks before it edits${plan.unmeasured ? ` (measured at ${plan.adapter.measured}, this is ${plan.version ?? "unknown"})` : ""}`
+          ? `${describeAsks(true)}${plan.unmeasured ? ` (measured at ${plan.adapter.measured}, this is ${plan.version ?? "unknown"})` : ""}`
           : "it edits with its own hands — nothing will ask you again",
     ],
     flag: STARTS.agent,
