@@ -11,9 +11,16 @@
     }
   },
   "scripts": {
-    "build": "wireit"
+    "build": "wireit",
+    "bundle": "wireit"
   },
   "wireit": {
+    "bundle": {
+      "command": "node scripts/make-artifact.mjs",
+      "files": ["scripts/make-artifact.mjs", "../../scripts/verbatim-artifact.mjs", "artifact/**", "README.md"],
+      "output": ["artifact-dist/**"],
+      "dependencies": ["build"]
+    },
     "build": {
       "command": "tsc --pretty",
       "files": ["src/**", "tsconfig.json", "../../tsconfig.base.json"],

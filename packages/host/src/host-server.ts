@@ -480,7 +480,12 @@ export interface PtyModule {
   spawn(
     file: string,
     args: string[],
-    opts: { name: string; cols: number; rows: number; cwd: string; env: NodeJS.ProcessEnv }
+    // `Record<string, string | undefined>` rather than `NodeJS.ProcessEnv`,
+    // which is the same type: it was the one @types/node reference in this
+    // package's *public* .d.ts, and it made an external consumer's compile
+    // depend on @types/node being in scope (#224 — the consumer check compiles
+    // with `types: []` and caught it). `process.env` still assigns to it.
+    opts: { name: string; cols: number; rows: number; cwd: string; env: Record<string, string | undefined> }
   ): PtyProcess;
 }
 
