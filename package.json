@@ -1,0 +1,17 @@
+{
+  "name": "@fsio/common",
+  "version": "0.0.0-08aea5bb1b9a",
+  "description": "fsio protocol core: frame codec, JSON-RPC control plane, protocol schemas",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
