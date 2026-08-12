@@ -12,9 +12,16 @@
   },
   "scripts": {
     "build": "wireit",
-    "test": "wireit"
+    "test": "wireit",
+    "bundle": "wireit"
   },
   "wireit": {
+    "bundle": {
+      "command": "node scripts/make-artifact.mjs",
+      "files": ["scripts/make-artifact.mjs", "../../scripts/verbatim-artifact.mjs", "artifact/**", "README.md"],
+      "output": ["artifact-dist/**"],
+      "dependencies": ["build"]
+    },
     "test": {
       "command": "node --test dist/*.test.js",
       "files": [],

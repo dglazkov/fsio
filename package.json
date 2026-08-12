@@ -35,6 +35,7 @@
     "agent-reach-lab": "node scripts/agent-reach-lab.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
     "check-anchors": "wireit",
+    "consumer-check": "wireit",
     "read-wall-lab": "node scripts/read-wall-lab.mjs",
     "kit": "npm run gallery -w packages/pewter-ui"
   },
@@ -72,7 +73,20 @@
         "./packages/pewter:test",
         "./packages/create-pewt:test",
         "./packages/pewt:test",
-        "check-anchors"
+        "check-anchors",
+        "consumer-check"
+      ]
+    },
+    "consumer-check": {
+      "command": "node scripts/consumer-check.mjs",
+      "files": [
+        "scripts/consumer-check.mjs"
+      ],
+      "output": [],
+      "dependencies": [
+        "./packages/common:bundle",
+        "./packages/client:bundle",
+        "./packages/host:bundle"
       ]
     },
     "check-anchors": {
@@ -82,7 +96,10 @@
         "spec/*.md",
         "TESTING.md",
         "README.md",
-        "AGENTS.md"
+        "AGENTS.md",
+        "PROCESS.md",
+        "NARRATIVE.md",
+        "packages/*/README.md"
       ],
       "output": []
     }

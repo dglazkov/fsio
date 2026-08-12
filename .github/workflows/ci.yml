@@ -30,15 +30,28 @@ jobs:
       - run: npm run build
       - run: npm test
 
-  # The npx-installable helpers (#16 S5, #106). Every push to main rebuilds
-  # each package's bundle and commits it to a branch named after the package,
-  # which is what that demo page's one-liner installs — npx
-  # github:dglazkov/fsio#terminal-demo, …#acp-demo — and what a pewter
-  # declares as a dependency: github:dglazkov/fsio#pewt (#181).
+  # The installable packages (#16 S5, #106, #181, #224). Every push to main
+  # rebuilds each package's bundle and commits it to a branch named after the
+  # package, which is what a demo page's one-liner installs — npx
+  # github:dglazkov/fsio#terminal-demo, …#acp-demo — what a pewter declares as
+  # a dependency (github:dglazkov/fsio#pewt), and what a project outside this
+  # repository installs to embed the two library halves
+  # (github:dglazkov/fsio#host, …#client, #224).
   #
   # The branch name IS the package directory name, which is what lets one job
   # serve every entry: the pair (workspace, branch) is a single matrix entry
   # and nothing below is spelled twice.
+  #
+  # `common`, `client` and `host` are three branches rather than two because
+  # both library halves import @fsio/common from their emitted .d.ts and
+  # declare the same branch for it, so a consumer resolves ONE copy. Two copies
+  # would give a project holding both halves two RpcError classes and two
+  # FrameType enums — `instanceof` false, no other symptom (#224).
+  #
+  # The jobs are independent, so the branches advance separately. They do all
+  # advance on every push (the version is stamped 0.0.0-<sha>, so there is
+  # always a diff), but an install landing between two jobs can pair a new
+  # client with an older common. Recorded, not solved.
   artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
@@ -48,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [terminal-demo, acp-demo, pewt, pewter, pewter-ui, create-pewt]
+        pkg: [terminal-demo, acp-demo, pewt, pewter, pewter-ui, create-pewt, common, client, host]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

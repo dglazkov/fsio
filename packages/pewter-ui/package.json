@@ -36,6 +36,7 @@
       "command": "node scripts/make-artifact.mjs",
       "files": [
         "scripts/make-artifact.mjs",
+        "../../scripts/verbatim-artifact.mjs",
         "artifact/**",
         "style.css"
       ],

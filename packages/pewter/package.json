@@ -30,7 +30,7 @@
     },
     "bundle": {
       "command": "node scripts/make-artifact.mjs",
-      "files": ["scripts/make-artifact.mjs", "artifact/**"],
+      "files": ["scripts/make-artifact.mjs", "../../scripts/verbatim-artifact.mjs", "artifact/**"],
       "output": ["artifact-dist/**"],
       "dependencies": ["build"]
     }

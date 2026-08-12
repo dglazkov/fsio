@@ -1,0 +1,17 @@
+{
+  "name": "@fsio/client",
+  "version": "0.0.0-dev",
+  "description": "fsio client: sessions over a shared directory via the File System Access API surface",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@fsio/common": "github:dglazkov/fsio#common"
+  }
+}

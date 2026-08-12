@@ -115,6 +115,25 @@ thing this demo exists to show and which not every agent does. The page
 renders that list and you choose from it
 ([D31](spec/DECISIONS.md#d31--a-kind-may-carry-embedder-detail-transcribed-never-interpreted-detected-by-presence)).
 
+## Use fsio in your own project
+
+The two library halves install from branches of this repository, which CI
+rebuilds on every push to `main`:
+
+```sh
+npm install github:dglazkov/fsio#host    # Node: embed HostServer
+npm install github:dglazkov/fsio#client  # browser: open sessions
+```
+
+Each half declares `@fsio/common` — the protocol types they share — as
+`github:dglazkov/fsio#common`, so a project holding both installs one copy of
+it and both sides see the same types and the same `RpcError` class.
+
+[`packages/host/README.md`](packages/host/README.md) and
+[`packages/client/README.md`](packages/client/README.md) are the API
+references. The API is unstable and changes without notice; your lockfile pins
+the commit you resolved.
+
 ## Layout
 
 npm workspaces monorepo, orchestrated by [wireit](https://github.com/google/wireit)
