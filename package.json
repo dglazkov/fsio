@@ -1,0 +1,20 @@
+{
+  "name": "@fsio/host",
+  "version": "0.0.0-08aea5bb1b9a",
+  "description": "fsio native host: session server over a shared directory",
+  "license": "MIT",
+  "repository": "github:dglazkov/fsio",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@fsio/common": "github:dglazkov/fsio#common"
+  }
+}
