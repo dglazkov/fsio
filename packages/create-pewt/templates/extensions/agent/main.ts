@@ -10,7 +10,7 @@
 //
 // One tab is one conversation with one agent. For a second one, open another
 // tab: `pewt tabs add agent`.
-import { pewt, args, explain, type Agent } from "pewter";
+import { pewt, args, describeAsks, explain, type Agent } from "pewter";
 // The shared look, an ordinary dependency of this pewter — the same
 // arrangement as an ACP adapter. The bare import registers the kit's
 // elements; the css import is the styles. Both queries below come back
@@ -401,11 +401,11 @@ async function offer(): Promise<void> {
       // is a line you type, and the roster knows the lines — hints, not
       // choices, because there is nothing to pick yet.
       note.textContent = "this pewter has no ACP adapter installed — an adapter is an ordinary dependency:";
-      places.hints = agents.map((a) => `${a.install} — ${a.asks ? "asks before it edits" : "edits with its own hands"}`);
+      places.hints = agents.map((a) => `${a.install} — ${describeAsks(a.asks)}`);
       return;
     }
     const first = installed[0]!;
-    note.textContent = `${first.title}${first.version ? ` ${first.version}` : ""} — ${first.asks ? "asks before it edits" : "edits with its own hands"}. The host asks before it starts one.`;
+    note.textContent = `${first.title}${first.version ? ` ${first.version}` : ""} — ${describeAsks(first.asks)}. The host asks before it starts one.`;
     places.choices = [{ value: null, label: "this pewter" }, ...repos.map((r) => ({ value: r.name, label: r.name }))];
     places.onpick = (where) => void open(where);
   } catch (e) {
@@ -445,8 +445,11 @@ async function open(repo: string | null): Promise<void> {
   // the first prompt rather than found out after the first edit.
   line(
     "note",
-    (info.asks ? "this agent asks before it changes a file" : "this agent edits with its own hands — it will not ask first") +
-      (info.unmeasured ? " (measured against a different version than yours)" : "")
+    (info.asks === null
+      ? `${describeAsks(null)} — assume it does not`
+      : info.asks
+        ? "this agent asks before it changes a file"
+        : "this agent edits with its own hands — it will not ask first") + (info.unmeasured ? " (measured against a different version than yours)" : "")
   );
 
   rpc.onNotification("session/update", update);

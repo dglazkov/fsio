@@ -36,6 +36,7 @@
 // last one is 2 rather than 1 because a git hook wants "your code is wrong"
 // and "this pewter has no compiler" to be different things.
 import path from "node:path";
+import { describeAsks } from "pewter";
 import { parseArgs } from "./args.js";
 import { call, CallError } from "./call.js";
 import { check, CheckError, render as renderCheck } from "./check.js";
@@ -131,7 +132,7 @@ if (parsed.kind === "check") {
         console.log(
           parsed.json
             ? JSON.stringify({ dryRun: true, agent: plan.adapter.name, version: plan.version, asks: plan.adapter.asks, unmeasured: plan.unmeasured, where: plan.where }, null, 2)
-            : `would start  ${plan.adapter.title}${plan.version ? ` ${plan.version}` : ""}\n         cwd  ${plan.where}/\n              ${plan.adapter.asks ? "it asks before it edits" : "it edits with its own hands"}\n\n(nothing started — the host was not asked)`
+            : `would start  ${plan.adapter.title}${plan.version ? ` ${plan.version}` : ""}\n         cwd  ${plan.where}/\n              ${describeAsks(plan.adapter.asks)}\n\n(nothing started — the host was not asked)`
         );
         process.exit(0);
       } catch (e) {

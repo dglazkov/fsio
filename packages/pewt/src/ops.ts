@@ -21,7 +21,7 @@
 // table, the same two spellings, the same one place to add the next one. What
 // differs is where the answer comes from, and router.ts is what carries a
 // command to a page and a receipt back.
-import { asTabCommand, bodyLabel, describeGrant, grantId, shellSpec, sizeText, type Grant, type HeldFile, type TabsListing } from "pewter";
+import { asTabCommand, bodyLabel, describeAsks, describeGrant, grantId, shellSpec, sizeText, type Grant, type HeldFile, type TabsListing } from "pewter";
 import { roster, type RosterEntry } from "./agents.js";
 import { bundleExtension, BundleError, listExtensions, type Bundle, type Extension } from "./bundle.js";
 import { GrantsError, readGrants, revokeGrant } from "./grants.js";
@@ -228,7 +228,7 @@ export const agentsList = define<Record<string, never>, { agents: RosterEntry[] 
     if (here.length === 0) {
       return [
         "no agents in this pewter — an adapter is an ordinary dependency, so add one:",
-        ...agents.map((a) => `  ${a.install.padEnd(44)}${a.asks ? "asks before it edits" : "edits with its own hands"}`),
+        ...agents.map((a) => `  ${a.install.padEnd(44)}${describeAsks(a.asks)}`),
         "",
         "It is pinned in your lockfile, `npm rm` removes it, and `git clone && npm i`",
         "brings it back on another machine.",
@@ -240,7 +240,7 @@ export const agentsList = define<Record<string, never>, { agents: RosterEntry[] 
         // Whether it asks before it edits is the reason this list exists, so
         // it is the column, and a version nobody measured says so in the same
         // breath rather than in a footnote somebody has to go and find.
-        const asks = a.asks ? "asks before it edits" : "edits with its own hands — nothing will ask you";
+        const asks = a.asks === false ? "edits with its own hands — nothing will ask you" : describeAsks(a.asks);
         const doubt = a.unmeasured ? ` (measured at ${a.measured}, this is ${a.version ?? "unknown"})` : "";
         return `  ${a.name.padEnd(width)}  ${a.version ?? "?"}  ${asks}${doubt}`;
       })
